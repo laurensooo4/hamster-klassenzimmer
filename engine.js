@@ -377,11 +377,14 @@ function injectStyles(){
   const st=document.createElement("style"); st.id="hv-styles";
   st.textContent = `
   .hv{--lh:21px;--cpad:12px;display:flex;flex-direction:column;gap:10px;font-family:"Nunito",sans-serif}
-  .hv .hv-main{display:grid;gap:12px;grid-template-columns:1fr 1fr;min-height:0}
+  .hv .hv-main{display:grid;gap:12px;grid-template-columns:1.1fr 1fr;min-height:0}
   .hv.solo .hv-main{grid-template-columns:1fr}
+  .hv.fill{height:100%}
+  .hv.fill .hv-main{flex:1;min-height:0}
+  .hv.fill .editor,.hv.fill .boardWrap{min-height:120px}
   .hv .hv-pane{background:#fff;border:2px solid #e6ebf2;border-radius:14px;overflow:hidden;display:flex;flex-direction:column;min-width:0}
   .hv .hv-ph{padding:8px 12px;border-bottom:1px solid #eef2f7;font-weight:800;font-size:13px;color:#7a8aa0;display:flex;align-items:center;gap:8px}
-  .hv .editor{display:flex;flex:1;min-height:230px;background:#1f2530;border-radius:0}
+  .hv .editor{display:flex;flex:1;min-height:300px;background:#1f2530;border-radius:0}
   .hv #g,.hv .gut{width:42px;flex:none;background:#2a313e;overflow:hidden;position:relative;border-right:1px solid #323a47}
   .hv .gutInner{position:absolute;top:0;left:0;right:0;padding:var(--cpad) 7px var(--cpad) 0;text-align:right;white-space:pre;font:14px/var(--lh) "JetBrains Mono",Consolas,monospace;color:#5d6675}
   .hv .codebox{position:relative;flex:1;min-width:0;overflow:hidden}
@@ -392,7 +395,7 @@ function injectStyles(){
   .hv .actLine{position:absolute;left:0;right:0;height:var(--lh);background:rgba(231,161,58,.16);border-left:3px solid #e7a13a;pointer-events:none;display:none}
   .hv .actLine.err{background:rgba(255,75,75,.18);border-left-color:#ff4b4b}
   .hv .c-kw{color:#c792ea}.hv .c-type{color:#82d2ff}.hv .c-lit{color:#ff9e7a}.hv .c-cmd{color:#82aaff}.hv .c-test{color:#ffcb6b}.hv .c-cst{color:#f78cc4}.hv .c-str{color:#c3e88d}.hv .c-num{color:#ff9e7a}.hv .c-com{color:#5f6b7d;font-style:italic}
-  .hv .boardWrap{flex:1;min-height:230px;display:flex;align-items:center;justify-content:center;padding:12px;background:radial-gradient(circle at 50% 40%,#f4f8ee,#e9f0e0)}
+  .hv .boardWrap{flex:1;min-height:300px;display:flex;align-items:center;justify-content:center;padding:12px;background:radial-gradient(circle at 50% 40%,#f4f8ee,#e9f0e0)}
   .hv .board{position:relative;display:grid;border-radius:9px;overflow:hidden;box-shadow:0 5px 16px rgba(60,80,40,.18),inset 0 0 0 2px rgba(255,255,255,.35);grid-template-columns:repeat(var(--cols),var(--cell));grid-template-rows:repeat(var(--rows),var(--cell))}
   .hv .tile{position:relative;width:var(--cell);height:var(--cell);display:flex;align-items:center;justify-content:center}
   .hv .tile.g0{background:#a7d96b}.hv .tile.g1{background:#9bcf5d}
@@ -417,10 +420,11 @@ function injectStyles(){
   .hv .tool{border:1px solid #e6ebf2;background:#fff;border-radius:8px;padding:6px 9px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit}
   .hv .tool.on{border-color:#e7a13a;background:#fff7ea;color:#c9851f}
   .hv .szi{width:42px;border:1px solid #e6ebf2;border-radius:7px;padding:4px;text-align:center;font-family:inherit}
-  .hv .status{display:flex;gap:7px;padding:7px 8px;border-top:1px solid #eef2f7;flex-wrap:wrap}
+  .hv .status{display:flex;gap:8px;padding:0;flex-wrap:wrap}
   .hv .stat{flex:1;min-width:60px;background:#f7f9fc;border:1px solid #eef2f7;border-radius:9px;padding:5px;text-align:center}
   .hv .stat .v{font-weight:800;font-size:15px}.hv .stat .k{font-size:10px;color:#7a8aa0}
-  .hv .out{height:74px;overflow:auto;padding:6px 10px;border-top:1px solid #eef2f7;font:12px/1.5 "JetBrains Mono",Consolas,monospace;background:#fff}
+  .hv .out{height:84px;overflow:auto;padding:7px 11px;border:2px solid #e6ebf2;border-radius:12px;font:12px/1.5 "JetBrains Mono",Consolas,monospace;background:#fff}
+  .hv .out:empty::before{content:"Ausgaben & Meldungen erscheinen hier …";color:#b6bfcc}
   .hv .out .err{color:#e63a3a;font-weight:700}.hv .out .ok{color:#46a302}.hv .out .say{color:#1899d6}
   @media(max-width:760px){.hv .hv-main{grid-template-columns:1fr}}`;
   document.head.appendChild(st);
@@ -435,6 +439,7 @@ class HamsterView{
     injectStyles();
     this.el = typeof container==="string"? document.querySelector(container): container;
     this.mode = opts.mode || "solve";          // solve | design | view
+    this.fill = !!opts.fill;                   // Container-Höhe ausfüllen (großes Arbeitsfenster)
     this.initial = toModel(opts.model);
     this.model = cloneModel(this.initial);
     this.code = opts.code!=null ? opts.code : "";
@@ -449,7 +454,7 @@ class HamsterView{
   _build(){
     const m=this.mode;
     const hasEditor = (m==="solve"||m==="view");
-    this.el.className = "hv"+(hasEditor?"":" solo");
+    this.el.className = "hv"+(hasEditor?"":" solo")+(this.fill?" fill":"");
     const editorPane = hasEditor ? `
       <div class="hv-pane">
         <div class="hv-ph">📝 ${m==="view"?"Abgegebener Code":"Dein Programm"}</div>

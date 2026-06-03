@@ -278,13 +278,13 @@ async function solveAssignment(assignmentId){
     <div class="page-head"><button class="crumb" id="back">← zurück</button></div>
     <div class="page-head" style="margin-top:0"><h2>${esc(a.title)}</h2><div class="spacer"></div><span id="solveStatus">${statusHtml}</span></div>
     ${a.description?`<div class="card" style="margin-bottom:12px"><b>Aufgabe:</b> ${esc(a.description)}${a.goal?`<div class="muted" style="margin-top:6px;font-size:13px">🎯 Ziel: ${esc(goalLabel(a.goal))}</div>`:""}</div>`:""}
-    <div id="solveHost"></div>
+    <div id="solveHost" style="height:66vh;min-height:470px"></div>
     <div style="display:flex;gap:10px;margin-top:14px;align-items:center">
       <button class="btn btn-primary btn-lg" id="btnSubmit" style="max-width:240px">📤 Abgeben</button>
       <span id="submitMsg" class="muted"></span>
     </div>`;
   document.getElementById("back").onclick = ()=> studentClassView(a.class_id);
-  pageView = new HamsterView("#solveHost", { mode:"solve", model:a.territory, code });
+  pageView = new HamsterView("#solveHost", { mode:"solve", model:a.territory, code, fill:true });
   document.getElementById("btnSubmit").onclick = async ()=>{
     const myCode = pageView.getCode();
     const passed = gradeSubmission(myCode, a.territory, a.goal);
