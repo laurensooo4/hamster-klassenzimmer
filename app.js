@@ -58,37 +58,39 @@ async function signOut(){ await sb.auth.signOut(); ME=null; renderAuth(); }
    ============================================================================ */
 let authState = { mode:"login", role:"student" };
 function renderAuth(){
-  const s=authState;
-  const footLogin = 'Noch kein Account? Tippe oben auf "Registrieren".';
-  const footReg   = 'Schüler:innen brauchen danach einen Klassencode von der Lehrkraft.';
+  const s=authState; const isReg = s.mode==="register";
+  const codeField = isReg ? (s.role==="teacher"
+      ? `<div class="field"><label>Lehrer-Code</label><input class="input" id="auCode" placeholder="Code von der Schulleitung" autocomplete="off"></div>`
+      : `<div class="field"><label>Klassencode</label><input class="input" id="auCode" placeholder="z. B. K7Q2MX" autocomplete="off" style="text-transform:uppercase;letter-spacing:2px;font-family:monospace"></div>`) : "";
+  const foot = isReg ? (s.role==="teacher" ? "Lehrer:innen brauchen den Lehrer-Code." : "Du brauchst den Klassencode deiner Lehrkraft.")
+                     : 'Noch kein Account? Tippe oben auf "Registrieren".';
   app().innerHTML = `
   <div class="auth-wrap"><div class="auth-card">
     <div class="mascot">${HAMSTER}</div>
     <h1>Hamster-Klassenzimmer</h1>
-    <p class="sub">${s.mode==="login"?"Willkommen zurück!":"Lass uns loslegen!"}</p>
+    <p class="sub">${isReg?"Lass uns loslegen!":"Willkommen zurück!"}</p>
     <div class="tabs">
-      <button data-m="login" class="${s.mode==="login"?"active":""}">Anmelden</button>
-      <button data-m="register" class="${s.mode==="register"?"active":""}">Registrieren</button>
+      <button data-m="login" class="${!isReg?"active":""}">Anmelden</button>
+      <button data-m="register" class="${isReg?"active":""}">Registrieren</button>
     </div>
     <div class="auth-msg" id="authMsg"></div>
-    ${s.mode==="register" ? `
-      <div class="field"><label>Ich bin…</label>
+    ${isReg ? `<div class="field"><label>Ich bin…</label>
         <div class="role-pick">
           <div class="role-opt ${s.role==="student"?"active":""}" data-role="student"><span class="ic">🎒</span>Schüler:in</div>
           <div class="role-opt ${s.role==="teacher"?"active":""}" data-role="teacher"><span class="ic">👨‍🏫</span>Lehrer:in</div>
-        </div>
-      </div>` : ""}
+        </div></div>` : ""}
+    ${codeField}
     <div class="field"><label>Benutzername</label>
       <input class="input" id="auUser" placeholder="z. B. max.muster" autocomplete="username" autocapitalize="none" spellcheck="false"></div>
     <div class="field"><label>Passwort</label>
-      <input class="input" id="auPass" type="password" placeholder="Passwort" autocomplete="${s.mode==="login"?"current-password":"new-password"}"></div>
-    <button class="btn btn-primary btn-lg" id="auSubmit">${s.mode==="login"?"Anmelden":"Account erstellen"}</button>
-    <p class="auth-foot">${s.mode==="login"?footLogin:footReg}</p>
+      <input class="input" id="auPass" type="password" placeholder="Passwort" autocomplete="${isReg?"new-password":"current-password"}"></div>
+    <button class="btn btn-primary btn-lg" id="auSubmit">${isReg?"Account erstellen":"Anmelden"}</button>
+    <p class="auth-foot">${foot}</p>
+    <div class="auth-credit">🎮 Vibe-Coded von <b>Laurens Offinger</b></div>
   </div></div>`;
-
   app().querySelectorAll(".tabs button").forEach(b=> b.onclick=()=>{ authState.mode=b.dataset.m; renderAuth(); });
   app().querySelectorAll(".role-opt").forEach(r=> r.onclick=()=>{ authState.role=r.dataset.role; renderAuth(); });
-  const submit = ()=> s.mode==="login" ? doLogin() : doRegister();
+  const submit = ()=> isReg ? doRegister() : doLogin();
   document.getElementById("auSubmit").onclick = submit;
   document.getElementById("auPass").addEventListener("keydown", e=>{ if(e.key==="Enter") submit(); });
   document.getElementById("auUser").focus();
@@ -111,26 +113,39 @@ async function doLogin(){
 async function doRegister(){
   const uRaw=document.getElementById("auUser").value.trim(), p=document.getElementById("auPass").value, role=authState.role;
   const u=normUser(uRaw);
+  const codeEl=document.getElementById("auCode"); const code=codeEl?codeEl.value.trim():"";
   if(!/^[a-z0-9_.\-]{3,20}$/.test(u)){ authMsg("Benutzername: 3-20 Zeichen, nur Buchstaben/Zahlen/._-"); return; }
   if(p.length<6){ authMsg("Das Passwort muss mindestens 6 Zeichen haben."); return; }
+  if(!code){ authMsg(role==="teacher"?"Bitte den Lehrer-Code eingeben.":"Bitte den Klassencode eingeben."); return; }
   setBusy(true);
-  const { data, error } = await sb.auth.signUp({ email:userEmail(u), password:p });
-  if(error){
-    setBusy(false);
-    if(/already registered|already exists/i.test(error.message)) authMsg("Dieser Benutzername ist schon vergeben.");
-    else authMsg(error.message);
-    return;
+  // 1) Code prüfen, BEVOR ein Account angelegt wird
+  let className=null;
+  if(role==="teacher"){
+    const { data:ok, error:e1 } = await sb.rpc("check_teacher_code", { p_code: code });
+    if(e1){ setBusy(false); authMsg("Prüfung fehlgeschlagen: "+e1.message); return; }
+    if(!ok){ setBusy(false); authMsg("Falscher Lehrer-Code."); return; }
+  } else {
+    const { data:cn, error:e1 } = await sb.rpc("class_exists", { p_code: code });
+    if(e1){ setBusy(false); authMsg("Prüfung fehlgeschlagen: "+e1.message); return; }
+    if(!cn){ setBusy(false); authMsg("Klassencode nicht gefunden."); return; }
+    className=cn;
   }
+  // 2) Account anlegen
+  const { data, error } = await sb.auth.signUp({ email:userEmail(u), password:p });
+  if(error){ setBusy(false); if(/already registered|already exists/i.test(error.message)) authMsg("Dieser Benutzername ist schon vergeben."); else authMsg(error.message); return; }
   const uid = data.user.id;
-  const { error:perr } = await sb.from("profiles").insert({ id:uid, username:u, role, display_name:uRaw });
-  if(perr){
-    setBusy(false);
-    if(/duplicate|unique/i.test(perr.message)) authMsg("Dieser Benutzername ist schon vergeben.");
-    else authMsg("Profil konnte nicht angelegt werden: "+perr.message);
-    return;
+  // 3) Profil anlegen (+ Klassenbeitritt bei Schüler:innen)
+  if(role==="teacher"){
+    const { error:e2 } = await sb.rpc("register_teacher", { p_username:u, p_display:uRaw, p_code:code });
+    if(e2){ setBusy(false); authMsg("Registrierung fehlgeschlagen: "+e2.message); return; }
+  } else {
+    const { error:e2 } = await sb.from("profiles").insert({ id:uid, username:u, role:"student", display_name:uRaw });
+    if(e2){ setBusy(false); if(/duplicate|unique/i.test(e2.message)) authMsg("Dieser Benutzername ist schon vergeben."); else authMsg("Profil konnte nicht angelegt werden: "+e2.message); return; }
+    const { error:e3 } = await sb.rpc("join_class", { p_code: code });
+    if(e3){ setBusy(false); authMsg("Beitritt fehlgeschlagen: "+e3.message); return; }
   }
   await loadMe(uid);
-  toast("Willkommen, "+uRaw+"! 🎉","ok");
+  toast(className?("Willkommen in "+className+"! 🎉"):("Willkommen, "+uRaw+"! 🎉"),"ok");
   route();
 }
 function setBusy(b){ const btn=document.getElementById("auSubmit"); if(btn){ btn.disabled=b; btn.innerHTML = b?'<span class="spin" style="width:18px;height:18px;border-top-color:#fff;border-color:rgba(255,255,255,.4)"></span>':(authState.mode==="login"?"Anmelden":"Account erstellen"); } }
@@ -147,9 +162,11 @@ function shell(inner){
       <div class="spacer"></div>
       ${roleBadge}
       <span class="chip ${ME.role}"><span class="av">${esc(initials(ME.display_name||ME.username))}</span>${esc(ME.display_name||ME.username)}</span>
+      <button class="btn btn-ghost btn-sm" id="btnChangePw" title="Passwort ändern">🔑 Passwort</button>
       <button class="btn btn-ghost btn-sm" id="btnLogout">Abmelden</button>
     </div>
     <div class="container" id="view"></div>`;
+  document.getElementById("btnChangePw").onclick = changePasswordDialog;
   document.getElementById("btnLogout").onclick = signOut;
   document.getElementById("view").innerHTML = inner;
 }
@@ -302,6 +319,36 @@ async function solveAssignment(assignmentId){
 
 function fmtDateTime(s){ try{ return new Date(s).toLocaleString("de-DE",{day:"2-digit",month:"2-digit",year:"2-digit",hour:"2-digit",minute:"2-digit"}); }catch(e){ return ""; } }
 
+/* ---------- Passwort ändern (alle Rollen) ---------- */
+function changePasswordDialog(){
+  openModal(`<button class="x" onclick="closeModal()">✕</button>
+    <h3>Passwort ändern</h3><p class="muted" style="margin:2px 0 16px">Wähle ein neues Passwort (mind. 6 Zeichen).</p>
+    <div class="field"><label>Neues Passwort</label><input class="input" id="np1" type="password" autocomplete="new-password"></div>
+    <div class="field"><label>Wiederholen</label><input class="input" id="np2" type="password" autocomplete="new-password"></div>
+    <button class="btn btn-primary btn-lg" id="npSave">Passwort speichern</button>`);
+  document.getElementById("np1").focus();
+  document.getElementById("npSave").onclick=async()=>{
+    const a=document.getElementById("np1").value, b=document.getElementById("np2").value;
+    if(a.length<6){ toast("Mindestens 6 Zeichen.","err"); return; }
+    if(a!==b){ toast("Die Passwörter stimmen nicht überein.","err"); return; }
+    const btn=document.getElementById("npSave"); btn.disabled=true; btn.textContent="Speichere…";
+    const { error } = await sb.auth.updateUser({ password:a });
+    if(error){ btn.disabled=false; btn.textContent="Passwort speichern"; toast(error.message||"Fehler","err"); return; }
+    closeModal(); toast("Passwort geändert ✓","ok");
+  };
+}
+
+/* ---------- Lehrer: Schüler-Passwort zurücksetzen ---------- */
+async function resetStudentPw(studentId, name){
+  if(!confirm("Passwort von "+name+" zurücksetzen? Es wird ein neues 6-stelliges Passwort erzeugt.")) return;
+  const { data:newPw, error } = await sb.rpc("reset_student_password", { p_student: studentId });
+  if(error){ toast(error.message||"Fehler","err"); return; }
+  openModal(`<button class="x" onclick="closeModal()">✕</button>
+    <h3>Neues Passwort für ${esc(name)}</h3>
+    <p class="muted" style="margin:2px 0 14px">Gib es an ${esc(name)} weiter. Damit einloggen, dann oben unter „🔑 Passwort" selbst ein neues setzen.</p>
+    <div style="text-align:center;margin:12px 0 6px"><span class="codechip" style="font-size:30px;letter-spacing:5px">${esc(newPw)}</span></div>`);
+}
+
 /* ============================================================================
    LEHRER-ANSICHT
    ============================================================================ */
@@ -348,7 +395,8 @@ async function teacherClassView(classId){
   const rosterHtml = roster.length ? `<div class="list">${roster.map(m=>{
       const p=m.profiles||{}; const nm=p.display_name||p.username||"?";
       return `<div class="row"><span class="chip"><span class="av">${esc(initials(nm))}</span>${esc(nm)}</span>
-        <div class="grow"></div><span class="muted" style="font-size:12.5px">beigetreten ${fmtDate(m.joined_at)}</span></div>`;
+        <div class="grow"></div><span class="muted" style="font-size:11.5px;margin-right:4px">${fmtDate(m.joined_at)}</span>
+        <button class="btn btn-sm btn-ghost" data-stu="${m.student_id}" data-nm="${esc(nm)}" title="Passwort zurücksetzen">🔑</button></div>`;
     }).join("")}</div>`
     : `<div class="empty"><span class="ic">🎒</span>Noch keine Schüler:innen. Teile den Code <b>${esc(cls.code)}</b>!</div>`;
 
@@ -385,6 +433,7 @@ async function teacherClassView(classId){
   document.getElementById("btnNewAssign").onclick = ()=> newAssignmentDialog(classId, ()=>teacherClassView(classId));
   document.querySelectorAll("[data-del]").forEach(b=> b.onclick=async()=>{ if(!confirm("Aufgabe wirklich löschen?")) return; try{ await api.deleteAssignment(b.dataset.del); teacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } });
   document.querySelectorAll(".cell[data-sub]").forEach(c=> c.onclick=()=>{ const s=subs.find(x=>x.id===c.dataset.sub); if(!s)return; const a=assignments.find(x=>x.id===s.assignment_id); const stu=roster.find(r=>r.student_id===s.student_id); const nm=(stu&&stu.profiles&&(stu.profiles.display_name||stu.profiles.username))||"?"; viewSubmissionDialog(a,s,nm); });
+  document.querySelectorAll("[data-stu]").forEach(b=> b.onclick=()=> resetStudentPw(b.dataset.stu, b.dataset.nm));
 }
 function buildMatrix(roster, assignments, subs){
   const head = assignments.map(a=>`<th title="${esc(a.title)}">${esc(a.title.length>14?a.title.slice(0,13)+"…":a.title)}</th>`).join("");
