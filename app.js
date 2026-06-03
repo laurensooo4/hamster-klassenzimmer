@@ -273,14 +273,25 @@ function newAssignmentDialog(classId, onDone){
   };
 }
 
-/* ---------- Lehrer: Abgabe ansehen ---------- */
-function viewSubmissionDialog(assignment, sub, studentName){
-  const passed = sub.passed===true ? `<span class="badge">bestanden ✓</span>` : sub.passed===false ? `<span class="badge gold">abgegeben</span>` : "";
-  openModal(`<button class="x" onclick="closeModal()">✕</button>
-    <h3>${esc(studentName)} — ${esc(assignment.title)} ${passed}</h3>
-    <p class="muted" style="margin:2px 0 12px">Abgegeben am ${fmtDateTime(sub.submitted_at)}. Du kannst den Code hier laufen lassen.</p>
-    <div id="subHost"></div>`, true);
-  modalView = new HamsterView("#subHost", { mode:"view", model:assignment.territory, code:sub.code });
+/* ---------- Lehrer: Abgabe live öffnen, bearbeiten & korrigieren ---------- */
+function reviewSubmission(assignment, sub, studentName, classId){
+  const passed = sub.passed===true ? `<span class="badge">bestanden ✓</span>` : `<span class="badge gold">abgegeben</span>`;
+  shell(`
+    <div class="page-head"><button class="crumb" id="back">← zurück zur Klasse</button></div>
+    <div class="page-head" style="margin-top:0">
+      <h2>Abgabe von ${esc(studentName)}</h2>
+      <div class="spacer"></div>
+      ${passed}
+      <button class="btn btn-ghost btn-sm" id="btnOrig" style="margin-left:8px" title="Original-Abgabe wiederherstellen">↺ Original</button>
+    </div>
+    <div class="card" style="margin-bottom:10px;padding:12px 16px">
+      <b>Aufgabe:</b> ${esc(assignment.title)}${assignment.description?` – ${esc(assignment.description)}`:""}
+      <span class="muted" style="font-size:12px;display:block;margin-top:3px">🛠️ Live-Korrektur: Du kannst den Code bearbeiten &amp; laufen lassen – Änderungen werden nicht gespeichert. Abgegeben am ${fmtDateTime(sub.submitted_at)}.</span>
+    </div>
+    <div id="reviewHost" style="height:72vh;min-height:520px"></div>`);
+  document.getElementById("back").onclick = ()=> teacherClassView(classId);
+  pageView = new HamsterView("#reviewHost", { mode:"solve", model:assignment.territory, code:sub.code, fill:true });
+  document.getElementById("btnOrig").onclick = ()=> pageView.setCode(sub.code);
 }
 
 /* ---------- Schüler: Aufgabe lösen ---------- */
@@ -295,7 +306,7 @@ async function solveAssignment(assignmentId){
     <div class="page-head"><button class="crumb" id="back">← zurück</button></div>
     <div class="page-head" style="margin-top:0"><h2>${esc(a.title)}</h2><div class="spacer"></div><span id="solveStatus">${statusHtml}</span></div>
     ${a.description?`<div class="card" style="margin-bottom:12px"><b>Aufgabe:</b> ${esc(a.description)}${a.goal?`<div class="muted" style="margin-top:6px;font-size:13px">🎯 Ziel: ${esc(goalLabel(a.goal))}</div>`:""}</div>`:""}
-    <div id="solveHost" style="height:66vh;min-height:470px"></div>
+    <div id="solveHost" style="height:72vh;min-height:520px"></div>
     <div style="display:flex;gap:10px;margin-top:14px;align-items:center">
       <button class="btn btn-primary btn-lg" id="btnSubmit" style="max-width:240px">📤 Abgeben</button>
       <span id="submitMsg" class="muted"></span>
@@ -432,7 +443,7 @@ async function teacherClassView(classId){
   document.getElementById("copyCode").onclick = ()=>{ if(navigator.clipboard) navigator.clipboard.writeText(cls.code); toast("Code kopiert: "+cls.code,"ok"); };
   document.getElementById("btnNewAssign").onclick = ()=> newAssignmentDialog(classId, ()=>teacherClassView(classId));
   document.querySelectorAll("[data-del]").forEach(b=> b.onclick=async()=>{ if(!confirm("Aufgabe wirklich löschen?")) return; try{ await api.deleteAssignment(b.dataset.del); teacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } });
-  document.querySelectorAll(".cell[data-sub]").forEach(c=> c.onclick=()=>{ const s=subs.find(x=>x.id===c.dataset.sub); if(!s)return; const a=assignments.find(x=>x.id===s.assignment_id); const stu=roster.find(r=>r.student_id===s.student_id); const nm=(stu&&stu.profiles&&(stu.profiles.display_name||stu.profiles.username))||"?"; viewSubmissionDialog(a,s,nm); });
+  document.querySelectorAll(".cell[data-sub]").forEach(c=> c.onclick=()=>{ const s=subs.find(x=>x.id===c.dataset.sub); if(!s)return; const a=assignments.find(x=>x.id===s.assignment_id); const stu=roster.find(r=>r.student_id===s.student_id); const nm=(stu&&stu.profiles&&(stu.profiles.display_name||stu.profiles.username))||"?"; reviewSubmission(a,s,nm,classId); });
   document.querySelectorAll("[data-stu]").forEach(b=> b.onclick=()=> resetStudentPw(b.dataset.stu, b.dataset.nm));
 }
 function buildMatrix(roster, assignments, subs){

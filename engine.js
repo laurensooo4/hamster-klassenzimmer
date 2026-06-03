@@ -376,8 +376,8 @@ function injectStyles(){
   if(document.getElementById("hv-styles")) return;
   const st=document.createElement("style"); st.id="hv-styles";
   st.textContent = `
-  .hv{--lh:21px;--cpad:12px;display:flex;flex-direction:column;gap:10px;font-family:"Nunito",sans-serif}
-  .hv .hv-main{display:grid;gap:12px;grid-template-columns:1.1fr 1fr;min-height:0}
+  .hv{--lh:22px;--cpad:12px;display:flex;flex-direction:column;gap:10px;font-family:"Nunito",sans-serif}
+  .hv .hv-main{display:grid;gap:12px;grid-template-columns:1.4fr 1fr;min-height:0}
   .hv.solo .hv-main{grid-template-columns:1fr}
   .hv.fill{height:100%}
   .hv.fill .hv-main{flex:1;min-height:0}
@@ -386,9 +386,9 @@ function injectStyles(){
   .hv .hv-ph{padding:8px 12px;border-bottom:1px solid #eef2f7;font-weight:800;font-size:13px;color:#7a8aa0;display:flex;align-items:center;gap:8px}
   .hv .editor{display:flex;flex:1;min-height:300px;background:#1f2530;border-radius:0}
   .hv #g,.hv .gut{width:42px;flex:none;background:#2a313e;overflow:hidden;position:relative;border-right:1px solid #323a47}
-  .hv .gutInner{position:absolute;top:0;left:0;right:0;padding:var(--cpad) 7px var(--cpad) 0;text-align:right;white-space:pre;font:14px/var(--lh) "JetBrains Mono",Consolas,monospace;color:#5d6675}
+  .hv .gutInner{position:absolute;top:0;left:0;right:0;padding:var(--cpad) 7px var(--cpad) 0;text-align:right;white-space:pre;font:15px/var(--lh) "JetBrains Mono",Consolas,monospace;color:#5d6675}
   .hv .codebox{position:relative;flex:1;min-width:0;overflow:hidden}
-  .hv .codeHL,.hv .code{position:absolute;inset:0;margin:0;padding:var(--cpad);border:0;font:14px/var(--lh) "JetBrains Mono",Consolas,monospace;white-space:pre;tab-size:4;overflow:auto}
+  .hv .codeHL,.hv .code{position:absolute;inset:0;margin:0;padding:var(--cpad);border:0;font:15px/var(--lh) "JetBrains Mono",Consolas,monospace;white-space:pre;tab-size:4;overflow:auto}
   .hv .codeHL{pointer-events:none;color:#d6dbe4;overflow:hidden}
   .hv .code{background:transparent;color:transparent;caret-color:#fff;resize:none;outline:none}
   .hv .code[readonly]{caret-color:transparent}
@@ -578,8 +578,8 @@ class HamsterView{
   }
   _syncScroll(){ this.codeHL.scrollTop=this.code_.scrollTop; this.codeHL.scrollLeft=this.code_.scrollLeft; this.gutInner.style.transform="translateY("+(-this.code_.scrollTop)+"px)"; this._layoutActive(); }
   _setActive(n,isErr){ this.actLineNo=n; if(!this.actLine)return; this.actLine.classList.toggle("err",!!isErr); if(n==null){this.actLine.style.display="none";return;} this.actLine.style.display="block"; this._layoutActive();
-    const top=12+(n-1)*21; if(top<this.code_.scrollTop+10) this.code_.scrollTop=Math.max(0,top-30); else if(top>this.code_.scrollTop+this.code_.clientHeight-30) this.code_.scrollTop=top-this.code_.clientHeight+50; }
-  _layoutActive(){ if(this.actLineNo==null||!this.actLine)return; this.actLine.style.top=(12+(this.actLineNo-1)*21 - this.code_.scrollTop)+"px"; }
+    const top=12+(n-1)*22; if(top<this.code_.scrollTop+10) this.code_.scrollTop=Math.max(0,top-30); else if(top>this.code_.scrollTop+this.code_.clientHeight-30) this.code_.scrollTop=top-this.code_.clientHeight+50; }
+  _layoutActive(){ if(this.actLineNo==null||!this.actLine)return; this.actLine.style.top=(12+(this.actLineNo-1)*22 - this.code_.scrollTop)+"px"; }
 
   /* ----- Output ----- */
   _log(t,cls){ const o=this.$(".out"); if(!o)return; const d=document.createElement("div"); d.className=cls||""; d.textContent=t; o.appendChild(d); o.scrollTop=o.scrollHeight; }
