@@ -28,7 +28,7 @@ function openModal(html, wide){
   document.body.appendChild(bg);
   return bg;
 }
-function closeModal(){ const m=document.getElementById("modalBg"); if(m) m.remove(); }
+function closeModal(){ if(typeof modalView!=="undefined" && modalView){ try{ modalView.destroy(); }catch(e){} modalView=null; } const m=document.getElementById("modalBg"); if(m) m.remove(); }
 
 /* ---------- Boot / Routing ---------- */
 async function boot(){
@@ -139,6 +139,7 @@ function setBusy(b){ const btn=document.getElementById("auSubmit"); if(btn){ btn
    APP-SHELL (Topbar)
    ============================================================================ */
 function shell(inner){
+  if(typeof pageView!=="undefined" && pageView){ try{ pageView.destroy(); }catch(e){} pageView=null; }
   const roleBadge = ME.role==="teacher" ? `<span class="badge blue">Lehrkraft</span>` : `<span class="badge">Schüler:in</span>`;
   app().innerHTML = `
     <div class="topbar">
@@ -184,6 +185,122 @@ const api = {
     if(error) throw error; return data||[];
   },
 };
+
+/* ===== Aufgaben & Abgaben ===== */
+let modalView=null, pageView=null;
+const DEFAULT_STARTER = "void main() {\n    \n}";
+api.listAssignments = async (classId)=>{ const {data,error}=await sb.from("assignments").select("*").eq("class_id",classId).order("created_at"); if(error) throw error; return data||[]; };
+api.getAssignment = async (id)=>{ const {data,error}=await sb.from("assignments").select("*").eq("id",id).single(); if(error) throw error; return data; };
+api.createAssignment = async (a)=>{ const {data,error}=await sb.from("assignments").insert(a).select().single(); if(error) throw error; return data; };
+api.deleteAssignment = async (id)=>{ const {error}=await sb.from("assignments").delete().eq("id",id); if(error) throw error; };
+api.upsertSubmission = async (s)=>{ const row=Object.assign({student_id:ME.id, submitted_at:new Date().toISOString()}, s); const {data,error}=await sb.from("submissions").upsert(row,{onConflict:"assignment_id,student_id"}).select().single(); if(error) throw error; return data; };
+api.mySubmission = async (assignmentId)=>{ const {data,error}=await sb.from("submissions").select("*").eq("assignment_id",assignmentId).eq("student_id",ME.id).maybeSingle(); if(error) throw error; return data; };
+api.classSubmissions = async (assignmentIds)=>{ if(!assignmentIds.length) return []; const {data,error}=await sb.from("submissions").select("*").in("assignment_id",assignmentIds); if(error) throw error; return data||[]; };
+
+/* Headless Auto-Check: führt den Code auf einer frischen Kopie des Territoriums aus */
+function gradeSubmission(code, territory, goal){
+  if(!goal||!goal.type) return null;
+  try{
+    const ast=HamsterEngine.parse(code);
+    const model=HamsterEngine.toModel(territory);
+    const m={rows:model.rows,cols:model.cols,walls:model.walls,grains:model.grains,hamster:model.hamster,onWrite:()=>{}};
+    const it=HamsterEngine.makeInterpreter(ast,m); const g=it.run(); let n=0;
+    while(true){ const r=g.next(); if(r.done)break; if(++n>2000000) return false; }
+    return HamsterEngine.checkGoal(goal,m)===true;
+  }catch(e){ return false; }
+}
+function goalLabel(goal){
+  if(!goal||!goal.type) return "kein Auto-Check";
+  if(goal.type==="noGrains") return "Feld leer (alle Körner gefressen)";
+  if(goal.type==="grainsInMaul") return "≥ "+goal.n+" Körner im Maul";
+  if(goal.type==="atPos") return "Hamster bei Reihe "+goal.row+", Spalte "+goal.col;
+  return "Auto-Check";
+}
+
+/* ---------- Lehrer: Aufgabe stellen ---------- */
+function newAssignmentDialog(classId, onDone){
+  openModal(`<button class="x" onclick="closeModal()">✕</button>
+    <h3>Neue Aufgabe</h3>
+    <div class="field"><label>Titel</label><input class="input" id="asTitle" placeholder="z. B. Lauf bis zur Wand" maxlength="80"></div>
+    <div class="field"><label>Aufgabenstellung</label><textarea class="input" id="asDesc" placeholder="Was soll der Hamster tun?"></textarea></div>
+    <div class="field"><label>Territorium (anklicken zum Bearbeiten)</label><div id="asDesign"></div></div>
+    <div class="field"><label>Startcode für Schüler (optional)</label><textarea class="input" id="asStarter" style="font-family:monospace;font-size:13px;min-height:70px" placeholder="${esc(DEFAULT_STARTER)}"></textarea></div>
+    <div class="field"><label>Auto-Check (optional)</label>
+      <select class="input" id="asGoalType">
+        <option value="">Kein Auto-Check</option>
+        <option value="noGrains">Feld leer – alle Körner gefressen</option>
+        <option value="grainsInMaul">Hamster hat ≥ N Körner im Maul</option>
+        <option value="atPos">Hamster steht am Ziel (Reihe/Spalte)</option>
+      </select>
+      <div id="asGoalExtra" style="margin-top:8px"></div>
+    </div>
+    <button class="btn btn-primary btn-lg" id="asSave">Aufgabe stellen</button>`, true);
+  modalView = new HamsterView("#asDesign", { mode:"design", model: HamsterEngine.blankTerr() });
+  const gt=document.getElementById("asGoalType"), extra=document.getElementById("asGoalExtra");
+  gt.onchange=()=>{ if(gt.value==="grainsInMaul") extra.innerHTML=`<input class="input" id="asGoalN" type="number" min="1" value="5" placeholder="Anzahl Körner">`;
+    else if(gt.value==="atPos") extra.innerHTML=`<div style="display:flex;gap:8px"><input class="input" id="asGoalR" type="number" min="0" placeholder="Reihe"><input class="input" id="asGoalC" type="number" min="0" placeholder="Spalte"></div>`;
+    else extra.innerHTML=""; };
+  document.getElementById("asTitle").focus();
+  document.getElementById("asSave").onclick=async()=>{
+    const title=document.getElementById("asTitle").value.trim(); if(!title){ document.getElementById("asTitle").focus(); return; }
+    const description=document.getElementById("asDesc").value.trim();
+    const starter_code=document.getElementById("asStarter").value.trim()||null;
+    const territory=modalView.getTerritory();
+    let goal=null;
+    if(gt.value==="noGrains") goal={type:"noGrains"};
+    else if(gt.value==="grainsInMaul") goal={type:"grainsInMaul", n:Math.max(1,+ (document.getElementById("asGoalN")||{}).value||1)};
+    else if(gt.value==="atPos") goal={type:"atPos", row:+ (document.getElementById("asGoalR")||{}).value||0, col:+ (document.getElementById("asGoalC")||{}).value||0};
+    const btn=document.getElementById("asSave"); btn.disabled=true; btn.textContent="Speichere…";
+    try{ await api.createAssignment({ class_id:classId, title, description, territory, starter_code, goal }); closeModal(); toast("Aufgabe gestellt 🎉","ok"); if(onDone) onDone(); }
+    catch(e){ btn.disabled=false; btn.textContent="Aufgabe stellen"; toast(e.message||"Fehler","err"); }
+  };
+}
+
+/* ---------- Lehrer: Abgabe ansehen ---------- */
+function viewSubmissionDialog(assignment, sub, studentName){
+  const passed = sub.passed===true ? `<span class="badge">bestanden ✓</span>` : sub.passed===false ? `<span class="badge gold">abgegeben</span>` : "";
+  openModal(`<button class="x" onclick="closeModal()">✕</button>
+    <h3>${esc(studentName)} — ${esc(assignment.title)} ${passed}</h3>
+    <p class="muted" style="margin:2px 0 12px">Abgegeben am ${fmtDateTime(sub.submitted_at)}. Du kannst den Code hier laufen lassen.</p>
+    <div id="subHost"></div>`, true);
+  modalView = new HamsterView("#subHost", { mode:"view", model:assignment.territory, code:sub.code });
+}
+
+/* ---------- Schüler: Aufgabe lösen ---------- */
+async function solveAssignment(assignmentId){
+  shell(`<div class="center-load"><span class="spin"></span>Aufgabe lädt…</div>`);
+  let a, sub;
+  try{ a=await api.getAssignment(assignmentId); sub=await api.mySubmission(assignmentId); }
+  catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
+  const code = sub ? sub.code : (a.starter_code || DEFAULT_STARTER);
+  const statusHtml = sub ? (sub.passed===true?`<span class="badge">bestanden ✓</span>`:`<span class="badge gold">abgegeben</span>`) : `<span class="badge gray">offen</span>`;
+  document.getElementById("view").innerHTML = `
+    <div class="page-head"><button class="crumb" id="back">← zurück</button></div>
+    <div class="page-head" style="margin-top:0"><h2>${esc(a.title)}</h2><div class="spacer"></div><span id="solveStatus">${statusHtml}</span></div>
+    ${a.description?`<div class="card" style="margin-bottom:12px"><b>Aufgabe:</b> ${esc(a.description)}${a.goal?`<div class="muted" style="margin-top:6px;font-size:13px">🎯 Ziel: ${esc(goalLabel(a.goal))}</div>`:""}</div>`:""}
+    <div id="solveHost"></div>
+    <div style="display:flex;gap:10px;margin-top:14px;align-items:center">
+      <button class="btn btn-primary btn-lg" id="btnSubmit" style="max-width:240px">📤 Abgeben</button>
+      <span id="submitMsg" class="muted"></span>
+    </div>`;
+  document.getElementById("back").onclick = ()=> studentClassView(a.class_id);
+  pageView = new HamsterView("#solveHost", { mode:"solve", model:a.territory, code });
+  document.getElementById("btnSubmit").onclick = async ()=>{
+    const myCode = pageView.getCode();
+    const passed = gradeSubmission(myCode, a.territory, a.goal);
+    const btn=document.getElementById("btnSubmit"); btn.disabled=true; btn.textContent="Sende…";
+    try{
+      await api.upsertSubmission({ assignment_id:a.id, code:myCode, status:"submitted", passed });
+      btn.disabled=false; btn.textContent="📤 Erneut abgeben";
+      document.getElementById("solveStatus").innerHTML = passed===true?`<span class="badge">bestanden ✓</span>`:`<span class="badge gold">abgegeben</span>`;
+      const msg = passed===true ? "Super, Ziel erreicht! 🎉" : passed===false ? "Abgegeben – Ziel noch nicht erfüllt, du kannst es nochmal versuchen." : "Abgegeben! ✓";
+      document.getElementById("submitMsg").textContent = msg;
+      toast("Abgegeben!","ok");
+    }catch(e){ btn.disabled=false; btn.textContent="📤 Abgeben"; toast(e.message||"Fehler","err"); }
+  };
+}
+
+function fmtDateTime(s){ try{ return new Date(s).toLocaleString("de-DE",{day:"2-digit",month:"2-digit",year:"2-digit",hour:"2-digit",minute:"2-digit"}); }catch(e){ return ""; } }
 
 /* ============================================================================
    LEHRER-ANSICHT
@@ -235,25 +352,53 @@ async function teacherClassView(classId){
     }).join("")}</div>`
     : `<div class="empty"><span class="ic">🎒</span>Noch keine Schüler:innen. Teile den Code <b>${esc(cls.code)}</b>!</div>`;
 
+  let assignments=[], subs=[];
+  try{ assignments = await api.listAssignments(classId); subs = await api.classSubmissions(assignments.map(a=>a.id)); }
+  catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
+
+  const assignHtml = assignments.length ? `<div class="list">${assignments.map(a=>`
+      <div class="row"><span class="grow"><span class="t">${esc(a.title)}</span>${a.goal?`<span class="s">🎯 ${esc(goalLabel(a.goal))}</span>`:`<span class="s">kein Auto-Check</span>`}</span>
+        <button class="btn btn-sm btn-ghost" data-del="${a.id}" title="löschen">🗑️</button></div>`).join("")}</div>`
+    : `<div class="empty" style="padding:16px"><span class="ic">📝</span>Noch keine Aufgaben.</div>`;
+  const matrixHtml = (assignments.length && roster.length) ? buildMatrix(roster, assignments, subs)
+    : `<div class="empty"><span class="ic">📊</span>${!assignments.length?"Stelle Aufgaben – dann erscheint hier, wer was abgegeben hat.":"Noch keine Schüler:innen in der Klasse."}</div>`;
+
   document.getElementById("view").innerHTML = `
-    <div class="page-head">
-      <button class="crumb" id="back">← Meine Klassen</button>
-    </div>
+    <div class="page-head"><button class="crumb" id="back">← Meine Klassen</button></div>
     <div class="page-head" style="margin-top:0">
       <h2>${esc(cls.name)}</h2>
       <div class="spacer"></div>
       <span class="codechip" title="Einlade-Code">🔑 ${esc(cls.code)} <button class="btn btn-sm btn-ghost" id="copyCode" style="margin-left:4px">Kopieren</button></span>
     </div>
-    <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(280px,1fr));margin-bottom:8px">
+    <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(300px,1fr));margin-bottom:16px">
       <div class="card"><h3>🎒 Schüler:innen <span class="badge gray">${roster.length}</span></h3>
         <div style="margin-top:12px">${rosterHtml}</div></div>
-      <div class="card"><h3>📝 Aufgaben <span class="badge gray">0</span></h3>
-        <p class="muted" style="margin:10px 0 14px">Aufgaben (mit Territorium) und die Abgabe-Matrix kommen im nächsten Schritt.</p>
-        <button class="btn btn-blue" id="btnNewAssign" disabled>+ Aufgabe stellen (bald)</button>
-      </div>
-    </div>`;
+      <div class="card">
+        <div style="display:flex;align-items:center"><h3 style="margin:0">📝 Aufgaben <span class="badge gray">${assignments.length}</span></h3>
+          <div style="flex:1"></div><button class="btn btn-blue btn-sm" id="btnNewAssign">+ Aufgabe stellen</button></div>
+        <div style="margin-top:12px">${assignHtml}</div></div>
+    </div>
+    <h3 style="margin:0 0 10px">📊 Abgabe-Matrix</h3>
+    ${matrixHtml}`;
   document.getElementById("back").onclick = teacherHome;
   document.getElementById("copyCode").onclick = ()=>{ if(navigator.clipboard) navigator.clipboard.writeText(cls.code); toast("Code kopiert: "+cls.code,"ok"); };
+  document.getElementById("btnNewAssign").onclick = ()=> newAssignmentDialog(classId, ()=>teacherClassView(classId));
+  document.querySelectorAll("[data-del]").forEach(b=> b.onclick=async()=>{ if(!confirm("Aufgabe wirklich löschen?")) return; try{ await api.deleteAssignment(b.dataset.del); teacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } });
+  document.querySelectorAll(".cell[data-sub]").forEach(c=> c.onclick=()=>{ const s=subs.find(x=>x.id===c.dataset.sub); if(!s)return; const a=assignments.find(x=>x.id===s.assignment_id); const stu=roster.find(r=>r.student_id===s.student_id); const nm=(stu&&stu.profiles&&(stu.profiles.display_name||stu.profiles.username))||"?"; viewSubmissionDialog(a,s,nm); });
+}
+function buildMatrix(roster, assignments, subs){
+  const head = assignments.map(a=>`<th title="${esc(a.title)}">${esc(a.title.length>14?a.title.slice(0,13)+"…":a.title)}</th>`).join("");
+  const rows = roster.map(stu=>{
+    const nm=(stu.profiles&&(stu.profiles.display_name||stu.profiles.username))||"?";
+    const cells = assignments.map(a=>{
+      const s=subs.find(x=>x.assignment_id===a.id && x.student_id===stu.student_id);
+      if(!s) return `<td><span class="cell none">·</span></td>`;
+      const cl=s.passed===true?"pass":"done"; const ic=s.passed===true?"★":"✓";
+      return `<td><span class="cell ${cl}" data-sub="${s.id}" title="Abgabe ansehen">${ic}</span></td>`;
+    }).join("");
+    return `<tr><td class="stu">${esc(nm)}</td>${cells}</tr>`;
+  }).join("");
+  return `<div class="matrix-wrap"><table class="matrix"><thead><tr><th class="stu">Schüler:in</th>${head}</tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
 /* ============================================================================
@@ -309,14 +454,26 @@ function joinDialog(){
 }
 async function studentClassView(classId){
   shell(`<div class="center-load"><span class="spin"></span>Lädt…</div>`);
-  let cls;
-  try{ const { data } = await sb.from("classes").select("*").eq("id",classId).single(); cls=data; }
-  catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
+  let cls, assignments=[], mySubs=[];
+  try{
+    const { data } = await sb.from("classes").select("*").eq("id",classId).single(); cls=data;
+    assignments = await api.listAssignments(classId);
+    if(assignments.length){ const { data:s } = await sb.from("submissions").select("*").in("assignment_id",assignments.map(a=>a.id)).eq("student_id",ME.id); mySubs=s||[]; }
+  }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
+  const list = assignments.length ? `<div class="list">${assignments.map(a=>{
+      const s=mySubs.find(x=>x.assignment_id===a.id);
+      const badge = s ? (s.passed===true?`<span class="badge">bestanden ✓</span>`:`<span class="badge gold">abgegeben</span>`) : `<span class="badge gray">offen</span>`;
+      return `<div class="row clickrow" data-id="${a.id}" style="cursor:pointer">
+        <span class="grow"><span class="t">${esc(a.title)}</span>${a.description?`<span class="s">${esc(a.description.slice(0,70))}</span>`:""}</span>
+        ${badge}<span style="margin-left:8px;color:#7a8aa0">→</span></div>`;
+    }).join("")}</div>`
+    : `<div class="empty"><span class="ic">📝</span>Noch keine Aufgaben. Schau später wieder rein!</div>`;
   document.getElementById("view").innerHTML = `
     <div class="page-head"><button class="crumb" id="back">← Meine Klassen</button></div>
     <div class="page-head" style="margin-top:0"><h2>${esc(cls?cls.name:"Klasse")}</h2></div>
-    <div class="empty"><span class="ic">📝</span>Aufgaben erscheinen hier, sobald deine Lehrkraft welche stellt.<br>(Das Lösen im Simulator kommt im nächsten Schritt.)</div>`;
+    ${list}`;
   document.getElementById("back").onclick = studentHome;
+  document.querySelectorAll(".clickrow[data-id]").forEach(r=> r.onclick=()=> solveAssignment(r.dataset.id));
 }
 
 /* ---------- Kleinkram ---------- */
