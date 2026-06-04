@@ -449,12 +449,14 @@ async function teacherClassView(classId){
   catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
 
   const assignHtml = assignments.length ? `<div class="list">${assignments.map(a=>`
-      <div class="row"><span class="grow"><span class="t">${esc(a.title)} ${a.published?"":'<span class="badge gold">Entwurf</span>'}</span>${a.goal?`<span class="s">🎯 ${esc(goalLabel(a.goal))}</span>`:`<span class="s">kein Auto-Check</span>`}</span>
-        <button class="btn btn-sm btn-ghost" data-up="${a.id}" title="nach oben">↑</button>
-        <button class="btn btn-sm btn-ghost" data-down="${a.id}" title="nach unten">↓</button>
-        <button class="btn btn-sm btn-ghost" data-pub="${a.id}" data-on="${a.published?1:0}" title="${a.published?'verbergen (Entwurf)':'veröffentlichen'}">${a.published?'👁️':'🚀'}</button>
-        <button class="btn btn-sm btn-ghost" data-edit="${a.id}" title="bearbeiten">✏️</button>
-        <button class="btn btn-sm btn-ghost" data-del="${a.id}" title="löschen">🗑️</button></div>`).join("")}</div>`
+      <div class="row"><span class="grow"><span class="t">${esc(a.title)} ${a.published?"":'<span class="badge gold">Entwurf</span>'}</span><span class="s">${a.goal?`🎯 ${esc(goalLabel(a.goal))}`:"kein Auto-Check"}</span></span>
+        <span class="acts">
+          <button class="abtn" data-up="${a.id}" title="nach oben">↑</button>
+          <button class="abtn" data-down="${a.id}" title="nach unten">↓</button>
+          <button class="abtn" data-pub="${a.id}" data-on="${a.published?1:0}" title="${a.published?'verbergen (Entwurf)':'veröffentlichen'}">${a.published?'👁️':'🚀'}</button>
+          <button class="abtn" data-edit="${a.id}" title="bearbeiten">✏️</button>
+          <button class="abtn" data-del="${a.id}" title="löschen">🗑️</button>
+        </span></div>`).join("")}</div>`
     : `<div class="empty" style="padding:16px"><span class="ic">📝</span>Noch keine Aufgaben.</div>`;
   const matrixHtml = (assignments.length && roster.length) ? buildMatrix(roster, assignments, subs)
     : `<div class="empty"><span class="ic">📊</span>${!assignments.length?"Stelle Aufgaben – dann erscheint hier, wer was abgegeben hat.":"Noch keine Schüler:innen in der Klasse."}</div>`;
@@ -466,14 +468,12 @@ async function teacherClassView(classId){
       <div class="spacer"></div>
       <span class="codechip" title="Einlade-Code">🔑 ${esc(cls.code)} <button class="btn btn-sm btn-ghost" id="copyCode" style="margin-left:4px">Kopieren</button></span>
     </div>
-    <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(300px,1fr));margin-bottom:16px">
-      <div class="card"><h3>🎒 Schüler:innen <span class="badge gray">${roster.length}</span></h3>
-        <div style="margin-top:12px">${rosterHtml}</div></div>
-      <div class="card">
-        <div style="display:flex;align-items:center"><h3 style="margin:0">📝 Aufgaben <span class="badge gray">${assignments.length}</span></h3>
-          <div style="flex:1"></div><button class="btn btn-blue btn-sm" id="btnNewAssign">+ Aufgabe stellen</button></div>
-        <div style="margin-top:12px">${assignHtml}</div></div>
-    </div>
+    <div class="card" style="margin-bottom:14px"><h3>🎒 Schüler:innen <span class="badge gray">${roster.length}</span></h3>
+      <div style="margin-top:12px">${rosterHtml}</div></div>
+    <div class="card" style="margin-bottom:16px">
+      <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px"><h3 style="margin:0">📝 Aufgaben <span class="badge gray">${assignments.length}</span></h3>
+        <div style="flex:1"></div><button class="btn btn-blue btn-sm" id="btnNewAssign">+ Aufgabe stellen</button></div>
+      <div style="margin-top:12px">${assignHtml}</div></div>
     <h3 style="margin:0 0 10px">📊 Abgabe-Matrix</h3>
     ${matrixHtml}`;
   document.getElementById("back").onclick = teacherHome;
@@ -595,5 +595,9 @@ async function studentClassView(classId){
 /* ---------- Kleinkram ---------- */
 function errBox(e){ console.error(e); return `<div class="empty"><span class="ic">⚠️</span>${esc(e&&e.message||"Etwas ist schiefgelaufen.")}</div>`; }
 function fmtDate(s){ try{ const d=new Date(s); return d.toLocaleDateString("de-DE",{day:"2-digit",month:"2-digit",year:"2-digit"}); }catch(e){ return ""; } }
+
+/* ---------- Footer: Version (letztes Update) + Copyright ---------- */
+const APP_BUILD = "2026-06-04 13:44";
+(function(){ const f=document.getElementById("appfoot"); if(f) f.innerHTML='© 2026 <b>Laurens Offinger</b> &middot; Version '+APP_BUILD+' Uhr'; })();
 
 boot();

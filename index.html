@@ -55,12 +55,12 @@
   textarea.input{resize:vertical;min-height:90px;font-weight:600}
 
   /* ---------- Auth ---------- */
-  .auth-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;
+  .auth-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px 20px 44px;
     background:radial-gradient(1200px 500px at 50% -10%, #eaf7ff, transparent), var(--bg)}
-  .auth-card{background:var(--card);border-radius:26px;box-shadow:var(--shadow);width:100%;max-width:430px;padding:30px 30px 26px;animation:pop .35s cubic-bezier(.2,1.2,.4,1)}
+  .auth-card{background:var(--card);border-radius:26px;box-shadow:var(--shadow);width:100%;max-width:490px;padding:30px 30px 26px;animation:pop .35s cubic-bezier(.2,1.2,.4,1)}
   @keyframes pop{from{transform:scale(.94) translateY(10px);opacity:0}to{transform:none;opacity:1}}
   .auth-card .mascot{font-size:58px;text-align:center;line-height:1}
-  .auth-card h1{text-align:center;font-size:25px;margin:8px 0 2px}
+  .auth-card h1{text-align:center;font-size:17px;margin:8px 0 2px;white-space:nowrap}
   .auth-card .sub{text-align:center;color:var(--muted);font-weight:700;margin:0 0 20px;font-size:14.5px}
   .tabs{display:flex;background:var(--line2);border-radius:14px;padding:5px;margin:0 0 22px;gap:4px}
   .tabs button{flex:1;border:none;background:transparent;font-family:inherit;font-weight:800;font-size:14.5px;color:var(--muted);padding:10px;border-radius:10px;cursor:pointer}
@@ -75,10 +75,12 @@
   .auth-foot{text-align:center;color:var(--muted);font-size:13px;margin:16px 0 0;font-weight:700}
   .auth-credit{text-align:center;color:var(--muted);font-size:12px;margin:16px 0 0;font-weight:800;border-top:1px solid var(--line2);padding-top:12px}
   .auth-credit b{color:var(--gold-d)}
+  #appfoot{position:fixed;left:0;right:0;bottom:0;text-align:center;font-size:11px;color:var(--muted);font-weight:700;padding:5px 10px;background:rgba(247,249,252,.93);border-top:1px solid var(--line);z-index:30;pointer-events:none}
+  #appfoot b{color:var(--gold-d)}
 
   /* ---------- App shell ---------- */
   .topbar{position:sticky;top:0;z-index:20;background:#fff;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:12px;padding:11px 18px;box-shadow:0 2px 10px rgba(40,60,90,.04)}
-  .topbar .brand{display:flex;align-items:center;gap:9px;font-weight:900;font-size:18px}
+  .topbar .brand{display:flex;align-items:center;gap:9px;font-weight:900;font-size:16px;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .topbar .brand .h{font-size:24px}
   .topbar .spacer{margin-left:auto}
   .chip{display:inline-flex;align-items:center;gap:7px;background:var(--line2);border-radius:999px;padding:6px 12px 6px 7px;font-weight:800;font-size:13.5px}
@@ -109,8 +111,11 @@
   .list{display:flex;flex-direction:column;gap:10px}
   .row{display:flex;align-items:center;gap:12px;background:#fff;border:2px solid var(--line);border-radius:14px;padding:13px 15px}
   .row .grow{flex:1;min-width:0}
-  .row .grow .t{font-weight:800}
-  .row .grow .s{color:var(--muted);font-size:13px;font-weight:700}
+  .row .grow .t{display:block;font-weight:800}
+  .row .grow .s{display:block;color:var(--muted);font-size:13px;font-weight:700;margin-top:2px}
+  .acts{display:flex;gap:5px;flex:none}
+  .abtn{border:1px solid var(--line);background:#fff;border-radius:9px;padding:6px 9px;font-size:14px;line-height:1;cursor:pointer;transition:.1s}
+  .abtn:hover{border-color:#cdd5e0;background:#fafbfd}
 
   /* ---------- Matrix ---------- */
   .matrix-wrap{overflow:auto;background:#fff;border-radius:var(--radius);box-shadow:var(--shadow);padding:6px}
@@ -135,7 +140,7 @@
   .modal .x{float:right;border:none;background:var(--line2);width:34px;height:34px;border-radius:10px;font-size:18px;cursor:pointer;font-weight:900;color:var(--muted)}
 
   /* ---------- Toast ---------- */
-  #toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%) translateY(24px);background:#2b3a4f;color:#fff;padding:13px 20px;border-radius:14px;font-weight:800;box-shadow:var(--shadow);opacity:0;transition:.25s;pointer-events:none;z-index:120;max-width:90vw}
+  #toast{position:fixed;bottom:46px;left:50%;transform:translateX(-50%) translateY(24px);background:#2b3a4f;color:#fff;padding:13px 20px;border-radius:14px;font-weight:800;box-shadow:var(--shadow);opacity:0;transition:.25s;pointer-events:none;z-index:120;max-width:90vw}
   #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
   #toast.err{background:var(--red-d)} #toast.ok{background:var(--green-d)}
 
@@ -152,6 +157,7 @@
 <body>
   <div id="splash"><div class="h">🐹</div><div class="t">Informatik am Gymnasium Wesermünde lädt…</div></div>
   <div id="app"></div>
+  <footer id="appfoot"></footer>
   <div id="toast"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
