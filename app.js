@@ -209,6 +209,7 @@ const api = {
 
 /* ===== Aufgaben & Abgaben ===== */
 let modalView=null, pageView=null;
+let solveState=null, reviewState=null, sampleState=null;
 const DEFAULT_STARTER = "void main() {\n    \n}";
 api.listAssignments = async (classId)=>{ const {data,error}=await sb.from("assignments").select("*").eq("class_id",classId).order("position").order("created_at"); if(error) throw error; return data||[]; };
 api.getAssignment = async (id)=>{ const {data,error}=await sb.from("assignments").select("*").eq("id",id).single(); if(error) throw error; return data; };
@@ -219,9 +220,24 @@ api.listTemplates = async ()=>{ const {data,error}=await sb.from("templates").se
 api.createTemplate = async (t)=>{ const {data,error}=await sb.from("templates").insert(Object.assign({owner_id:ME.id},t)).select().single(); if(error) throw error; return data; };
 api.deleteTemplate = async (id)=>{ const {error}=await sb.from("templates").delete().eq("id",id); if(error) throw error; };
 async function moveAssignment(list, id, dir){ const i=list.findIndex(x=>x.id===id); const j=i+dir; if(i<0||j<0||j>=list.length) return; const a=list[i], b=list[j]; await api.updateAssignment(a.id,{position:b.position}); await api.updateAssignment(b.id,{position:a.position}); }
-api.upsertSubmission = async (s)=>{ const row=Object.assign({student_id:ME.id, submitted_at:new Date().toISOString()}, s); const {data,error}=await sb.from("submissions").upsert(row,{onConflict:"assignment_id,student_id"}).select().single(); if(error) throw error; return data; };
-api.mySubmission = async (assignmentId)=>{ const {data,error}=await sb.from("submissions").select("*").eq("assignment_id",assignmentId).eq("student_id",ME.id).maybeSingle(); if(error) throw error; return data; };
-api.classSubmissions = async (assignmentIds)=>{ if(!assignmentIds.length) return []; const {data,error}=await sb.from("submissions").select("*").in("assignment_id",assignmentIds); if(error) throw error; return data||[]; };
+/* Abgaben: mehrere je Schüler:in + Historie; genau eine ist "aktuell" (is_current) */
+api.addSubmission = async (s)=>{ const row=Object.assign({student_id:ME.id, is_current:true, submitted_at:new Date().toISOString()}, s); const {data,error}=await sb.from("submissions").insert(row).select().single(); if(error) throw error; return data; };
+api.myCurrentSubmission = async (assignmentId)=>{ const {data,error}=await sb.from("submissions").select("*").eq("assignment_id",assignmentId).eq("student_id",ME.id).eq("is_current",true).maybeSingle(); if(error) throw error; return data; };
+api.mySubmissions = async (assignmentId)=>{ const {data,error}=await sb.from("submissions").select("*").eq("assignment_id",assignmentId).eq("student_id",ME.id).order("submitted_at",{ascending:false}); if(error) throw error; return data||[]; };
+api.classSubmissions = async (assignmentIds)=>{ if(!assignmentIds.length) return []; const {data,error}=await sb.from("submissions").select("*").in("assignment_id",assignmentIds).order("submitted_at",{ascending:false}); if(error) throw error; return data||[]; };
+
+/* Lehrer-Kommentare zu einer Abgabe (für Schüler:in freigebbar) */
+api.getComment = async (submissionId)=>{ const {data,error}=await sb.from("submission_comments").select("*").eq("submission_id",submissionId).maybeSingle(); if(error) throw error; return data; };
+api.myComments = async (submissionIds)=>{ if(!submissionIds.length) return []; const {data,error}=await sb.from("submission_comments").select("*").in("submission_id",submissionIds); if(error) throw error; return data||[]; };
+api.saveComment = async (submissionId, body, released)=>{ const {data,error}=await sb.from("submission_comments").upsert({submission_id:submissionId, author_id:ME.id, body, released, updated_at:new Date().toISOString()},{onConflict:"submission_id"}).select().single(); if(error) throw error; return data; };
+api.deleteComment = async (submissionId)=>{ const {error}=await sb.from("submission_comments").delete().eq("submission_id",submissionId); if(error) throw error; };
+
+/* Musterlösungen (mehrere je Aufgabe, freigebbar, löschbar) */
+api.listSamples = async (assignmentId)=>{ const {data,error}=await sb.from("sample_solutions").select("*").eq("assignment_id",assignmentId).order("created_at"); if(error) throw error; return data||[]; };
+api.releasedSamples = async (assignmentId)=>{ const {data,error}=await sb.from("sample_solutions").select("*").eq("assignment_id",assignmentId).eq("released",true).order("created_at"); if(error) throw error; return data||[]; };
+api.createSample = async (s)=>{ const {data,error}=await sb.from("sample_solutions").insert(Object.assign({author_id:ME.id}, s)).select().single(); if(error) throw error; return data; };
+api.updateSample = async (id, patch)=>{ const {data,error}=await sb.from("sample_solutions").update(patch).eq("id",id).select().single(); if(error) throw error; return data; };
+api.deleteSample = async (id)=>{ const {error}=await sb.from("sample_solutions").delete().eq("id",id); if(error) throw error; };
 
 /* Headless Auto-Check: führt den Code auf einer frischen Kopie des Territoriums aus */
 function gradeSubmission(code, territory, goal){
@@ -304,61 +320,257 @@ function newAssignmentDialog(classId, onDone, existing){
   };
 }
 
-/* ---------- Lehrer: Abgabe live öffnen, bearbeiten & korrigieren ---------- */
-function reviewSubmission(assignment, sub, studentName, classId){
-  const passed = sub.passed===true ? `<span class="badge">bestanden ✓</span>` : `<span class="badge gold">abgegeben</span>`;
+/* ---------- Lehrer: Abgabe(n) live öffnen, bearbeiten, kommentieren ---------- */
+function reviewSubmission(assignment, history, studentName, classId){
+  history = (history||[]).slice().sort((x,y)=> new Date(y.submitted_at)-new Date(x.submitted_at));
+  const current = history.find(s=>s.is_current) || history[0];
+  reviewState = { assignment, history, studentName, classId, viewing: current };
   shell(`
     <div class="page-head"><button class="crumb" id="back">← zurück zur Klasse</button></div>
     <div class="page-head" style="margin-top:0">
       <h2>Abgabe von ${esc(studentName)}</h2>
       <div class="spacer"></div>
-      ${passed}
-      <button class="btn btn-ghost btn-sm" id="btnOrig" style="margin-left:8px" title="Original-Abgabe wiederherstellen">↺ Original</button>
+      <span id="revStatus"></span>
+      <button class="btn btn-ghost btn-sm" id="btnOrig" style="margin-left:8px" title="Diese Abgabe wiederherstellen">↺ Original</button>
+      <button class="btn btn-blue btn-sm" id="btnSaveSample" style="margin-left:8px" title="Aktuellen Code als Musterlösung speichern">★ Als Musterlösung</button>
     </div>
     <div class="card" style="margin-bottom:10px;padding:12px 16px">
       <b>Aufgabe:</b> ${esc(assignment.title)}${assignment.description?` – ${esc(assignment.description)}`:""}
-      <span class="muted" style="font-size:12px;display:block;margin-top:3px">🛠️ Live-Korrektur: Du kannst den Code bearbeiten &amp; laufen lassen – Änderungen werden nicht gespeichert. Abgegeben am ${fmtDateTime(sub.submitted_at)}.</span>
+      <span class="muted" style="font-size:12px;display:block;margin-top:3px">🛠️ Live-Korrektur: Du kannst den Code bearbeiten &amp; laufen lassen – Änderungen werden nicht automatisch gespeichert.</span>
     </div>
-    <div id="reviewHost" style="height:72vh;min-height:520px"></div>`);
+    ${history.length>1?`<div class="card" style="margin-bottom:10px;padding:10px 14px"><b style="font-size:13px">Versionen (neueste zuerst):</b> <span id="verNav"></span></div>`:""}
+    <div id="reviewHost" style="height:60vh;min-height:440px"></div>
+    <div class="card" style="margin-top:14px">
+      <h3 style="margin:0 0 8px">💬 Rückmeldung an ${esc(studentName)}</h3>
+      <textarea class="input" id="revComment" style="min-height:70px" placeholder="Kommentar zu dieser Abgabe…"></textarea>
+      <div style="display:flex;gap:12px;align-items:center;margin-top:10px;flex-wrap:wrap">
+        <label style="display:flex;gap:8px;align-items:center;font-weight:800;cursor:pointer"><input type="checkbox" id="revRelease" style="width:18px;height:18px"> Für Schüler:in sichtbar</label>
+        <div style="flex:1"></div>
+        <button class="btn btn-ghost btn-sm" id="revDelete" style="display:none">Löschen</button>
+        <button class="btn btn-primary" id="revSave">Kommentar speichern</button>
+      </div>
+      <span id="revMsg" class="muted" style="display:block;margin-top:6px"></span>
+    </div>`);
   document.getElementById("back").onclick = ()=> teacherClassView(classId);
-  pageView = new HamsterView("#reviewHost", { mode:"solve", model:assignment.territory, code:sub.code, fill:true, goal:assignment.goal });
-  document.getElementById("btnOrig").onclick = ()=> pageView.setCode(sub.code);
+  document.getElementById("btnOrig").onclick = ()=>{ if(pageView&&reviewState.viewing) pageView.setCode(reviewState.viewing.code); };
+  document.getElementById("btnSaveSample").onclick = saveReviewAsSample;
+  document.getElementById("revSave").onclick = saveReviewComment;
+  document.getElementById("revDelete").onclick = deleteReviewComment;
+  showReviewVersion(current);
+}
+function renderVerNav(){
+  const s=reviewState; const el=document.getElementById("verNav"); if(!el) return;
+  el.innerHTML = s.history.map((sub,i)=>{
+    const on = s.viewing && s.viewing.id===sub.id;
+    const tag = sub.is_current?" ●":"";
+    return `<button class="abtn ${on?'on':''}" data-ver="${sub.id}" title="${esc(fmtDateTime(sub.submitted_at))}${sub.is_current?' · aktuelle Version':''}">v${s.history.length-i}${tag}</button>`;
+  }).join(" ");
+  el.querySelectorAll("[data-ver]").forEach(b=> b.onclick=()=>{ const sub=s.history.find(x=>x.id===b.dataset.ver); showReviewVersion(sub); });
+}
+async function showReviewVersion(sub){
+  const s=reviewState; if(!sub) return; s.viewing=sub;
+  const passed = sub.passed===true ? `<span class="badge">bestanden ✓</span>` : `<span class="badge gold">abgegeben</span>`;
+  const st=document.getElementById("revStatus"); if(st) st.innerHTML = passed + ` <span class="muted" style="font-size:12px">${esc(fmtDateTime(sub.submitted_at))}</span>`;
+  if(pageView){ try{ pageView.destroy(); }catch(e){} }
+  pageView = new HamsterView("#reviewHost", { mode:"solve", model:s.assignment.territory, code:sub.code, fill:true, goal:s.assignment.goal });
+  if(s.history.length>1) renderVerNav();
+  const ta=document.getElementById("revComment"), rel=document.getElementById("revRelease"), del=document.getElementById("revDelete"), msg=document.getElementById("revMsg");
+  if(ta) ta.value=""; if(rel) rel.checked=false; if(del) del.style.display="none"; if(msg) msg.textContent="";
+  try{ const c=await api.getComment(sub.id); if(c){ if(ta) ta.value=c.body||""; if(rel) rel.checked=!!c.released; if(del) del.style.display=""; } }catch(e){}
+}
+async function saveReviewComment(){
+  const s=reviewState; const body=document.getElementById("revComment").value.trim();
+  const released=document.getElementById("revRelease").checked;
+  if(!body){ toast("Bitte einen Kommentar eingeben.","err"); return; }
+  const btn=document.getElementById("revSave"); btn.disabled=true; btn.textContent="Speichere…";
+  try{ await api.saveComment(s.viewing.id, body, released); document.getElementById("revDelete").style.display=""; document.getElementById("revMsg").textContent = released?"Gespeichert & für Schüler:in sichtbar ✓":"Gespeichert (noch nicht freigegeben) ✓"; toast("Kommentar gespeichert ✓","ok"); }
+  catch(e){ toast(e.message||"Fehler","err"); }
+  finally{ btn.disabled=false; btn.textContent="Kommentar speichern"; }
+}
+async function deleteReviewComment(){
+  const s=reviewState; if(!confirm("Kommentar löschen?")) return;
+  try{ await api.deleteComment(s.viewing.id); document.getElementById("revComment").value=""; document.getElementById("revRelease").checked=false; document.getElementById("revDelete").style.display="none"; document.getElementById("revMsg").textContent="Kommentar gelöscht."; toast("Gelöscht","ok"); }
+  catch(e){ toast(e.message||"Fehler","err"); }
+}
+async function saveReviewAsSample(){
+  const s=reviewState; const code=pageView?pageView.getCode():"";
+  if(!code.trim()){ toast("Kein Code zum Speichern.","err"); return; }
+  const title=prompt("Titel der Musterlösung (optional):","Musterlösung");
+  if(title===null) return;
+  try{ await api.createSample({ assignment_id:s.assignment.id, title:title.trim()||null, code, released:false }); toast("Als Musterlösung gespeichert ★ (noch nicht freigegeben)","ok"); }
+  catch(e){ toast(e.message||"Fehler","err"); }
 }
 
-/* ---------- Schüler: Aufgabe lösen ---------- */
+/* ---------- Lehrer: Musterlösungen verwalten ---------- */
+async function sampleManager(assignment, classId){
+  shell(`<div class="center-load"><span class="spin"></span>Musterlösungen…</div>`);
+  let samples=[];
+  try{ samples=await api.listSamples(assignment.id); }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
+  sampleState = { assignment, classId, samples, editingId:null };
+  document.getElementById("view").innerHTML = `
+    <div class="page-head"><button class="crumb" id="back">← zurück zur Klasse</button></div>
+    <div class="page-head" style="margin-top:0"><h2>🏆 Musterlösungen – ${esc(assignment.title)}</h2></div>
+    <div class="card" style="margin-bottom:12px;padding:12px 16px">
+      <span class="muted" style="font-size:13px">Schreibe eine Lösung, lass sie laufen und speichere sie. <b>Freigegebene</b> Musterlösungen können Schüler:innen ansehen.</span>
+    </div>
+    <div id="smList"></div>
+    <div class="page-head" style="margin-top:10px"><h3 id="smEditTitle" style="margin:0">➕ Neue Musterlösung</h3><div class="spacer"></div><span id="smEditHint" class="muted" style="font-size:12px"></span></div>
+    <div class="field" style="max-width:420px"><label>Titel (optional)</label><input class="input" id="smTitleIn" placeholder="z. B. Kurze Lösung" maxlength="80"></div>
+    <div id="smEditHost" style="height:58vh;min-height:440px"></div>
+    <div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap;align-items:center">
+      <button class="btn btn-primary btn-lg" id="smSave" style="max-width:260px">💾 Speichern</button>
+      <button class="btn btn-ghost" id="smNew" style="display:none">➕ Neue (Editor leeren)</button>
+      <span id="smMsg" class="muted"></span>
+    </div>`;
+  document.getElementById("back").onclick = ()=> teacherClassView(classId);
+  pageView = new HamsterView("#smEditHost", { mode:"solve", model:assignment.territory, code:(assignment.starter_code||DEFAULT_STARTER), fill:true, goal:assignment.goal });
+  renderSampleList();
+  document.getElementById("smSave").onclick = saveSampleFromEditor;
+  document.getElementById("smNew").onclick = ()=> resetSampleEditor();
+}
+function renderSampleList(){
+  const s=sampleState; const el=document.getElementById("smList"); if(!el) return;
+  if(!s.samples.length){ el.innerHTML=`<div class="empty" style="padding:14px"><span class="ic">🏆</span>Noch keine Musterlösung gespeichert.</div>`; return; }
+  el.innerHTML = `<div class="list">${s.samples.map((sm,i)=>`
+    <div class="row"><span class="grow"><span class="t">${esc(sm.title||("Musterlösung "+(i+1)))} ${sm.released?'<span class="badge">freigegeben</span>':'<span class="badge gray">privat</span>'}</span><span class="s">${esc(fmtDateTime(sm.created_at))}</span></span>
+      <span class="acts">
+        <button class="abtn" data-load="${sm.id}" title="in den Editor laden">✏️</button>
+        <button class="abtn" data-rel="${sm.id}" data-on="${sm.released?1:0}" title="${sm.released?'Freigabe zurücknehmen':'für Schüler:innen freigeben'}">${sm.released?'🙈':'🚀'}</button>
+        <button class="abtn" data-del="${sm.id}" title="löschen">🗑️</button>
+      </span></div>`).join("")}</div>`;
+  el.querySelectorAll("[data-load]").forEach(b=> b.onclick=()=>{ const sm=s.samples.find(x=>x.id===b.dataset.load); loadSampleIntoEditor(sm); });
+  el.querySelectorAll("[data-rel]").forEach(b=> b.onclick=async()=>{ try{ await api.updateSample(b.dataset.rel,{released:b.dataset.on!=="1"}); sampleManager(s.assignment, s.classId); }catch(e){ toast(e.message||"Fehler","err"); } });
+  el.querySelectorAll("[data-del]").forEach(b=> b.onclick=async()=>{ if(!confirm("Musterlösung löschen?"))return; try{ await api.deleteSample(b.dataset.del); sampleManager(s.assignment, s.classId); }catch(e){ toast(e.message||"Fehler","err"); } });
+}
+function loadSampleIntoEditor(sm){
+  const s=sampleState; s.editingId=sm.id;
+  if(pageView) pageView.setCode(sm.code);
+  document.getElementById("smTitleIn").value = sm.title||"";
+  document.getElementById("smEditTitle").textContent = "✏️ Musterlösung bearbeiten";
+  document.getElementById("smEditHint").textContent = "Du bearbeitest „"+(sm.title||"Musterlösung")+"“";
+  document.getElementById("smNew").style.display="";
+  document.getElementById("smSave").textContent="💾 Änderungen speichern";
+  const h=document.getElementById("smEditHost"); if(h) h.scrollIntoView({behavior:"smooth",block:"center"});
+}
+function resetSampleEditor(){
+  const s=sampleState; s.editingId=null;
+  if(pageView) pageView.setCode(s.assignment.starter_code||DEFAULT_STARTER);
+  document.getElementById("smTitleIn").value="";
+  document.getElementById("smEditTitle").textContent="➕ Neue Musterlösung";
+  document.getElementById("smEditHint").textContent="";
+  document.getElementById("smNew").style.display="none";
+  document.getElementById("smSave").textContent="💾 Speichern";
+}
+async function saveSampleFromEditor(){
+  const s=sampleState; const code=pageView?pageView.getCode():""; const title=document.getElementById("smTitleIn").value.trim()||null;
+  if(!code.trim()){ toast("Kein Code zum Speichern.","err"); return; }
+  const btn=document.getElementById("smSave"); const lbl=btn.textContent; btn.disabled=true; btn.textContent="Speichere…";
+  try{
+    if(s.editingId){ await api.updateSample(s.editingId,{code,title}); toast("Musterlösung aktualisiert ✓","ok"); }
+    else { await api.createSample({assignment_id:s.assignment.id, code, title, released:false}); toast("Musterlösung gespeichert ★","ok"); }
+    sampleManager(s.assignment, s.classId);
+  }catch(e){ btn.disabled=false; btn.textContent=lbl; toast(e.message||"Fehler","err"); }
+}
+
+/* ---------- Schüler: Aufgabe lösen (Historie, Kommentare, Musterlösung) ---------- */
 async function solveAssignment(assignmentId){
   shell(`<div class="center-load"><span class="spin"></span>Aufgabe lädt…</div>`);
-  let a, sub;
-  try{ a=await api.getAssignment(assignmentId); sub=await api.mySubmission(assignmentId); }
-  catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
-  const code = sub ? sub.code : (a.starter_code || DEFAULT_STARTER);
-  const statusHtml = sub ? (sub.passed===true?`<span class="badge">bestanden ✓</span>`:`<span class="badge gold">abgegeben</span>`) : `<span class="badge gray">offen</span>`;
+  let a, history=[], comments=[], samples=[];
+  try{
+    a = await api.getAssignment(assignmentId);
+    history = await api.mySubmissions(assignmentId);
+    comments = await api.myComments(history.map(s=>s.id));
+    samples = await api.releasedSamples(assignmentId);
+  }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
+  const current = history.find(s=>s.is_current) || null;
+  const code = current ? current.code : (a.starter_code || DEFAULT_STARTER);
+  solveState = { a, history, comments, samples, current, viewingId: current?current.id:null };
+  const statusHtml = current ? (current.passed===true?`<span class="badge">bestanden ✓</span>`:`<span class="badge gold">abgegeben</span>`) : `<span class="badge gray">offen</span>`;
+  const curComment = current ? comments.find(c=>c.submission_id===current.id && c.released) : null;
   document.getElementById("view").innerHTML = `
     <div class="page-head"><button class="crumb" id="back">← zurück</button></div>
     <div class="page-head" style="margin-top:0"><h2>${esc(a.title)}</h2><div class="spacer"></div><span id="solveStatus">${statusHtml}</span></div>
     ${a.description?`<div class="card" style="margin-bottom:12px"><b>Aufgabe:</b> ${esc(a.description)}${a.goal?`<div class="muted" style="margin-top:6px;font-size:13px">🎯 Ziel: ${esc(goalLabel(a.goal))}</div>`:""}</div>`:""}
     ${a.hint?`<div style="margin-bottom:12px"><button class="btn btn-ghost btn-sm" id="btnHint">💡 Tipp anzeigen</button><div id="hintBox" class="card" style="display:none;margin-top:8px;background:#fffaf0">💡 ${esc(a.hint)}</div></div>`:""}
-    <div id="solveHost" style="height:72vh;min-height:520px"></div>
-    <div style="display:flex;gap:10px;margin-top:14px;align-items:center">
+    <div id="curComment" style="margin-bottom:12px">${curComment?`<div class="card" style="background:#eef6ff;border-color:#bcd9f5"><b>💬 Rückmeldung deiner Lehrkraft:</b><div style="margin-top:4px;white-space:pre-wrap">${esc(curComment.body)}</div></div>`:""}</div>
+    <div id="editNote" class="editnote" style="display:none"></div>
+    <div id="solveHost" style="height:68vh;min-height:460px"></div>
+    <div style="display:flex;gap:10px;margin-top:14px;align-items:center;flex-wrap:wrap">
       <button class="btn btn-primary btn-lg" id="btnSubmit" style="max-width:240px">📤 Abgeben</button>
+      <button class="btn btn-ghost" id="btnToLive" style="display:none">↺ Zur aktuellen Version</button>
+      ${samples.length?`<button class="btn btn-ghost" id="btnSamples">🏆 Musterlösung${samples.length>1?"en":""} ansehen</button>`:""}
       <span id="submitMsg" class="muted"></span>
-    </div>`;
+    </div>
+    <div id="histCard"></div>`;
   document.getElementById("back").onclick = ()=> studentClassView(a.class_id);
   if(a.hint){ const hb=document.getElementById("hintBox"), bh=document.getElementById("btnHint"); bh.onclick=()=>{ const show=hb.style.display==="none"; hb.style.display=show?"block":"none"; bh.textContent=show?"💡 Tipp verbergen":"💡 Tipp anzeigen"; }; }
   pageView = new HamsterView("#solveHost", { mode:"solve", model:a.territory, code, fill:true, goal:a.goal });
-  document.getElementById("btnSubmit").onclick = async ()=>{
-    const myCode = pageView.getCode();
-    const passed = gradeSubmission(myCode, a.territory, a.goal);
-    const btn=document.getElementById("btnSubmit"); btn.disabled=true; btn.textContent="Sende…";
-    try{
-      await api.upsertSubmission({ assignment_id:a.id, code:myCode, status:"submitted", passed });
-      btn.disabled=false; btn.textContent="📤 Erneut abgeben";
-      document.getElementById("solveStatus").innerHTML = passed===true?`<span class="badge">bestanden ✓</span>`:`<span class="badge gold">abgegeben</span>`;
-      const msg = passed===true ? "Super, Ziel erreicht! 🎉" : passed===false ? "Abgegeben – Ziel noch nicht erfüllt, du kannst es nochmal versuchen." : "Abgegeben! ✓";
-      document.getElementById("submitMsg").textContent = msg;
-      toast("Abgegeben!","ok");
-    }catch(e){ btn.disabled=false; btn.textContent="📤 Abgeben"; toast(e.message||"Fehler","err"); }
-  };
+  renderHistoryCard();
+  const sb2=document.getElementById("btnSamples"); if(sb2) sb2.onclick=()=> openSamplesViewer(a, samples);
+  document.getElementById("btnToLive").onclick = ()=> loadVersion(solveState.current);
+  document.getElementById("btnSubmit").onclick = submitSolution;
+}
+function setEditNote(){
+  const el=document.getElementById("editNote"); if(!el||!solveState) return;
+  const s=solveState; const v=s.history.find(x=>x.id===s.viewingId);
+  const toLive=document.getElementById("btnToLive");
+  if(v && !v.is_current){
+    el.style.display="block";
+    el.innerHTML = `✏️ Du bearbeitest eine Kopie deiner Abgabe vom <b>${esc(fmtDateTime(v.submitted_at))}</b>. Mit „Abgeben" wird das deine neue aktuelle Version.`;
+    if(toLive) toLive.style.display="";
+  } else {
+    el.style.display="none";
+    if(toLive) toLive.style.display="none";
+  }
+}
+function loadVersion(sub){
+  if(!sub||!solveState) return;
+  solveState.viewingId = sub.id;
+  if(pageView) pageView.setCode(sub.code);
+  setEditNote();
+  const h=document.getElementById("solveHost"); if(h) h.scrollIntoView({behavior:"smooth",block:"start"});
+}
+function renderHistoryCard(){
+  const s=solveState; const card=document.getElementById("histCard"); if(!card) return;
+  if(!s.history.length){ card.innerHTML=""; return; }
+  const items = s.history.map(sub=>{
+    const c = s.comments.find(x=>x.submission_id===sub.id && x.released);
+    const badge = sub.passed===true?`<span class="badge">bestanden ✓</span>`:`<span class="badge gold">abgegeben</span>`;
+    const live = sub.is_current?`<span class="badge blue">aktuell</span>`:"";
+    const open = sub.id===s.viewingId?`<button class="btn btn-sm btn-ghost" disabled style="margin-left:8px;opacity:.5">geöffnet</button>`:`<button class="btn btn-sm btn-ghost" data-open="${sub.id}" style="margin-left:8px">Öffnen</button>`;
+    return `<div class="row"><span class="grow"><span class="t">${esc(fmtDateTime(sub.submitted_at))} ${live}</span>${c?`<span class="s">💬 ${esc(c.body.slice(0,90))}${c.body.length>90?"…":""}</span>`:""}</span>
+      ${badge}${open}</div>`;
+  }).join("");
+  card.innerHTML = `<div class="card" style="margin-top:16px"><h3 style="margin:0">🗂️ Meine Abgaben <span class="badge gray">${s.history.length}</span></h3>
+    <div class="list" style="margin-top:10px">${items}</div></div>`;
+  card.querySelectorAll("[data-open]").forEach(b=> b.onclick=()=>{ const sub=s.history.find(x=>x.id===b.dataset.open); loadVersion(sub); });
+}
+async function submitSolution(){
+  const s=solveState, a=s.a;
+  const myCode = pageView.getCode();
+  const passed = gradeSubmission(myCode, a.territory, a.goal);
+  const btn=document.getElementById("btnSubmit"); btn.disabled=true; btn.textContent="Sende…";
+  try{
+    const row = await api.addSubmission({ assignment_id:a.id, code:myCode, status:"submitted", passed });
+    s.history.forEach(x=> x.is_current=false);
+    s.history.unshift(row); s.current=row; s.viewingId=row.id;
+    document.getElementById("solveStatus").innerHTML = passed===true?`<span class="badge">bestanden ✓</span>`:`<span class="badge gold">abgegeben</span>`;
+    document.getElementById("submitMsg").textContent = passed===true ? "Super, Ziel erreicht! 🎉" : passed===false ? "Abgegeben – Ziel noch nicht erfüllt, du kannst es nochmal versuchen." : "Abgegeben! ✓";
+    setEditNote(); renderHistoryCard();
+    btn.disabled=false; btn.textContent="📤 Erneut abgeben";
+    toast("Abgegeben!","ok");
+  }catch(e){ btn.disabled=false; btn.textContent="📤 Abgeben"; toast(e.message||"Fehler","err"); }
+}
+function openSamplesViewer(a, samples){
+  let idx=0; const nav = samples.length>1;
+  openModal(`<button class="x" onclick="closeModal()">✕</button>
+    <h3>🏆 Musterlösung${samples.length>1?"en":""}</h3>
+    ${nav?`<div style="display:flex;gap:8px;align-items:center;margin-bottom:8px"><button class="btn btn-ghost btn-sm" id="smPrev">←</button><span id="smTitle" style="font-weight:800;flex:1;text-align:center"></span><button class="btn btn-ghost btn-sm" id="smNext">→</button></div>`:`<div id="smTitle" style="font-weight:800;margin-bottom:8px"></div>`}
+    <p class="muted" style="font-size:12px;margin:0 0 8px">Du kannst die Lösung laufen lassen und Schritt für Schritt nachvollziehen.</p>
+    <div id="smHost" style="height:58vh;min-height:400px"></div>`, true);
+  const show=()=>{ const sm=samples[idx]; document.getElementById("smTitle").textContent=sm.title||("Musterlösung "+(idx+1)); if(modalView){ try{ modalView.destroy(); }catch(e){} } modalView=new HamsterView("#smHost",{mode:"solve", model:a.territory, code:sm.code, fill:true, goal:a.goal}); };
+  if(nav){ document.getElementById("smPrev").onclick=()=>{ idx=(idx-1+samples.length)%samples.length; show(); }; document.getElementById("smNext").onclick=()=>{ idx=(idx+1)%samples.length; show(); }; }
+  show();
 }
 
 function fmtDateTime(s){ try{ return new Date(s).toLocaleString("de-DE",{day:"2-digit",month:"2-digit",year:"2-digit",hour:"2-digit",minute:"2-digit"}); }catch(e){ return ""; } }
@@ -454,6 +666,7 @@ async function teacherClassView(classId){
           <button class="abtn" data-up="${a.id}" title="nach oben">↑</button>
           <button class="abtn" data-down="${a.id}" title="nach unten">↓</button>
           <button class="abtn" data-pub="${a.id}" data-on="${a.published?1:0}" title="${a.published?'verbergen (Entwurf)':'veröffentlichen'}">${a.published?'👁️':'🚀'}</button>
+          <button class="abtn" data-sample="${a.id}" title="Musterlösungen verwalten">★</button>
           <button class="abtn" data-edit="${a.id}" title="bearbeiten">✏️</button>
           <button class="abtn" data-del="${a.id}" title="löschen">🗑️</button>
         </span></div>`).join("")}</div>`
@@ -481,11 +694,20 @@ async function teacherClassView(classId){
   document.getElementById("btnRename").onclick = ()=> renameClassDialog(classId, cls.name);
   document.getElementById("btnNewAssign").onclick = ()=> newAssignmentDialog(classId, ()=>teacherClassView(classId));
   document.querySelectorAll("[data-edit]").forEach(b=> b.onclick=()=>{ const a=assignments.find(x=>x.id===b.dataset.edit); newAssignmentDialog(classId, ()=>teacherClassView(classId), a); });
+  document.querySelectorAll("[data-sample]").forEach(b=> b.onclick=()=>{ const a=assignments.find(x=>x.id===b.dataset.sample); sampleManager(a, classId); });
   document.querySelectorAll("[data-up]").forEach(b=> b.onclick=async()=>{ await moveAssignment(assignments, b.dataset.up, -1); teacherClassView(classId); });
   document.querySelectorAll("[data-down]").forEach(b=> b.onclick=async()=>{ await moveAssignment(assignments, b.dataset.down, 1); teacherClassView(classId); });
   document.querySelectorAll("[data-pub]").forEach(b=> b.onclick=async()=>{ try{ await api.updateAssignment(b.dataset.pub, { published: b.dataset.on!=="1" }); teacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } });
   document.querySelectorAll("[data-del]").forEach(b=> b.onclick=async()=>{ if(!confirm("Aufgabe wirklich löschen?")) return; try{ await api.deleteAssignment(b.dataset.del); teacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } });
-  document.querySelectorAll(".cell[data-sub]").forEach(c=> c.onclick=()=>{ const s=subs.find(x=>x.id===c.dataset.sub); if(!s)return; const a=assignments.find(x=>x.id===s.assignment_id); const stu=roster.find(r=>r.student_id===s.student_id); const nm=(stu&&stu.profiles&&(stu.profiles.display_name||stu.profiles.username))||"?"; reviewSubmission(a,s,nm,classId); });
+  document.querySelectorAll(".cell[data-aid]").forEach(c=> c.onclick=()=>{
+    const aid=c.dataset.aid, sid=c.dataset.sid;
+    const a=assignments.find(x=>x.id===aid);
+    const hist=subs.filter(x=>x.assignment_id===aid && x.student_id===sid);
+    if(!a||!hist.length) return;
+    const stu=roster.find(r=>r.student_id===sid);
+    const nm=(stu&&stu.profiles&&(stu.profiles.display_name||stu.profiles.username))||"?";
+    reviewSubmission(a, hist, nm, classId);
+  });
   document.querySelectorAll("[data-stu]").forEach(b=> b.onclick=()=> resetStudentPw(b.dataset.stu, b.dataset.nm));
 }
 function buildMatrix(roster, assignments, subs){
@@ -493,10 +715,12 @@ function buildMatrix(roster, assignments, subs){
   const rows = roster.map(stu=>{
     const nm=(stu.profiles&&(stu.profiles.display_name||stu.profiles.username))||"?";
     const cells = assignments.map(a=>{
-      const s=subs.find(x=>x.assignment_id===a.id && x.student_id===stu.student_id);
-      if(!s) return `<td><span class="cell none">·</span></td>`;
-      const cl=s.passed===true?"pass":"done"; const ic=s.passed===true?"★":"✓";
-      return `<td><span class="cell ${cl}" data-sub="${s.id}" title="Abgabe ansehen">${ic}</span></td>`;
+      const mine=subs.filter(x=>x.assignment_id===a.id && x.student_id===stu.student_id);
+      const cur=mine.find(z=>z.is_current) || mine[0];
+      if(!cur) return `<td><span class="cell none">·</span></td>`;
+      const cl=cur.passed===true?"pass":"done"; const ic=cur.passed===true?"★":"✓";
+      const cnt=mine.length>1?`<sup style="font-size:9px;font-weight:800">${mine.length}</sup>`:"";
+      return `<td><span class="cell ${cl}" data-aid="${a.id}" data-sid="${stu.student_id}" title="${mine.length} Abgabe(n) – ansehen">${ic}${cnt}</span></td>`;
     }).join("");
     return `<tr><td class="stu">${esc(nm)}</td>${cells}</tr>`;
   }).join("");
@@ -574,7 +798,7 @@ async function studentClassView(classId){
   try{
     const { data } = await sb.from("classes").select("*").eq("id",classId).single(); cls=data;
     assignments = await api.listAssignments(classId);
-    if(assignments.length){ const { data:s } = await sb.from("submissions").select("*").in("assignment_id",assignments.map(a=>a.id)).eq("student_id",ME.id); mySubs=s||[]; }
+    if(assignments.length){ const { data:s } = await sb.from("submissions").select("*").in("assignment_id",assignments.map(a=>a.id)).eq("student_id",ME.id).eq("is_current",true); mySubs=s||[]; }
   }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
   const list = assignments.length ? `<div class="list">${assignments.map(a=>{
       const s=mySubs.find(x=>x.assignment_id===a.id);
@@ -597,7 +821,7 @@ function errBox(e){ console.error(e); return `<div class="empty"><span class="ic
 function fmtDate(s){ try{ const d=new Date(s); return d.toLocaleDateString("de-DE",{day:"2-digit",month:"2-digit",year:"2-digit"}); }catch(e){ return ""; } }
 
 /* ---------- Footer: Version (letztes Update) + Copyright ---------- */
-const APP_BUILD = "2026-06-04 13:44";
+const APP_BUILD = "2026-06-04 14:27";
 (function(){ const f=document.getElementById("appfoot"); if(f) f.innerHTML='© 2026 <b>Laurens Offinger</b> &middot; Version '+APP_BUILD+' Uhr'; })();
 
 boot();
