@@ -61,8 +61,8 @@ function renderAuth(){
   const s=authState; const isReg = s.mode==="register";
   const codeField = isReg ? (s.role==="teacher"
       ? `<div class="field"><label>Lehrer-Code</label><input class="input" id="auCode" placeholder="Code von der Schulleitung" autocomplete="off"></div>`
-      : `<div class="field"><label>Klassencode</label><input class="input" id="auCode" placeholder="z. B. K7Q2MX" autocomplete="off" style="text-transform:uppercase;letter-spacing:2px;font-family:monospace"></div>`) : "";
-  const foot = isReg ? (s.role==="teacher" ? "Lehrer:innen brauchen den Lehrer-Code." : "Du brauchst den Klassencode deiner Lehrkraft.")
+      : `<div class="field"><label>Klassencode <span style="color:#7a8aa0;font-weight:600;text-transform:none;letter-spacing:0">(optional)</span></label><input class="input" id="auCode" placeholder="z. B. K7Q2MX – kann leer bleiben" autocomplete="off" style="text-transform:uppercase;letter-spacing:2px;font-family:monospace"></div>`) : "";
+  const foot = isReg ? (s.role==="teacher" ? "Lehrer:innen brauchen den Lehrer-Code." : "Mit Klassencode trittst du direkt bei – oder ohne starten und später beitreten.")
                      : 'Noch kein Account? Tippe oben auf "Registrieren".';
   app().innerHTML = `
   <div class="auth-wrap"><div class="auth-card">
@@ -116,7 +116,7 @@ async function doRegister(){
   const codeEl=document.getElementById("auCode"); const code=codeEl?codeEl.value.trim():"";
   if(!/^[a-z0-9_.\-]{3,20}$/.test(u)){ authMsg("Benutzername: 3-20 Zeichen, nur Buchstaben/Zahlen/._-"); return; }
   if(p.length<6){ authMsg("Das Passwort muss mindestens 6 Zeichen haben."); return; }
-  if(!code){ authMsg(role==="teacher"?"Bitte den Lehrer-Code eingeben.":"Bitte den Klassencode eingeben."); return; }
+  if(role==="teacher" && !code){ authMsg("Bitte den Lehrer-Code eingeben."); return; }
   setBusy(true);
   // 1) Code prüfen, BEVOR ein Account angelegt wird
   let className=null;
@@ -124,7 +124,7 @@ async function doRegister(){
     const { data:ok, error:e1 } = await sb.rpc("check_teacher_code", { p_code: code });
     if(e1){ setBusy(false); authMsg("Prüfung fehlgeschlagen: "+e1.message); return; }
     if(!ok){ setBusy(false); authMsg("Falscher Lehrer-Code."); return; }
-  } else {
+  } else if(code){
     const { data:cn, error:e1 } = await sb.rpc("class_exists", { p_code: code });
     if(e1){ setBusy(false); authMsg("Prüfung fehlgeschlagen: "+e1.message); return; }
     if(!cn){ setBusy(false); authMsg("Klassencode nicht gefunden."); return; }
@@ -141,8 +141,7 @@ async function doRegister(){
   } else {
     const { error:e2 } = await sb.from("profiles").insert({ id:uid, username:u, role:"student", display_name:uRaw });
     if(e2){ setBusy(false); if(/duplicate|unique/i.test(e2.message)) authMsg("Dieser Benutzername ist schon vergeben."); else authMsg("Profil konnte nicht angelegt werden: "+e2.message); return; }
-    const { error:e3 } = await sb.rpc("join_class", { p_code: code });
-    if(e3){ setBusy(false); authMsg("Beitritt fehlgeschlagen: "+e3.message); return; }
+    if(code){ const { error:e3 } = await sb.rpc("join_class", { p_code: code }); if(e3){ setBusy(false); authMsg("Beitritt fehlgeschlagen: "+e3.message); return; } }
   }
   await loadMe(uid);
   toast(className?("Willkommen in "+className+"! 🎉"):("Willkommen, "+uRaw+"! 🎉"),"ok");
@@ -210,6 +209,7 @@ api.listAssignments = async (classId)=>{ const {data,error}=await sb.from("assig
 api.getAssignment = async (id)=>{ const {data,error}=await sb.from("assignments").select("*").eq("id",id).single(); if(error) throw error; return data; };
 api.createAssignment = async (a)=>{ const {data,error}=await sb.from("assignments").insert(a).select().single(); if(error) throw error; return data; };
 api.deleteAssignment = async (id)=>{ const {error}=await sb.from("assignments").delete().eq("id",id); if(error) throw error; };
+api.updateAssignment = async (id, patch)=>{ const {data,error}=await sb.from("assignments").update(patch).eq("id",id).select().single(); if(error) throw error; return data; };
 api.upsertSubmission = async (s)=>{ const row=Object.assign({student_id:ME.id, submitted_at:new Date().toISOString()}, s); const {data,error}=await sb.from("submissions").upsert(row,{onConflict:"assignment_id,student_id"}).select().single(); if(error) throw error; return data; };
 api.mySubmission = async (assignmentId)=>{ const {data,error}=await sb.from("submissions").select("*").eq("assignment_id",assignmentId).eq("student_id",ME.id).maybeSingle(); if(error) throw error; return data; };
 api.classSubmissions = async (assignmentIds)=>{ if(!assignmentIds.length) return []; const {data,error}=await sb.from("submissions").select("*").in("assignment_id",assignmentIds); if(error) throw error; return data||[]; };
@@ -234,10 +234,11 @@ function goalLabel(goal){
   return "Auto-Check";
 }
 
-/* ---------- Lehrer: Aufgabe stellen ---------- */
-function newAssignmentDialog(classId, onDone){
+/* ---------- Lehrer: Aufgabe stellen / bearbeiten ---------- */
+function newAssignmentDialog(classId, onDone, existing){
+  const ex = existing || null;
   openModal(`<button class="x" onclick="closeModal()">✕</button>
-    <h3>Neue Aufgabe</h3>
+    <h3>${ex?"Aufgabe bearbeiten":"Neue Aufgabe"}</h3>
     <div class="field"><label>Titel</label><input class="input" id="asTitle" placeholder="z. B. Lauf bis zur Wand" maxlength="80"></div>
     <div class="field"><label>Aufgabenstellung</label><textarea class="input" id="asDesc" placeholder="Was soll der Hamster tun?"></textarea></div>
     <div class="field"><label>Territorium (anklicken zum Bearbeiten)</label><div id="asDesign"></div></div>
@@ -251,12 +252,15 @@ function newAssignmentDialog(classId, onDone){
       </select>
       <div id="asGoalExtra" style="margin-top:8px"></div>
     </div>
-    <button class="btn btn-primary btn-lg" id="asSave">Aufgabe stellen</button>`, true);
-  modalView = new HamsterView("#asDesign", { mode:"design", model: HamsterEngine.blankTerr() });
+    <button class="btn btn-primary btn-lg" id="asSave">${ex?"Änderungen speichern":"Aufgabe stellen"}</button>`, true);
+  modalView = new HamsterView("#asDesign", { mode:"design", model: ex? ex.territory : HamsterEngine.blankTerr() });
   const gt=document.getElementById("asGoalType"), extra=document.getElementById("asGoalExtra");
-  gt.onchange=()=>{ if(gt.value==="grainsInMaul") extra.innerHTML=`<input class="input" id="asGoalN" type="number" min="1" value="5" placeholder="Anzahl Körner">`;
-    else if(gt.value==="atPos") extra.innerHTML=`<div style="display:flex;gap:8px"><input class="input" id="asGoalR" type="number" min="0" placeholder="Reihe"><input class="input" id="asGoalC" type="number" min="0" placeholder="Spalte"></div>`;
+  const renderExtra=()=>{ if(gt.value==="grainsInMaul") extra.innerHTML=`<input class="input" id="asGoalN" type="number" min="1" value="${ex&&ex.goal&&ex.goal.type==="grainsInMaul"?ex.goal.n:5}" placeholder="Anzahl Körner">`;
+    else if(gt.value==="atPos") extra.innerHTML=`<div style="display:flex;gap:8px"><input class="input" id="asGoalR" type="number" min="0" value="${ex&&ex.goal&&ex.goal.type==="atPos"?ex.goal.row:0}" placeholder="Reihe"><input class="input" id="asGoalC" type="number" min="0" value="${ex&&ex.goal&&ex.goal.type==="atPos"?ex.goal.col:0}" placeholder="Spalte"></div>`;
     else extra.innerHTML=""; };
+  gt.onchange=renderExtra;
+  if(ex){ document.getElementById("asTitle").value=ex.title||""; document.getElementById("asDesc").value=ex.description||""; document.getElementById("asStarter").value=ex.starter_code||""; if(ex.goal&&ex.goal.type) gt.value=ex.goal.type; }
+  renderExtra();
   document.getElementById("asTitle").focus();
   document.getElementById("asSave").onclick=async()=>{
     const title=document.getElementById("asTitle").value.trim(); if(!title){ document.getElementById("asTitle").focus(); return; }
@@ -268,8 +272,11 @@ function newAssignmentDialog(classId, onDone){
     else if(gt.value==="grainsInMaul") goal={type:"grainsInMaul", n:Math.max(1,+ (document.getElementById("asGoalN")||{}).value||1)};
     else if(gt.value==="atPos") goal={type:"atPos", row:+ (document.getElementById("asGoalR")||{}).value||0, col:+ (document.getElementById("asGoalC")||{}).value||0};
     const btn=document.getElementById("asSave"); btn.disabled=true; btn.textContent="Speichere…";
-    try{ await api.createAssignment({ class_id:classId, title, description, territory, starter_code, goal }); closeModal(); toast("Aufgabe gestellt 🎉","ok"); if(onDone) onDone(); }
-    catch(e){ btn.disabled=false; btn.textContent="Aufgabe stellen"; toast(e.message||"Fehler","err"); }
+    try{
+      if(ex){ await api.updateAssignment(ex.id, { title, description, territory, starter_code, goal }); closeModal(); toast("Aufgabe aktualisiert ✓","ok"); }
+      else { await api.createAssignment({ class_id:classId, title, description, territory, starter_code, goal }); closeModal(); toast("Aufgabe gestellt 🎉","ok"); }
+      if(onDone) onDone();
+    } catch(e){ btn.disabled=false; btn.textContent=ex?"Änderungen speichern":"Aufgabe stellen"; toast(e.message||"Fehler","err"); }
   };
 }
 
@@ -290,7 +297,7 @@ function reviewSubmission(assignment, sub, studentName, classId){
     </div>
     <div id="reviewHost" style="height:72vh;min-height:520px"></div>`);
   document.getElementById("back").onclick = ()=> teacherClassView(classId);
-  pageView = new HamsterView("#reviewHost", { mode:"solve", model:assignment.territory, code:sub.code, fill:true });
+  pageView = new HamsterView("#reviewHost", { mode:"solve", model:assignment.territory, code:sub.code, fill:true, goal:assignment.goal });
   document.getElementById("btnOrig").onclick = ()=> pageView.setCode(sub.code);
 }
 
@@ -312,7 +319,7 @@ async function solveAssignment(assignmentId){
       <span id="submitMsg" class="muted"></span>
     </div>`;
   document.getElementById("back").onclick = ()=> studentClassView(a.class_id);
-  pageView = new HamsterView("#solveHost", { mode:"solve", model:a.territory, code, fill:true });
+  pageView = new HamsterView("#solveHost", { mode:"solve", model:a.territory, code, fill:true, goal:a.goal });
   document.getElementById("btnSubmit").onclick = async ()=>{
     const myCode = pageView.getCode();
     const passed = gradeSubmission(myCode, a.territory, a.goal);
@@ -417,6 +424,7 @@ async function teacherClassView(classId){
 
   const assignHtml = assignments.length ? `<div class="list">${assignments.map(a=>`
       <div class="row"><span class="grow"><span class="t">${esc(a.title)}</span>${a.goal?`<span class="s">🎯 ${esc(goalLabel(a.goal))}</span>`:`<span class="s">kein Auto-Check</span>`}</span>
+        <button class="btn btn-sm btn-ghost" data-edit="${a.id}" title="bearbeiten">✏️</button>
         <button class="btn btn-sm btn-ghost" data-del="${a.id}" title="löschen">🗑️</button></div>`).join("")}</div>`
     : `<div class="empty" style="padding:16px"><span class="ic">📝</span>Noch keine Aufgaben.</div>`;
   const matrixHtml = (assignments.length && roster.length) ? buildMatrix(roster, assignments, subs)
@@ -425,7 +433,7 @@ async function teacherClassView(classId){
   document.getElementById("view").innerHTML = `
     <div class="page-head"><button class="crumb" id="back">← Meine Klassen</button></div>
     <div class="page-head" style="margin-top:0">
-      <h2>${esc(cls.name)}</h2>
+      <h2>${esc(cls.name)} <button class="btn btn-ghost btn-sm" id="btnRename" title="Klasse umbenennen" style="vertical-align:middle">✏️</button></h2>
       <div class="spacer"></div>
       <span class="codechip" title="Einlade-Code">🔑 ${esc(cls.code)} <button class="btn btn-sm btn-ghost" id="copyCode" style="margin-left:4px">Kopieren</button></span>
     </div>
@@ -441,7 +449,9 @@ async function teacherClassView(classId){
     ${matrixHtml}`;
   document.getElementById("back").onclick = teacherHome;
   document.getElementById("copyCode").onclick = ()=>{ if(navigator.clipboard) navigator.clipboard.writeText(cls.code); toast("Code kopiert: "+cls.code,"ok"); };
+  document.getElementById("btnRename").onclick = ()=> renameClassDialog(classId, cls.name);
   document.getElementById("btnNewAssign").onclick = ()=> newAssignmentDialog(classId, ()=>teacherClassView(classId));
+  document.querySelectorAll("[data-edit]").forEach(b=> b.onclick=()=>{ const a=assignments.find(x=>x.id===b.dataset.edit); newAssignmentDialog(classId, ()=>teacherClassView(classId), a); });
   document.querySelectorAll("[data-del]").forEach(b=> b.onclick=async()=>{ if(!confirm("Aufgabe wirklich löschen?")) return; try{ await api.deleteAssignment(b.dataset.del); teacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } });
   document.querySelectorAll(".cell[data-sub]").forEach(c=> c.onclick=()=>{ const s=subs.find(x=>x.id===c.dataset.sub); if(!s)return; const a=assignments.find(x=>x.id===s.assignment_id); const stu=roster.find(r=>r.student_id===s.student_id); const nm=(stu&&stu.profiles&&(stu.profiles.display_name||stu.profiles.username))||"?"; reviewSubmission(a,s,nm,classId); });
   document.querySelectorAll("[data-stu]").forEach(b=> b.onclick=()=> resetStudentPw(b.dataset.stu, b.dataset.nm));
@@ -459,6 +469,20 @@ function buildMatrix(roster, assignments, subs){
     return `<tr><td class="stu">${esc(nm)}</td>${cells}</tr>`;
   }).join("");
   return `<div class="matrix-wrap"><table class="matrix"><thead><tr><th class="stu">Schüler:in</th>${head}</tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+function renameClassDialog(classId, current){
+  openModal(`<button class="x" onclick="closeModal()">✕</button>
+    <h3>Klasse umbenennen</h3>
+    <div class="field"><label>Klassenname</label><input class="input" id="rnName" maxlength="60"></div>
+    <button class="btn btn-primary btn-lg" id="rnSave">Speichern</button>`);
+  const inp=document.getElementById("rnName"); inp.value=current; inp.focus(); inp.select();
+  const go=async()=>{ const name=inp.value.trim(); if(!name){inp.focus();return;}
+    const btn=document.getElementById("rnSave"); btn.disabled=true; btn.textContent="Speichere…";
+    const { error } = await sb.from("classes").update({ name }).eq("id", classId);
+    if(error){ btn.disabled=false; btn.textContent="Speichern"; toast(error.message||"Fehler","err"); return; }
+    closeModal(); toast("Umbenannt ✓","ok"); teacherClassView(classId); };
+  document.getElementById("rnSave").onclick=go;
+  inp.addEventListener("keydown",e=>{ if(e.key==="Enter") go(); });
 }
 
 /* ============================================================================

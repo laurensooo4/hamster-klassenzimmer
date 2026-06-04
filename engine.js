@@ -404,7 +404,10 @@ function injectStyles(){
   .hv.editing .tile:hover{outline:2px solid rgba(231,161,58,.7);outline-offset:-2px;z-index:2}
   .hv .grains{display:flex;flex-wrap:wrap;gap:2px;align-items:center;justify-content:center;width:62%;height:62%;pointer-events:none}
   .hv .kern{width:max(5px,18%);aspect-ratio:1/1.5;border-radius:50%;background:radial-gradient(circle at 35% 30%,#f6cf52,#d99a1c);box-shadow:0 1px 1px rgba(120,80,0,.4)}
-  .hv .kbadge{position:absolute;right:6%;bottom:4%;font-size:max(9px,30%);font-weight:800;color:#7a5200;background:rgba(255,255,255,.82);border-radius:6px;padding:0 3px;line-height:1.35}
+  .hv .kbadge{position:absolute;top:2px;left:3px;font-size:max(8px,26%);font-weight:800;color:#7a5200;background:rgba(255,255,255,.92);border-radius:5px;padding:0 3px;line-height:1.3;z-index:5;pointer-events:none}
+  .hv .hv-goal{padding:9px 12px;border-radius:12px;font-weight:800;font-size:14.5px;text-align:center}
+  .hv .hv-goal.ok{background:#e9ffd6;color:#46a302}
+  .hv .hv-goal.no{background:#fff3d6;color:#c9851f}
   .hv .ham{position:absolute;top:0;left:0;width:var(--cell);height:var(--cell);transition:transform .25s ease;will-change:transform;z-index:3;pointer-events:none}
   .hv .ham .rot{width:100%;height:100%;transition:transform .25s ease;display:flex;align-items:center;justify-content:center}
   .hv .ham svg{width:82%;height:82%;filter:drop-shadow(0 2px 2px rgba(0,0,0,.25))}
@@ -440,6 +443,7 @@ class HamsterView{
     this.el = typeof container==="string"? document.querySelector(container): container;
     this.mode = opts.mode || "solve";          // solve | design | view
     this.fill = !!opts.fill;                   // Container-Höhe ausfüllen (großes Arbeitsfenster)
+    this.goal = opts.goal || null;             // Auto-Check-Ziel -> Live-Anzeige nach dem Lauf
     this.initial = toModel(opts.model);
     this.model = cloneModel(this.initial);
     this.code = opts.code!=null ? opts.code : "";
@@ -475,6 +479,7 @@ class HamsterView{
       <div class="tools">
         <button class="tool on" data-tool="wall">🧱 Mauer</button>
         <button class="tool" data-tool="korn">🌾 Korn</button>
+        <input class="szi kornN" type="number" min="1" value="1" title="Körner pro Klick" style="width:46px">
         <button class="tool" data-tool="hamster">🐹 Hamster</button>
         <button class="tool" data-tool="eraser">🧽 Frei</button>
         <span style="margin-left:6px;font-size:12px;color:#7a8aa0">Reihen<input class="szi rIn" type="number" min="1" max="30"></span>
@@ -498,6 +503,7 @@ class HamsterView{
           <div class="boardWrap"><div class="board"></div></div>
         </div>
       </div>
+      ${(hasEditor&&this.goal)?'<div class="hv-goal" style="display:none"></div>':''}
       ${statusBar}`;
 
     // refs
@@ -598,7 +604,7 @@ class HamsterView{
   }
   async run(){
     if(this.runState==="running"||this.runState==="paused") return;
-    this._clearOut(); this._setActive(null);
+    this._clearOut(); this._setActive(null); this._hideGoal();
     this.gen=this._prepare(); if(!this.gen){ this.runState="error"; this._updateBtns(); return; }
     this.stop=false; this.step=false; this.runState="running"; this._updateBtns();
     await this._drive();
@@ -611,7 +617,7 @@ class HamsterView{
       if(this.stop) break;
       const wasStep=this.step; this.step=false;
       let res; try{ res=this.gen.next(); }catch(e){ this._showErr(e); this.runState="error"; this._updateBtns(); this._loopActive=false; return; }
-      if(res.done){ this.runState="finished"; this._setActive(null); this._log("✓ Programm beendet.","ok"); this._updateBtns(); this._loopActive=false; this._onFinish&&this._onFinish(); return; }
+      if(res.done){ this.runState="finished"; this._setActive(null); this._log("✓ Programm beendet.","ok"); this._showGoal(); this._updateBtns(); this._loopActive=false; this._onFinish&&this._onFinish(); return; }
       const sig=res.value||{}; if(sig.line) this._setActive(sig.line); this._render();
       if(wasStep) this.runState="paused";
       this._updateBtns();
@@ -623,6 +629,8 @@ class HamsterView{
     if(e&&e.hamsterError){ this._log("✖ "+(e.type?e.type+": ":"")+e.message+(e.line?" (Zeile "+e.line+")":""),"err"); if(e.line)this._setActive(e.line,true); if(e.type){ this.ham.classList.add("bonk"); setTimeout(()=>this.ham.classList.remove("bonk"),460); } }
     else { this._log("✖ Interner Fehler: "+(e&&e.message||e),"err"); console.error(e); }
   }
+  _showGoal(){ if(!this.goal) return; const g=this.$(".hv-goal"); if(!g) return; const ok=checkGoal(this.goal,this.model)===true; g.style.display="block"; g.className="hv-goal "+(ok?"ok":"no"); g.textContent=ok?"🎉 Ziel erreicht!":"Ziel noch nicht erreicht – probier es nochmal!"; }
+  _hideGoal(){ const g=this.$(".hv-goal"); if(g) g.style.display="none"; }
   async _stepOnce(){
     if(this.runState==="running") return;
     if(this.runState==="idle"||this.runState==="finished"||this.runState==="error"){ this._clearOut(); this.gen=this._prepare(); if(!this.gen){this.runState="error";this._updateBtns();return;} this.stop=false; this.runState="paused"; this._updateBtns(); }
@@ -646,7 +654,7 @@ class HamsterView{
     const apply=(r,c)=>{ const key=r+","+c, h=this.model.hamster;
       if(this.tool==="wall"){ if(h.row===r&&h.col===c)return; this.model.walls.add(key); this.model.grains.delete(key); }
       else if(this.tool==="eraser"){ this.model.walls.delete(key); this.model.grains.delete(key); }
-      else if(this.tool==="korn"){ if(this.model.walls.has(key))return; this.model.grains.set(key,(this.model.grains.get(key)||0)+1); }
+      else if(this.tool==="korn"){ if(this.model.walls.has(key))return; const kn=this.$(".kornN")?Math.max(1,+this.$(".kornN").value||1):1; this.model.grains.set(key,(this.model.grains.get(key)||0)+kn); }
       else if(this.tool==="hamster"){ if(this.model.walls.has(key))this.model.walls.delete(key); if(h.row===r&&h.col===c)h.dir=(h.dir+1)%4; else { h.row=r; h.col=c; } }
       this.initial=cloneModel(this.model); this._render();
     };
@@ -675,9 +683,10 @@ class HamsterView{
 }
 
 function grainHTML(n){
-  if(n<=0)return "";
-  if(n<=5){ let s='<div class="grains">'; for(let i=0;i<n;i++)s+='<i class="kern"></i>'; return s+"</div>"; }
-  return '<div class="grains"><i class="kern"></i><i class="kern"></i><i class="kern"></i></div><span class="kbadge">'+n+"</span>";
+  if(n<=0) return "";
+  const dots=Math.min(n,4); let s='<div class="grains">';
+  for(let i=0;i<dots;i++) s+='<i class="kern"></i>';
+  return s+'</div><span class="kbadge">'+n+'</span>';   // Zähler immer in der Ecke (auch unter Hamster sichtbar)
 }
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 
