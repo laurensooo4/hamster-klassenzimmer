@@ -67,7 +67,7 @@ function renderAuth(){
   app().innerHTML = `
   <div class="auth-wrap"><div class="auth-card">
     <div class="mascot">${HAMSTER}</div>
-    <h1>Hamster-Klassenzimmer</h1>
+    <h1>Informatik am Gymnasium Wesermünde</h1>
     <p class="sub">${isReg?"Lass uns loslegen!":"Willkommen zurück!"}</p>
     <div class="tabs">
       <button data-m="login" class="${!isReg?"active":""}">Anmelden</button>
@@ -157,7 +157,7 @@ function shell(inner){
   const roleBadge = ME.role==="teacher" ? `<span class="badge blue">Lehrkraft</span>` : `<span class="badge">Schüler:in</span>`;
   app().innerHTML = `
     <div class="topbar">
-      <div class="brand"><span class="h">${HAMSTER}</span> Hamster-Klassenzimmer</div>
+      <div class="brand"><span class="h">${HAMSTER}</span> Informatik am Gymnasium Wesermünde</div>
       <div class="spacer"></div>
       ${roleBadge}
       <span class="chip ${ME.role}"><span class="av">${esc(initials(ME.display_name||ME.username))}</span>${esc(ME.display_name||ME.username)}</span>
