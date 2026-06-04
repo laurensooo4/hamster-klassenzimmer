@@ -209,7 +209,7 @@ const api = {
 
 /* ===== Aufgaben & Abgaben ===== */
 let modalView=null, pageView=null;
-let solveState=null, reviewState=null, sampleState=null;
+let solveState=null, reviewState=null, sampleState=null, sandboxState=null;
 const DEFAULT_STARTER = "void main() {\n    \n}";
 api.listAssignments = async (classId)=>{ const {data,error}=await sb.from("assignments").select("*").eq("class_id",classId).order("position").order("created_at"); if(error) throw error; return data||[]; };
 api.getAssignment = async (id)=>{ const {data,error}=await sb.from("assignments").select("*").eq("id",id).single(); if(error) throw error; return data; };
@@ -239,23 +239,46 @@ api.createSample = async (s)=>{ const {data,error}=await sb.from("sample_solutio
 api.updateSample = async (id, patch)=>{ const {data,error}=await sb.from("sample_solutions").update(patch).eq("id",id).select().single(); if(error) throw error; return data; };
 api.deleteSample = async (id)=>{ const {error}=await sb.from("sample_solutions").delete().eq("id",id); if(error) throw error; };
 
-/* Headless Auto-Check: führt den Code auf einer frischen Kopie des Territoriums aus */
+/* Lösungscode je Aufgabe (nur Lehrkraft – treibt den Auto-Check "Mit Musterlösung vergleichen") */
+api.getAssignmentSolution = async (assignmentId)=>{ const {data,error}=await sb.from("assignment_solutions").select("*").eq("assignment_id",assignmentId).maybeSingle(); if(error) throw error; return data; };
+api.saveAssignmentSolution = async (assignmentId, code, matchHamster)=>{ const {error}=await sb.from("assignment_solutions").upsert({assignment_id:assignmentId, author_id:ME.id, code, match_hamster:!!matchHamster, updated_at:new Date().toISOString()},{onConflict:"assignment_id"}); if(error) throw error; };
+api.deleteAssignmentSolution = async (assignmentId)=>{ const {error}=await sb.from("assignment_solutions").delete().eq("assignment_id",assignmentId); if(error) throw error; };
+
+/* Sandbox: je Klasse aktivierbar; Schüler-Projekte (Welt + Code) */
+api.setSandboxEnabled = async (classId, on)=>{ const {error}=await sb.from("classes").update({sandbox_enabled:!!on}).eq("id",classId); if(error) throw error; };
+api.listSandboxProjects = async (classId)=>{ const {data,error}=await sb.from("sandbox_projects").select("*").eq("class_id",classId).eq("owner_id",ME.id).order("updated_at",{ascending:false}); if(error) throw error; return data||[]; };
+api.getSandboxProject = async (id)=>{ const {data,error}=await sb.from("sandbox_projects").select("*").eq("id",id).single(); if(error) throw error; return data; };
+api.createSandboxProject = async (p)=>{ const {data,error}=await sb.from("sandbox_projects").insert(Object.assign({owner_id:ME.id},p)).select().single(); if(error) throw error; return data; };
+api.updateSandboxProject = async (id, patch)=>{ const {data,error}=await sb.from("sandbox_projects").update(Object.assign({updated_at:new Date().toISOString()},patch)).eq("id",id).select().single(); if(error) throw error; return data; };
+api.deleteSandboxProject = async (id)=>{ const {error}=await sb.from("sandbox_projects").delete().eq("id",id); if(error) throw error; };
+
+/* Headless: Code auf frischer Kopie des Territoriums laufen lassen -> Endmodell (wirft bei Fehler) */
+function runHeadless(code, territory){
+  const ast=HamsterEngine.parse(code);
+  const model=HamsterEngine.toModel(territory);
+  const m={rows:model.rows,cols:model.cols,walls:model.walls,grains:model.grains,hamster:model.hamster,onWrite:()=>{}};
+  const it=HamsterEngine.makeInterpreter(ast,m); const g=it.run(); let n=0;
+  while(true){ const r=g.next(); if(r.done)break; if(++n>2000000) throw new Error("Zu viele Schritte – läuft der Code in eine Endlosschleife?"); }
+  return m;
+}
+/* Auto-Check eines Schüler-Codes gegen ein Ziel */
 function gradeSubmission(code, territory, goal){
   if(!goal||!goal.type) return null;
-  try{
-    const ast=HamsterEngine.parse(code);
-    const model=HamsterEngine.toModel(territory);
-    const m={rows:model.rows,cols:model.cols,walls:model.walls,grains:model.grains,hamster:model.hamster,onWrite:()=>{}};
-    const it=HamsterEngine.makeInterpreter(ast,m); const g=it.run(); let n=0;
-    while(true){ const r=g.next(); if(r.done)break; if(++n>2000000) return false; }
-    return HamsterEngine.checkGoal(goal,m)===true;
-  }catch(e){ return false; }
+  try{ return HamsterEngine.checkGoal(goal, runHeadless(code, territory))===true; }
+  catch(e){ return false; }
+}
+/* Aus Lösungscode + Territorium den Soll-Zustand (Körner-Endlage, Hamster-Endpos) berechnen */
+function computeSolutionGoal(code, territory, matchHamster){
+  const m=runHeadless(code, territory);
+  const grains={}; for(const [k,v] of m.grains){ if(v>0) grains[k]=v; }
+  return { type:"solution", grains, matchHamster:!!matchHamster, hrow:m.hamster.row, hcol:m.hamster.col };
 }
 function goalLabel(goal){
   if(!goal||!goal.type) return "kein Auto-Check";
   if(goal.type==="noGrains") return "Feld leer (alle Körner gefressen)";
   if(goal.type==="grainsInMaul") return "≥ "+goal.n+" Körner im Maul";
   if(goal.type==="atPos") return "Hamster bei Reihe "+goal.row+", Spalte "+goal.col;
+  if(goal.type==="solution") return "Ergebnis wie die Musterlösung"+(goal.matchHamster?" (inkl. Hamster-Endposition)":"");
   return "Auto-Check";
 }
 
@@ -278,6 +301,7 @@ function newAssignmentDialog(classId, onDone, existing){
         <option value="noGrains">Feld leer – alle Körner gefressen</option>
         <option value="grainsInMaul">Hamster hat ≥ N Körner im Maul</option>
         <option value="atPos">Hamster steht am Ziel (Reihe/Spalte)</option>
+        <option value="solution">Mit Musterlösung vergleichen (Lösungscode)</option>
       </select>
       <div id="asGoalExtra" style="margin-top:8px"></div>
     </div>
@@ -290,12 +314,15 @@ function newAssignmentDialog(classId, onDone, existing){
   const gt=document.getElementById("asGoalType"), extra=document.getElementById("asGoalExtra");
   const renderExtra=()=>{ if(gt.value==="grainsInMaul") extra.innerHTML=`<input class="input" id="asGoalN" type="number" min="1" value="5" placeholder="Anzahl Körner">`;
     else if(gt.value==="atPos") extra.innerHTML=`<div style="display:flex;gap:8px"><input class="input" id="asGoalR" type="number" min="0" value="0" placeholder="Reihe"><input class="input" id="asGoalC" type="number" min="0" value="0" placeholder="Spalte"></div>`;
+    else if(gt.value==="solution") extra.innerHTML=`<textarea class="input" id="asSolCode" style="font-family:monospace;font-size:13px;min-height:96px" placeholder="Lösungscode der Lehrkraft – wird NICHT an Schüler:innen gezeigt"></textarea><label style="display:flex;gap:8px;align-items:center;font-weight:700;margin-top:6px;cursor:pointer"><input type="checkbox" id="asSolHam"> Endposition des Hamsters muss auch stimmen</label><div class="muted" style="font-size:12px;margin-top:4px">Baue oben im Territorium die Startwelt – der Lösungscode erzeugt daraus den Soll-Zustand. Beim Speichern wird er getestet.</div>`;
     else extra.innerHTML=""; };
   gt.onchange=renderExtra;
-  const gatherGoal=()=>{ if(gt.value==="noGrains")return{type:"noGrains"}; if(gt.value==="grainsInMaul")return{type:"grainsInMaul",n:Math.max(1,+(document.getElementById("asGoalN")||{}).value||1)}; if(gt.value==="atPos")return{type:"atPos",row:+(document.getElementById("asGoalR")||{}).value||0,col:+(document.getElementById("asGoalC")||{}).value||0}; return null; };
-  const fill=(o, withTerritory)=>{ document.getElementById("asTitle").value=o.title||""; document.getElementById("asDesc").value=o.description||""; document.getElementById("asStarter").value=o.starter_code||""; document.getElementById("asHint").value=o.hint||""; gt.value=(o.goal&&o.goal.type)||""; renderExtra(); if(o.goal){ if(o.goal.type==="grainsInMaul"&&document.getElementById("asGoalN"))document.getElementById("asGoalN").value=o.goal.n; if(o.goal.type==="atPos"){ if(document.getElementById("asGoalR"))document.getElementById("asGoalR").value=o.goal.row; if(document.getElementById("asGoalC"))document.getElementById("asGoalC").value=o.goal.col; } } if(withTerritory&&o.territory){ modalView.destroy(); modalView=new HamsterView("#asDesign",{mode:"design",model:o.territory}); } };
+  const gatherGoal=()=>{ if(gt.value==="noGrains")return{type:"noGrains"}; if(gt.value==="grainsInMaul")return{type:"grainsInMaul",n:Math.max(1,+(document.getElementById("asGoalN")||{}).value||1)}; if(gt.value==="atPos")return{type:"atPos",row:+(document.getElementById("asGoalR")||{}).value||0,col:+(document.getElementById("asGoalC")||{}).value||0};
+    if(gt.value==="solution"){ const code=((document.getElementById("asSolCode")||{}).value||"").trim(); if(!code) throw new Error("Bitte den Lösungscode eingeben."); return computeSolutionGoal(code, modalView.getTerritory(), !!(document.getElementById("asSolHam")||{}).checked); }
+    return null; };
+  const fill=(o, withTerritory)=>{ document.getElementById("asTitle").value=o.title||""; document.getElementById("asDesc").value=o.description||""; document.getElementById("asStarter").value=o.starter_code||""; document.getElementById("asHint").value=o.hint||""; gt.value=(o.goal&&o.goal.type)||""; renderExtra(); if(o.goal){ if(o.goal.type==="grainsInMaul"&&document.getElementById("asGoalN"))document.getElementById("asGoalN").value=o.goal.n; if(o.goal.type==="atPos"){ if(document.getElementById("asGoalR"))document.getElementById("asGoalR").value=o.goal.row; if(document.getElementById("asGoalC"))document.getElementById("asGoalC").value=o.goal.col; } } if(o.goal&&o.goal.type==="solution"){ const t=document.getElementById("asSolCode"); if(t&&o.solution_code!=null) t.value=o.solution_code; const h=document.getElementById("asSolHam"); if(h) h.checked=!!o.match_hamster; } if(withTerritory&&o.territory){ modalView.destroy(); modalView=new HamsterView("#asDesign",{mode:"design",model:o.territory}); } };
   document.getElementById("asPublish").checked = ex? !!ex.published : true;
-  if(ex){ fill(ex, false); }
+  if(ex){ fill(ex, false); if(ex.goal&&ex.goal.type==="solution"){ api.getAssignmentSolution(ex.id).then(s=>{ if(s){ const t=document.getElementById("asSolCode"); if(t) t.value=s.code||""; const h=document.getElementById("asSolHam"); if(h) h.checked=!!s.match_hamster; } }).catch(()=>{}); } }
   else { renderExtra();
     const tplSel=document.getElementById("asTpl"), delTpl=document.getElementById("asDelTpl");
     api.listTemplates().then(tpls=>{ window._tpls=tpls; tplSel.innerHTML='<option value="">– keine –</option>'+tpls.map(t=>`<option value="${t.id}">${esc(t.title)}</option>`).join(""); }).catch(()=>{});
@@ -305,16 +332,23 @@ function newAssignmentDialog(classId, onDone, existing){
   document.getElementById("asTitle").focus();
   document.getElementById("asSaveTpl").onclick=async()=>{
     const title=document.getElementById("asTitle").value.trim()||"Unbenannte Vorlage";
-    try{ await api.createTemplate({ title, description:document.getElementById("asDesc").value.trim(), territory:modalView.getTerritory(), starter_code:document.getElementById("asStarter").value.trim()||null, goal:gatherGoal(), hint:document.getElementById("asHint").value.trim()||null }); toast("Als Vorlage gespeichert 💾","ok"); }
+    let goal; try{ goal=gatherGoal(); }catch(e){ toast(e.message||"Lösungscode fehlerhaft","err"); return; }
+    try{ await api.createTemplate({ title, description:document.getElementById("asDesc").value.trim(), territory:modalView.getTerritory(), starter_code:document.getElementById("asStarter").value.trim()||null, goal, hint:document.getElementById("asHint").value.trim()||null, solution_code:(document.getElementById("asSolCode")||{}).value||null, match_hamster:!!(document.getElementById("asSolHam")||{}).checked }); toast("Als Vorlage gespeichert 💾","ok"); }
     catch(e){ toast(e.message||"Fehler","err"); }
   };
   document.getElementById("asSave").onclick=async()=>{
     const title=document.getElementById("asTitle").value.trim(); if(!title){ document.getElementById("asTitle").focus(); return; }
-    const payload={ title, description:document.getElementById("asDesc").value.trim(), territory:modalView.getTerritory(), starter_code:document.getElementById("asStarter").value.trim()||null, goal:gatherGoal(), hint:document.getElementById("asHint").value.trim()||null, published:document.getElementById("asPublish").checked };
+    let goal; try{ goal=gatherGoal(); }catch(e){ toast(e.message||"Lösungscode fehlerhaft","err"); return; }
+    const solCode=(document.getElementById("asSolCode")||{}).value||"", solHam=!!(document.getElementById("asSolHam")||{}).checked;
+    const payload={ title, description:document.getElementById("asDesc").value.trim(), territory:modalView.getTerritory(), starter_code:document.getElementById("asStarter").value.trim()||null, goal, hint:document.getElementById("asHint").value.trim()||null, published:document.getElementById("asPublish").checked };
     const btn=document.getElementById("asSave"); btn.disabled=true; btn.textContent="Speichere…";
     try{
-      if(ex){ await api.updateAssignment(ex.id, payload); closeModal(); toast("Aufgabe aktualisiert ✓","ok"); }
-      else { await api.createAssignment(Object.assign({class_id:classId}, payload)); closeModal(); toast(payload.published?"Aufgabe veröffentlicht 🎉":"Entwurf gespeichert ✓","ok"); }
+      let aid;
+      if(ex){ await api.updateAssignment(ex.id, payload); aid=ex.id; }
+      else { const created=await api.createAssignment(Object.assign({class_id:classId}, payload)); aid=created.id; }
+      if(goal && goal.type==="solution"){ await api.saveAssignmentSolution(aid, solCode, solHam); }
+      else { try{ await api.deleteAssignmentSolution(aid); }catch(_){} }
+      closeModal(); toast(ex?"Aufgabe aktualisiert ✓":(payload.published?"Aufgabe veröffentlicht 🎉":"Entwurf gespeichert ✓"),"ok");
       if(onDone) onDone();
     } catch(e){ btn.disabled=false; btn.textContent=ex?"Änderungen speichern":"Aufgabe stellen"; toast(e.message||"Fehler","err"); }
   };
@@ -339,7 +373,7 @@ function reviewSubmission(assignment, history, studentName, classId){
       <span class="muted" style="font-size:12px;display:block;margin-top:3px">🛠️ Live-Korrektur: Du kannst den Code bearbeiten &amp; laufen lassen – Änderungen werden nicht automatisch gespeichert.</span>
     </div>
     ${history.length>1?`<div class="card" style="margin-bottom:10px;padding:10px 14px"><b style="font-size:13px">Versionen (neueste zuerst):</b> <span id="verNav"></span></div>`:""}
-    <div id="reviewHost" style="height:60vh;min-height:440px"></div>
+    <div id="reviewHost" style="height:76vh;min-height:560px"></div>
     <div class="card" style="margin-top:14px">
       <h3 style="margin:0 0 8px">💬 Rückmeldung an ${esc(studentName)}</h3>
       <textarea class="input" id="revComment" style="min-height:70px" placeholder="Kommentar zu dieser Abgabe…"></textarea>
@@ -416,7 +450,7 @@ async function sampleManager(assignment, classId){
     <div id="smList"></div>
     <div class="page-head" style="margin-top:10px"><h3 id="smEditTitle" style="margin:0">➕ Neue Musterlösung</h3><div class="spacer"></div><span id="smEditHint" class="muted" style="font-size:12px"></span></div>
     <div class="field" style="max-width:420px"><label>Titel (optional)</label><input class="input" id="smTitleIn" placeholder="z. B. Kurze Lösung" maxlength="80"></div>
-    <div id="smEditHost" style="height:58vh;min-height:440px"></div>
+    <div id="smEditHost" style="height:74vh;min-height:560px"></div>
     <div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap;align-items:center">
       <button class="btn btn-primary btn-lg" id="smSave" style="max-width:260px">💾 Speichern</button>
       <button class="btn btn-ghost" id="smNew" style="display:none">➕ Neue (Editor leeren)</button>
@@ -494,7 +528,7 @@ async function solveAssignment(assignmentId){
     ${a.hint?`<div style="margin-bottom:12px"><button class="btn btn-ghost btn-sm" id="btnHint">💡 Tipp anzeigen</button><div id="hintBox" class="card" style="display:none;margin-top:8px;background:#fffaf0">💡 ${esc(a.hint)}</div></div>`:""}
     <div id="curComment" style="margin-bottom:12px">${curComment?`<div class="card" style="background:#eef6ff;border-color:#bcd9f5"><b>💬 Rückmeldung deiner Lehrkraft:</b><div style="margin-top:4px;white-space:pre-wrap">${esc(curComment.body)}</div></div>`:""}</div>
     <div id="editNote" class="editnote" style="display:none"></div>
-    <div id="solveHost" style="height:68vh;min-height:460px"></div>
+    <div id="solveHost" style="height:82vh;min-height:600px"></div>
     <div style="display:flex;gap:10px;margin-top:14px;align-items:center;flex-wrap:wrap">
       <button class="btn btn-primary btn-lg" id="btnSubmit" style="max-width:240px">📤 Abgeben</button>
       <button class="btn btn-ghost" id="btnToLive" style="display:none">↺ Zur aktuellen Version</button>
@@ -567,7 +601,7 @@ function openSamplesViewer(a, samples){
     <h3>🏆 Musterlösung${samples.length>1?"en":""}</h3>
     ${nav?`<div style="display:flex;gap:8px;align-items:center;margin-bottom:8px"><button class="btn btn-ghost btn-sm" id="smPrev">←</button><span id="smTitle" style="font-weight:800;flex:1;text-align:center"></span><button class="btn btn-ghost btn-sm" id="smNext">→</button></div>`:`<div id="smTitle" style="font-weight:800;margin-bottom:8px"></div>`}
     <p class="muted" style="font-size:12px;margin:0 0 8px">Du kannst die Lösung laufen lassen und Schritt für Schritt nachvollziehen.</p>
-    <div id="smHost" style="height:58vh;min-height:400px"></div>`, true);
+    <div id="smHost" style="height:64vh;min-height:460px"></div>`, true);
   const show=()=>{ const sm=samples[idx]; document.getElementById("smTitle").textContent=sm.title||("Musterlösung "+(idx+1)); if(modalView){ try{ modalView.destroy(); }catch(e){} } modalView=new HamsterView("#smHost",{mode:"solve", model:a.territory, code:sm.code, fill:true, goal:a.goal}); };
   if(nav){ document.getElementById("smPrev").onclick=()=>{ idx=(idx-1+samples.length)%samples.length; show(); }; document.getElementById("smNext").onclick=()=>{ idx=(idx+1)%samples.length; show(); }; }
   show();
@@ -680,6 +714,7 @@ async function teacherClassView(classId){
       <h2>${esc(cls.name)} <button class="btn btn-ghost btn-sm" id="btnRename" title="Klasse umbenennen" style="vertical-align:middle">✏️</button></h2>
       <div class="spacer"></div>
       <span class="codechip" title="Einlade-Code">🔑 ${esc(cls.code)} <button class="btn btn-sm btn-ghost" id="copyCode" style="margin-left:4px">Kopieren</button></span>
+      <button class="btn btn-ghost btn-sm" id="btnSandbox" style="margin-left:8px" title="Freien Sandbox-Modus für Schüler:innen an/aus">${cls.sandbox_enabled?"🧪 Sandbox: an":"🧪 Sandbox: aus"}</button>
     </div>
     <div class="card" style="margin-bottom:14px"><h3>🎒 Schüler:innen <span class="badge gray">${roster.length}</span></h3>
       <div style="margin-top:12px">${rosterHtml}</div></div>
@@ -691,6 +726,7 @@ async function teacherClassView(classId){
     ${matrixHtml}`;
   document.getElementById("back").onclick = teacherHome;
   document.getElementById("copyCode").onclick = ()=>{ if(navigator.clipboard) navigator.clipboard.writeText(cls.code); toast("Code kopiert: "+cls.code,"ok"); };
+  document.getElementById("btnSandbox").onclick = async ()=>{ try{ await api.setSandboxEnabled(classId, !cls.sandbox_enabled); toast(cls.sandbox_enabled?"Sandbox deaktiviert":"Sandbox aktiviert 🧪","ok"); teacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } };
   document.getElementById("btnRename").onclick = ()=> renameClassDialog(classId, cls.name);
   document.getElementById("btnNewAssign").onclick = ()=> newAssignmentDialog(classId, ()=>teacherClassView(classId));
   document.querySelectorAll("[data-edit]").forEach(b=> b.onclick=()=>{ const a=assignments.find(x=>x.id===b.dataset.edit); newAssignmentDialog(classId, ()=>teacherClassView(classId), a); });
@@ -810,10 +846,87 @@ async function studentClassView(classId){
     : `<div class="empty"><span class="ic">📝</span>Noch keine Aufgaben. Schau später wieder rein!</div>`;
   document.getElementById("view").innerHTML = `
     <div class="page-head"><button class="crumb" id="back">← Meine Klassen</button></div>
-    <div class="page-head" style="margin-top:0"><h2>${esc(cls?cls.name:"Klasse")}</h2></div>
+    <div class="page-head" style="margin-top:0"><h2>${esc(cls?cls.name:"Klasse")}</h2><div class="spacer"></div>${(cls&&cls.sandbox_enabled)?'<button class="btn btn-ghost" id="btnSandbox">🧪 Sandbox</button>':''}</div>
     ${list}`;
   document.getElementById("back").onclick = studentHome;
+  const sbx=document.getElementById("btnSandbox"); if(sbx) sbx.onclick=()=> sandboxHome(classId);
   document.querySelectorAll(".clickrow[data-id]").forEach(r=> r.onclick=()=> solveAssignment(r.dataset.id));
+}
+
+/* ============================================================================
+   SANDBOX (freier Modus) – Schüler:innen bauen Welt + Code, speicherbar
+   ============================================================================ */
+async function sandboxHome(classId){
+  shell(`<div class="center-load"><span class="spin"></span>Sandbox…</div>`);
+  let cls, projects=[];
+  try{ const { data } = await sb.from("classes").select("*").eq("id",classId).single(); cls=data; projects=await api.listSandboxProjects(classId); }
+  catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
+  const list = projects.length ? `<div class="list">${projects.map(p=>`
+      <div class="row clickrow" data-id="${p.id}" style="cursor:pointer"><span class="grow"><span class="t">${esc(p.title)}</span><span class="s">${esc(fmtDateTime(p.updated_at))}</span></span>
+        <button class="btn btn-sm btn-ghost" data-del="${p.id}" title="löschen">🗑️</button><span style="margin-left:8px;color:#7a8aa0">→</span></div>`).join("")}</div>`
+    : `<div class="empty"><span class="ic">🧪</span>Noch keine Projekte. Leg dein erstes an!</div>`;
+  document.getElementById("view").innerHTML = `
+    <div class="page-head"><button class="crumb" id="back">← zurück</button></div>
+    <div class="page-head" style="margin-top:0"><h2>🧪 Sandbox – ${esc(cls?cls.name:"")}</h2><div class="spacer"></div><button class="btn btn-primary" id="btnNew">+ Neues Projekt</button></div>
+    <div class="card" style="margin-bottom:12px;padding:12px 16px"><span class="muted" style="font-size:13px">Hier kannst du frei eine Welt bauen und programmieren – ganz ohne Aufgabe. Deine Projekte werden gespeichert.</span></div>
+    ${list}`;
+  document.getElementById("back").onclick = ()=> studentClassView(classId);
+  document.getElementById("btnNew").onclick = ()=> sandboxProject(classId, null);
+  document.querySelectorAll(".clickrow[data-id]").forEach(r=> r.onclick=(e)=>{ if(e.target.closest("[data-del]")) return; sandboxProject(classId, r.dataset.id); });
+  document.querySelectorAll("[data-del]").forEach(b=> b.onclick=async(e)=>{ e.stopPropagation(); if(!confirm("Projekt löschen?")) return; try{ await api.deleteSandboxProject(b.dataset.del); sandboxHome(classId); }catch(err){ toast(err.message||"Fehler","err"); } });
+}
+async function sandboxProject(classId, projectId){
+  shell(`<div class="center-load"><span class="spin"></span>Lädt…</div>`);
+  let proj=null;
+  if(projectId){ try{ proj=await api.getSandboxProject(projectId); }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; } }
+  sandboxState = {
+    classId, projectId: proj?proj.id:null, title: proj?proj.title:"Mein Projekt",
+    territory: (proj && proj.territory) ? proj.territory : HamsterEngine.toJSON(HamsterEngine.blankTerr()),
+    code: (proj && proj.code!=null) ? proj.code : DEFAULT_STARTER, sub:"code"
+  };
+  document.getElementById("view").innerHTML = `
+    <div class="page-head"><button class="crumb" id="back">← zur Sandbox</button></div>
+    <div class="page-head" style="margin-top:0">
+      <input class="input" id="sbxTitle" style="max-width:280px;font-weight:800" maxlength="80">
+      <div class="spacer"></div>
+      <span class="acts"><button class="abtn on" id="sbxCode" title="Programmieren">📝 Code</button><button class="abtn" id="sbxWelt" title="Welt bearbeiten">🌍 Welt</button></span>
+      <button class="btn btn-primary btn-sm" id="sbxSave" style="margin-left:8px">💾 Speichern</button>
+    </div>
+    <div id="sbxHost" style="height:80vh;min-height:600px"></div>`;
+  document.getElementById("sbxTitle").value = sandboxState.title;
+  document.getElementById("back").onclick = ()=>{ syncSandbox(); sandboxHome(classId); };
+  document.getElementById("sbxCode").onclick = ()=> setSandboxSub("code");
+  document.getElementById("sbxWelt").onclick = ()=> setSandboxSub("welt");
+  document.getElementById("sbxSave").onclick = saveSandbox;
+  buildSandboxView();
+}
+function buildSandboxView(){
+  const s=sandboxState; if(!s) return;
+  if(pageView){ try{ pageView.destroy(); }catch(e){} }
+  if(s.sub==="code") pageView=new HamsterView("#sbxHost",{mode:"solve", model:s.territory, code:s.code, fill:true});
+  else pageView=new HamsterView("#sbxHost",{mode:"design", model:s.territory, fill:true});
+}
+function syncSandbox(){
+  const s=sandboxState; if(!s||!pageView) return;
+  if(s.sub==="code") s.code=pageView.getCode(); else s.territory=pageView.getTerritory();
+  const t=document.getElementById("sbxTitle"); if(t) s.title=t.value.trim()||"Mein Projekt";
+}
+function setSandboxSub(sub){
+  if(!sandboxState || sandboxState.sub===sub) return;
+  syncSandbox(); sandboxState.sub=sub;
+  const cb=document.getElementById("sbxCode"), wb=document.getElementById("sbxWelt");
+  if(cb) cb.classList.toggle("on", sub==="code"); if(wb) wb.classList.toggle("on", sub==="welt");
+  buildSandboxView();
+}
+async function saveSandbox(){
+  syncSandbox(); const s=sandboxState; if(!s) return;
+  const btn=document.getElementById("sbxSave"); btn.disabled=true; btn.textContent="Speichere…";
+  try{
+    if(s.projectId){ await api.updateSandboxProject(s.projectId, {title:s.title, territory:s.territory, code:s.code}); }
+    else { const created=await api.createSandboxProject({class_id:s.classId, title:s.title, territory:s.territory, code:s.code}); s.projectId=created.id; }
+    toast("Projekt gespeichert 💾","ok");
+  }catch(e){ toast(e.message||"Fehler","err"); }
+  finally{ btn.disabled=false; btn.textContent="💾 Speichern"; }
 }
 
 /* ---------- Kleinkram ---------- */
@@ -821,7 +934,7 @@ function errBox(e){ console.error(e); return `<div class="empty"><span class="ic
 function fmtDate(s){ try{ const d=new Date(s); return d.toLocaleDateString("de-DE",{day:"2-digit",month:"2-digit",year:"2-digit"}); }catch(e){ return ""; } }
 
 /* ---------- Footer: Version (letztes Update) + Copyright ---------- */
-const APP_BUILD = "2026-06-04 14:27";
+const APP_BUILD = "2026-06-04 14:51";
 (function(){ const f=document.getElementById("appfoot"); if(f) f.innerHTML='© 2026 <b>Laurens Offinger</b> &middot; Version '+APP_BUILD+' Uhr'; })();
 
 boot();

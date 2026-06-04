@@ -377,11 +377,12 @@ function injectStyles(){
   const st=document.createElement("style"); st.id="hv-styles";
   st.textContent = `
   .hv{--lh:22px;--cpad:12px;display:flex;flex-direction:column;gap:10px;font-family:"Nunito",sans-serif}
-  .hv .hv-main{display:grid;gap:12px;grid-template-columns:1.4fr 1fr;min-height:0}
+  .hv .hv-main{display:grid;gap:12px;grid-template-columns:1.65fr 1fr;min-height:0}
   .hv.solo .hv-main{grid-template-columns:1fr}
   .hv.fill{height:100%}
   .hv.fill .hv-main{flex:1;min-height:0}
-  .hv.fill .editor,.hv.fill .boardWrap{min-height:120px}
+  .hv.fill .editor{min-height:340px}
+  .hv.fill .boardWrap{min-height:200px}
   .hv .hv-pane{background:#fff;border:2px solid #e6ebf2;border-radius:14px;overflow:hidden;display:flex;flex-direction:column;min-width:0}
   .hv .hv-ph{padding:8px 12px;border-bottom:1px solid #eef2f7;font-weight:800;font-size:13px;color:#7a8aa0;display:flex;align-items:center;gap:8px}
   .hv .editor{display:flex;flex:1;min-height:300px;background:#1f2530;border-radius:0}
@@ -426,7 +427,7 @@ function injectStyles(){
   .hv .status{display:flex;gap:8px;padding:0;flex-wrap:wrap}
   .hv .stat{flex:1;min-width:60px;background:#f7f9fc;border:1px solid #eef2f7;border-radius:9px;padding:5px;text-align:center}
   .hv .stat .v{font-weight:800;font-size:15px}.hv .stat .k{font-size:10px;color:#7a8aa0}
-  .hv .out{height:84px;overflow:auto;padding:7px 11px;border:2px solid #e6ebf2;border-radius:12px;font:12px/1.5 "JetBrains Mono",Consolas,monospace;background:#fff}
+  .hv .out{height:60px;overflow:auto;padding:7px 11px;border:2px solid #e6ebf2;border-radius:12px;font:12px/1.5 "JetBrains Mono",Consolas,monospace;background:#fff}
   .hv .out:empty::before{content:"Ausgaben & Meldungen erscheinen hier …";color:#b6bfcc}
   .hv .out .err{color:#e63a3a;font-weight:700}.hv .out .ok{color:#46a302}.hv .out .say{color:#1899d6}
   @media(max-width:760px){.hv .hv-main{grid-template-columns:1fr}}`;
@@ -699,6 +700,15 @@ function checkGoal(goal, model){
     case "noGrains": return total()===0;
     case "grainsInMaul": return model.hamster.grains>= (goal.n||0);
     case "atPos": return model.hamster.row===goal.row && model.hamster.col===goal.col;
+    case "solution": {
+      // Vergleich des Körner-Endzustands (und optional der Hamster-Endposition) mit der Musterlösung
+      const want=goal.grains||{}; const cur={};
+      for(const [k,v] of model.grains){ if(v>0) cur[k]=v; }
+      const wk=Object.keys(want); if(wk.length!==Object.keys(cur).length) return false;
+      for(const k of wk){ if(cur[k]!==want[k]) return false; }
+      if(goal.matchHamster && (model.hamster.row!==goal.hrow || model.hamster.col!==goal.hcol)) return false;
+      return true;
+    }
     default: return null;
   }
 }
