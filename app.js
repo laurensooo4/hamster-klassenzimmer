@@ -80,6 +80,7 @@ function renderAuth(){
           <div class="role-opt ${s.role==="teacher"?"active":""}" data-role="teacher"><span class="ic">👨‍🏫</span>Lehrer:in</div>
         </div></div>` : ""}
     ${codeField}
+    ${isReg?`<div style="display:flex;gap:10px"><div class="field" style="flex:1"><label>Vorname</label><input class="input" id="auFirst" autocomplete="given-name"></div><div class="field" style="flex:1"><label>Nachname</label><input class="input" id="auLast" autocomplete="family-name"></div></div>`:""}
     <div class="field"><label>Benutzername</label>
       <input class="input" id="auUser" placeholder="z. B. max.muster" autocomplete="username" autocapitalize="none" spellcheck="false"></div>
     <div class="field"><label>Passwort</label>
@@ -114,9 +115,13 @@ async function doRegister(){
   const uRaw=document.getElementById("auUser").value.trim(), p=document.getElementById("auPass").value, role=authState.role;
   const u=normUser(uRaw);
   const codeEl=document.getElementById("auCode"); const code=codeEl?codeEl.value.trim():"";
+  const first=(document.getElementById("auFirst")||{value:""}).value.trim();
+  const last=(document.getElementById("auLast")||{value:""}).value.trim();
   if(!/^[a-z0-9_.\-]{3,20}$/.test(u)){ authMsg("Benutzername: 3-20 Zeichen, nur Buchstaben/Zahlen/._-"); return; }
+  if(!first||!last){ authMsg("Bitte Vor- und Nachnamen eingeben."); return; }
   if(p.length<6){ authMsg("Das Passwort muss mindestens 6 Zeichen haben."); return; }
   if(role==="teacher" && !code){ authMsg("Bitte den Lehrer-Code eingeben."); return; }
+  const displayName = first+" "+last;
   setBusy(true);
   // 1) Code prüfen, BEVOR ein Account angelegt wird
   let className=null;
@@ -136,15 +141,15 @@ async function doRegister(){
   const uid = data.user.id;
   // 3) Profil anlegen (+ Klassenbeitritt bei Schüler:innen)
   if(role==="teacher"){
-    const { error:e2 } = await sb.rpc("register_teacher", { p_username:u, p_display:uRaw, p_code:code });
+    const { error:e2 } = await sb.rpc("register_teacher", { p_username:u, p_display:displayName, p_code:code });
     if(e2){ setBusy(false); authMsg("Registrierung fehlgeschlagen: "+e2.message); return; }
   } else {
-    const { error:e2 } = await sb.from("profiles").insert({ id:uid, username:u, role:"student", display_name:uRaw });
+    const { error:e2 } = await sb.from("profiles").insert({ id:uid, username:u, role:"student", display_name:displayName });
     if(e2){ setBusy(false); if(/duplicate|unique/i.test(e2.message)) authMsg("Dieser Benutzername ist schon vergeben."); else authMsg("Profil konnte nicht angelegt werden: "+e2.message); return; }
     if(code){ const { error:e3 } = await sb.rpc("join_class", { p_code: code }); if(e3){ setBusy(false); authMsg("Beitritt fehlgeschlagen: "+e3.message); return; } }
   }
   await loadMe(uid);
-  toast(className?("Willkommen in "+className+"! 🎉"):("Willkommen, "+uRaw+"! 🎉"),"ok");
+  toast(className?("Willkommen in "+className+", "+first+"! 🎉"):("Willkommen, "+first+"! 🎉"),"ok");
   route();
 }
 function setBusy(b){ const btn=document.getElementById("auSubmit"); if(btn){ btn.disabled=b; btn.innerHTML = b?'<span class="spin" style="width:18px;height:18px;border-top-color:#fff;border-color:rgba(255,255,255,.4)"></span>':(authState.mode==="login"?"Anmelden":"Account erstellen"); } }
@@ -205,11 +210,15 @@ const api = {
 /* ===== Aufgaben & Abgaben ===== */
 let modalView=null, pageView=null;
 const DEFAULT_STARTER = "void main() {\n    \n}";
-api.listAssignments = async (classId)=>{ const {data,error}=await sb.from("assignments").select("*").eq("class_id",classId).order("created_at"); if(error) throw error; return data||[]; };
+api.listAssignments = async (classId)=>{ const {data,error}=await sb.from("assignments").select("*").eq("class_id",classId).order("position").order("created_at"); if(error) throw error; return data||[]; };
 api.getAssignment = async (id)=>{ const {data,error}=await sb.from("assignments").select("*").eq("id",id).single(); if(error) throw error; return data; };
-api.createAssignment = async (a)=>{ const {data,error}=await sb.from("assignments").insert(a).select().single(); if(error) throw error; return data; };
+api.createAssignment = async (a)=>{ const {data:mx}=await sb.from("assignments").select("position").eq("class_id",a.class_id).order("position",{ascending:false}).limit(1); const position=(mx&&mx[0]?mx[0].position:0)+1; const {data,error}=await sb.from("assignments").insert(Object.assign({position},a)).select().single(); if(error) throw error; return data; };
 api.deleteAssignment = async (id)=>{ const {error}=await sb.from("assignments").delete().eq("id",id); if(error) throw error; };
 api.updateAssignment = async (id, patch)=>{ const {data,error}=await sb.from("assignments").update(patch).eq("id",id).select().single(); if(error) throw error; return data; };
+api.listTemplates = async ()=>{ const {data,error}=await sb.from("templates").select("*").order("created_at",{ascending:false}); if(error) throw error; return data||[]; };
+api.createTemplate = async (t)=>{ const {data,error}=await sb.from("templates").insert(Object.assign({owner_id:ME.id},t)).select().single(); if(error) throw error; return data; };
+api.deleteTemplate = async (id)=>{ const {error}=await sb.from("templates").delete().eq("id",id); if(error) throw error; };
+async function moveAssignment(list, id, dir){ const i=list.findIndex(x=>x.id===id); const j=i+dir; if(i<0||j<0||j>=list.length) return; const a=list[i], b=list[j]; await api.updateAssignment(a.id,{position:b.position}); await api.updateAssignment(b.id,{position:a.position}); }
 api.upsertSubmission = async (s)=>{ const row=Object.assign({student_id:ME.id, submitted_at:new Date().toISOString()}, s); const {data,error}=await sb.from("submissions").upsert(row,{onConflict:"assignment_id,student_id"}).select().single(); if(error) throw error; return data; };
 api.mySubmission = async (assignmentId)=>{ const {data,error}=await sb.from("submissions").select("*").eq("assignment_id",assignmentId).eq("student_id",ME.id).maybeSingle(); if(error) throw error; return data; };
 api.classSubmissions = async (assignmentIds)=>{ if(!assignmentIds.length) return []; const {data,error}=await sb.from("submissions").select("*").in("assignment_id",assignmentIds); if(error) throw error; return data||[]; };
@@ -239,10 +248,14 @@ function newAssignmentDialog(classId, onDone, existing){
   const ex = existing || null;
   openModal(`<button class="x" onclick="closeModal()">✕</button>
     <h3>${ex?"Aufgabe bearbeiten":"Neue Aufgabe"}</h3>
+    ${ex?"":`<div class="field"><label>Aus Vorlage laden</label>
+      <div style="display:flex;gap:8px"><select class="input" id="asTpl" style="flex:1"><option value="">– keine –</option></select>
+      <button class="btn btn-ghost btn-sm" id="asDelTpl" title="Vorlage löschen" style="display:none">🗑️</button></div></div>`}
     <div class="field"><label>Titel</label><input class="input" id="asTitle" placeholder="z. B. Lauf bis zur Wand" maxlength="80"></div>
     <div class="field"><label>Aufgabenstellung</label><textarea class="input" id="asDesc" placeholder="Was soll der Hamster tun?"></textarea></div>
     <div class="field"><label>Territorium (anklicken zum Bearbeiten)</label><div id="asDesign"></div></div>
     <div class="field"><label>Startcode für Schüler (optional)</label><textarea class="input" id="asStarter" style="font-family:monospace;font-size:13px;min-height:70px" placeholder="${esc(DEFAULT_STARTER)}"></textarea></div>
+    <div class="field"><label>Spickzettel / Tipp (optional)</label><textarea class="input" id="asHint" style="min-height:54px" placeholder="Hinweis, den Schüler:innen einblenden können"></textarea></div>
     <div class="field"><label>Auto-Check (optional)</label>
       <select class="input" id="asGoalType">
         <option value="">Kein Auto-Check</option>
@@ -252,29 +265,40 @@ function newAssignmentDialog(classId, onDone, existing){
       </select>
       <div id="asGoalExtra" style="margin-top:8px"></div>
     </div>
-    <button class="btn btn-primary btn-lg" id="asSave">${ex?"Änderungen speichern":"Aufgabe stellen"}</button>`, true);
+    <label style="display:flex;gap:9px;align-items:center;font-weight:800;margin:2px 0 14px;cursor:pointer"><input type="checkbox" id="asPublish" style="width:18px;height:18px"> Für die Klasse sichtbar (veröffentlichen)</label>
+    <div style="display:flex;gap:10px">
+      <button class="btn btn-ghost" id="asSaveTpl" style="flex:none">💾 Als Vorlage</button>
+      <button class="btn btn-primary" id="asSave" style="flex:1">${ex?"Änderungen speichern":"Aufgabe stellen"}</button>
+    </div>`, true);
   modalView = new HamsterView("#asDesign", { mode:"design", model: ex? ex.territory : HamsterEngine.blankTerr() });
   const gt=document.getElementById("asGoalType"), extra=document.getElementById("asGoalExtra");
-  const renderExtra=()=>{ if(gt.value==="grainsInMaul") extra.innerHTML=`<input class="input" id="asGoalN" type="number" min="1" value="${ex&&ex.goal&&ex.goal.type==="grainsInMaul"?ex.goal.n:5}" placeholder="Anzahl Körner">`;
-    else if(gt.value==="atPos") extra.innerHTML=`<div style="display:flex;gap:8px"><input class="input" id="asGoalR" type="number" min="0" value="${ex&&ex.goal&&ex.goal.type==="atPos"?ex.goal.row:0}" placeholder="Reihe"><input class="input" id="asGoalC" type="number" min="0" value="${ex&&ex.goal&&ex.goal.type==="atPos"?ex.goal.col:0}" placeholder="Spalte"></div>`;
+  const renderExtra=()=>{ if(gt.value==="grainsInMaul") extra.innerHTML=`<input class="input" id="asGoalN" type="number" min="1" value="5" placeholder="Anzahl Körner">`;
+    else if(gt.value==="atPos") extra.innerHTML=`<div style="display:flex;gap:8px"><input class="input" id="asGoalR" type="number" min="0" value="0" placeholder="Reihe"><input class="input" id="asGoalC" type="number" min="0" value="0" placeholder="Spalte"></div>`;
     else extra.innerHTML=""; };
   gt.onchange=renderExtra;
-  if(ex){ document.getElementById("asTitle").value=ex.title||""; document.getElementById("asDesc").value=ex.description||""; document.getElementById("asStarter").value=ex.starter_code||""; if(ex.goal&&ex.goal.type) gt.value=ex.goal.type; }
-  renderExtra();
+  const gatherGoal=()=>{ if(gt.value==="noGrains")return{type:"noGrains"}; if(gt.value==="grainsInMaul")return{type:"grainsInMaul",n:Math.max(1,+(document.getElementById("asGoalN")||{}).value||1)}; if(gt.value==="atPos")return{type:"atPos",row:+(document.getElementById("asGoalR")||{}).value||0,col:+(document.getElementById("asGoalC")||{}).value||0}; return null; };
+  const fill=(o, withTerritory)=>{ document.getElementById("asTitle").value=o.title||""; document.getElementById("asDesc").value=o.description||""; document.getElementById("asStarter").value=o.starter_code||""; document.getElementById("asHint").value=o.hint||""; gt.value=(o.goal&&o.goal.type)||""; renderExtra(); if(o.goal){ if(o.goal.type==="grainsInMaul"&&document.getElementById("asGoalN"))document.getElementById("asGoalN").value=o.goal.n; if(o.goal.type==="atPos"){ if(document.getElementById("asGoalR"))document.getElementById("asGoalR").value=o.goal.row; if(document.getElementById("asGoalC"))document.getElementById("asGoalC").value=o.goal.col; } } if(withTerritory&&o.territory){ modalView.destroy(); modalView=new HamsterView("#asDesign",{mode:"design",model:o.territory}); } };
+  document.getElementById("asPublish").checked = ex? !!ex.published : true;
+  if(ex){ fill(ex, false); }
+  else { renderExtra();
+    const tplSel=document.getElementById("asTpl"), delTpl=document.getElementById("asDelTpl");
+    api.listTemplates().then(tpls=>{ window._tpls=tpls; tplSel.innerHTML='<option value="">– keine –</option>'+tpls.map(t=>`<option value="${t.id}">${esc(t.title)}</option>`).join(""); }).catch(()=>{});
+    tplSel.onchange=()=>{ const t=(window._tpls||[]).find(x=>x.id===tplSel.value); delTpl.style.display=t?"inline-flex":"none"; if(t) fill(t, true); };
+    delTpl.onclick=async()=>{ if(!tplSel.value)return; if(!confirm("Vorlage löschen?"))return; try{ await api.deleteTemplate(tplSel.value); window._tpls=(window._tpls||[]).filter(x=>x.id!==tplSel.value); tplSel.innerHTML='<option value="">– keine –</option>'+window._tpls.map(t=>`<option value="${t.id}">${esc(t.title)}</option>`).join(""); delTpl.style.display="none"; toast("Vorlage gelöscht","ok"); }catch(e){ toast(e.message,"err"); } };
+  }
   document.getElementById("asTitle").focus();
+  document.getElementById("asSaveTpl").onclick=async()=>{
+    const title=document.getElementById("asTitle").value.trim()||"Unbenannte Vorlage";
+    try{ await api.createTemplate({ title, description:document.getElementById("asDesc").value.trim(), territory:modalView.getTerritory(), starter_code:document.getElementById("asStarter").value.trim()||null, goal:gatherGoal(), hint:document.getElementById("asHint").value.trim()||null }); toast("Als Vorlage gespeichert 💾","ok"); }
+    catch(e){ toast(e.message||"Fehler","err"); }
+  };
   document.getElementById("asSave").onclick=async()=>{
     const title=document.getElementById("asTitle").value.trim(); if(!title){ document.getElementById("asTitle").focus(); return; }
-    const description=document.getElementById("asDesc").value.trim();
-    const starter_code=document.getElementById("asStarter").value.trim()||null;
-    const territory=modalView.getTerritory();
-    let goal=null;
-    if(gt.value==="noGrains") goal={type:"noGrains"};
-    else if(gt.value==="grainsInMaul") goal={type:"grainsInMaul", n:Math.max(1,+ (document.getElementById("asGoalN")||{}).value||1)};
-    else if(gt.value==="atPos") goal={type:"atPos", row:+ (document.getElementById("asGoalR")||{}).value||0, col:+ (document.getElementById("asGoalC")||{}).value||0};
+    const payload={ title, description:document.getElementById("asDesc").value.trim(), territory:modalView.getTerritory(), starter_code:document.getElementById("asStarter").value.trim()||null, goal:gatherGoal(), hint:document.getElementById("asHint").value.trim()||null, published:document.getElementById("asPublish").checked };
     const btn=document.getElementById("asSave"); btn.disabled=true; btn.textContent="Speichere…";
     try{
-      if(ex){ await api.updateAssignment(ex.id, { title, description, territory, starter_code, goal }); closeModal(); toast("Aufgabe aktualisiert ✓","ok"); }
-      else { await api.createAssignment({ class_id:classId, title, description, territory, starter_code, goal }); closeModal(); toast("Aufgabe gestellt 🎉","ok"); }
+      if(ex){ await api.updateAssignment(ex.id, payload); closeModal(); toast("Aufgabe aktualisiert ✓","ok"); }
+      else { await api.createAssignment(Object.assign({class_id:classId}, payload)); closeModal(); toast(payload.published?"Aufgabe veröffentlicht 🎉":"Entwurf gespeichert ✓","ok"); }
       if(onDone) onDone();
     } catch(e){ btn.disabled=false; btn.textContent=ex?"Änderungen speichern":"Aufgabe stellen"; toast(e.message||"Fehler","err"); }
   };
@@ -313,12 +337,14 @@ async function solveAssignment(assignmentId){
     <div class="page-head"><button class="crumb" id="back">← zurück</button></div>
     <div class="page-head" style="margin-top:0"><h2>${esc(a.title)}</h2><div class="spacer"></div><span id="solveStatus">${statusHtml}</span></div>
     ${a.description?`<div class="card" style="margin-bottom:12px"><b>Aufgabe:</b> ${esc(a.description)}${a.goal?`<div class="muted" style="margin-top:6px;font-size:13px">🎯 Ziel: ${esc(goalLabel(a.goal))}</div>`:""}</div>`:""}
+    ${a.hint?`<div style="margin-bottom:12px"><button class="btn btn-ghost btn-sm" id="btnHint">💡 Tipp anzeigen</button><div id="hintBox" class="card" style="display:none;margin-top:8px;background:#fffaf0">💡 ${esc(a.hint)}</div></div>`:""}
     <div id="solveHost" style="height:72vh;min-height:520px"></div>
     <div style="display:flex;gap:10px;margin-top:14px;align-items:center">
       <button class="btn btn-primary btn-lg" id="btnSubmit" style="max-width:240px">📤 Abgeben</button>
       <span id="submitMsg" class="muted"></span>
     </div>`;
   document.getElementById("back").onclick = ()=> studentClassView(a.class_id);
+  if(a.hint){ const hb=document.getElementById("hintBox"), bh=document.getElementById("btnHint"); bh.onclick=()=>{ const show=hb.style.display==="none"; hb.style.display=show?"block":"none"; bh.textContent=show?"💡 Tipp verbergen":"💡 Tipp anzeigen"; }; }
   pageView = new HamsterView("#solveHost", { mode:"solve", model:a.territory, code, fill:true, goal:a.goal });
   document.getElementById("btnSubmit").onclick = async ()=>{
     const myCode = pageView.getCode();
@@ -423,7 +449,10 @@ async function teacherClassView(classId){
   catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
 
   const assignHtml = assignments.length ? `<div class="list">${assignments.map(a=>`
-      <div class="row"><span class="grow"><span class="t">${esc(a.title)}</span>${a.goal?`<span class="s">🎯 ${esc(goalLabel(a.goal))}</span>`:`<span class="s">kein Auto-Check</span>`}</span>
+      <div class="row"><span class="grow"><span class="t">${esc(a.title)} ${a.published?"":'<span class="badge gold">Entwurf</span>'}</span>${a.goal?`<span class="s">🎯 ${esc(goalLabel(a.goal))}</span>`:`<span class="s">kein Auto-Check</span>`}</span>
+        <button class="btn btn-sm btn-ghost" data-up="${a.id}" title="nach oben">↑</button>
+        <button class="btn btn-sm btn-ghost" data-down="${a.id}" title="nach unten">↓</button>
+        <button class="btn btn-sm btn-ghost" data-pub="${a.id}" data-on="${a.published?1:0}" title="${a.published?'verbergen (Entwurf)':'veröffentlichen'}">${a.published?'👁️':'🚀'}</button>
         <button class="btn btn-sm btn-ghost" data-edit="${a.id}" title="bearbeiten">✏️</button>
         <button class="btn btn-sm btn-ghost" data-del="${a.id}" title="löschen">🗑️</button></div>`).join("")}</div>`
     : `<div class="empty" style="padding:16px"><span class="ic">📝</span>Noch keine Aufgaben.</div>`;
@@ -452,6 +481,9 @@ async function teacherClassView(classId){
   document.getElementById("btnRename").onclick = ()=> renameClassDialog(classId, cls.name);
   document.getElementById("btnNewAssign").onclick = ()=> newAssignmentDialog(classId, ()=>teacherClassView(classId));
   document.querySelectorAll("[data-edit]").forEach(b=> b.onclick=()=>{ const a=assignments.find(x=>x.id===b.dataset.edit); newAssignmentDialog(classId, ()=>teacherClassView(classId), a); });
+  document.querySelectorAll("[data-up]").forEach(b=> b.onclick=async()=>{ await moveAssignment(assignments, b.dataset.up, -1); teacherClassView(classId); });
+  document.querySelectorAll("[data-down]").forEach(b=> b.onclick=async()=>{ await moveAssignment(assignments, b.dataset.down, 1); teacherClassView(classId); });
+  document.querySelectorAll("[data-pub]").forEach(b=> b.onclick=async()=>{ try{ await api.updateAssignment(b.dataset.pub, { published: b.dataset.on!=="1" }); teacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } });
   document.querySelectorAll("[data-del]").forEach(b=> b.onclick=async()=>{ if(!confirm("Aufgabe wirklich löschen?")) return; try{ await api.deleteAssignment(b.dataset.del); teacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } });
   document.querySelectorAll(".cell[data-sub]").forEach(c=> c.onclick=()=>{ const s=subs.find(x=>x.id===c.dataset.sub); if(!s)return; const a=assignments.find(x=>x.id===s.assignment_id); const stu=roster.find(r=>r.student_id===s.student_id); const nm=(stu&&stu.profiles&&(stu.profiles.display_name||stu.profiles.username))||"?"; reviewSubmission(a,s,nm,classId); });
   document.querySelectorAll("[data-stu]").forEach(b=> b.onclick=()=> resetStudentPw(b.dataset.stu, b.dataset.nm));
