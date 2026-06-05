@@ -30,6 +30,43 @@ const HAMSTER_SVG = `<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/sv
   </g></svg>`;
 function beep(){}   // (Sound im Klassenzimmer deaktiviert)
 
+/* ---------- Befehls-Übersicht (Spickzettel im Editor) ---------- */
+const CHEAT_HTML = `
+  <h4>Hamster-Befehle</h4>
+  <div class="crow"><code>vor();</code><span>einen Schritt nach vorn gehen</span></div>
+  <div class="crow"><code>linksUm();</code><span>nach links drehen (90°)</span></div>
+  <div class="crow"><code>gib();</code><span>ein Korn ablegen</span></div>
+  <div class="crow"><code>nimm();</code><span>ein Korn fressen</span></div>
+  <div class="crow"><code>schreib("Text");</code><span>etwas ausgeben</span></div>
+  <h4>Tests &amp; Sensoren</h4>
+  <div class="crow"><code>vornFrei()</code><span>true, wenn vorne keine Mauer ist</span></div>
+  <div class="crow"><code>kornDa()</code><span>true, wenn ein Korn auf dem Feld liegt</span></div>
+  <div class="crow"><code>maulLeer()</code><span>true, wenn das Maul leer ist</span></div>
+  <div class="crow"><code>getAnzahlKoerner()</code><span>Körner im Maul</span></div>
+  <div class="crow"><code>getReihe()  getSpalte()</code><span>aktuelle Position</span></div>
+  <div class="crow"><code>getBlickrichtung()</code><span>NORD / OST / SUED / WEST</span></div>
+  <h4>Kontrollstrukturen</h4>
+  <div class="crow"><code>if (…) { … } else { … }</code><span>Verzweigung</span></div>
+  <div class="crow"><code>while (…) { … }</code><span>Schleife (kopfgesteuert)</span></div>
+  <div class="crow"><code>do { … } while (…);</code><span>Schleife (mind. 1×)</span></div>
+  <div class="crow"><code>for (int i=0; i&lt;n; i++) { … }</code><span>Zählschleife</span></div>
+  <div class="crow"><code>&amp;&amp;   ||   !</code><span>und / oder / nicht</span></div>
+  <h4>Eigene Methoden</h4>
+  <div class="crow"><code>void name() { … }</code><span>eigene Prozedur</span></div>
+  <div class="crow"><code>boolean test() { … }</code><span>eigene Testfunktion</span></div>
+  <div class="crow"><code>int wert() { … }</code><span>eigene Funktion mit Zahl</span></div>
+  <h4>Datentypen &amp; Variablen</h4>
+  <div class="crow"><code>int i = 0;</code><span>Ganzzahl (immer mit Typ!)</span></div>
+  <div class="crow"><code>boolean b = true;</code><span>Wahrheitswert</span></div>
+  <div class="crow"><code>String s = "Hallo";</code><span>Text-Variable</span></div>
+  <div class="crow"><code>int[] a = new int[5];</code><span>Array anlegen</span></div>
+  <h4>Territorium</h4>
+  <div class="crow"><code>Territorium.mauerDa(r,s)</code><span>Mauer an (r,s)?</span></div>
+  <div class="crow"><code>Territorium.getAnzahlReihen()</code><span>Anzahl Reihen</span></div>
+  <div class="crow"><code>Territorium.getAnzahlSpalten()</code><span>Anzahl Spalten</span></div>
+  <div class="crow"><code>Territorium.getAnzahlKoerner(r,s)</code><span>Körner auf (r,s)</span></div>
+`;
+
 /* ---------- LEXER ---------- */
 function lex(src){
   const toks=[]; let i=0, line=1;
@@ -184,6 +221,50 @@ function parse(src){
     perr("Ausdruck erwartet");
   }
   return program();
+}
+
+/* ---------- COMPILE-CHECK (Semantik: Variablen müssen mit Datentyp deklariert sein) ---------- */
+function compileCheck(ast){
+  const GLOBALS=new Set(["NORD","OST","SUED","WEST","BLAU","BLUE","ROT","RED","GRUEN","GREEN","GELB","YELLOW","CYAN","MAGENTA","ORANGE","PINK","GRAU","GRAY","WEISS","WHITE","Territorium"]);
+  const cerr=(msg,line)=>{ throw {hamsterError:true, message:"Compilerfehler: "+msg, line}; };
+  const known=(name,scopes)=>{ if(GLOBALS.has(name)) return true; for(let i=scopes.length-1;i>=0;i--) if(scopes[i].has(name)) return true; return false; };
+  function chkExpr(e,scopes){
+    if(!e||typeof e!=="object") return;
+    switch(e.kind){
+      case "int": case "bool": case "str": break;
+      case "ref": if(!known(e.name,scopes)) cerr("Die Variable '"+e.name+"' wurde nicht deklariert. Deklariere sie zuerst mit einem Datentyp, z. B. \"int "+e.name+";\".", e.line); break;
+      case "call": for(const a of e.args) chkExpr(a,scopes); break;
+      case "bin": chkExpr(e.l,scopes); chkExpr(e.r,scopes); break;
+      case "not": case "neg": chkExpr(e.e,scopes); break;
+      case "index": chkExpr(e.arr,scopes); chkExpr(e.idx,scopes); break;
+      case "newarray": chkExpr(e.size,scopes); break;
+      case "arraylit": for(const x of e.elems) chkExpr(x,scopes); break;
+      case "member": chkExpr(e.obj,scopes); break;
+      case "mcall": if(!(e.obj&&e.obj.kind==="ref"&&e.obj.name==="Territorium")) chkExpr(e.obj,scopes); for(const a of e.args) chkExpr(a,scopes); break;
+    }
+  }
+  function chkBlock(list,scopes){ const sc=new Set(); const s2=scopes.concat([sc]); for(const st of (list||[])) chkStmt(st,s2,sc); }
+  function chkStmt(s,scopes,cur){
+    switch(s.kind){
+      case "vardecl": if(s.init) chkExpr(s.init,scopes); cur.add(s.name); break;
+      case "assign": case "incdec":
+        if(!known(s.name,scopes)) cerr("Die Variable '"+s.name+"' wurde nicht deklariert. Deklariere sie zuerst mit einem Datentyp, z. B. \"int "+s.name+";\".", s.line);
+        if(s.value) chkExpr(s.value,scopes); break;
+      case "arrset":
+        if(!known(s.name,scopes)) cerr("Die Variable '"+s.name+"' wurde nicht deklariert (z. B. \"int[] "+s.name+";\").", s.line);
+        chkExpr(s.idx,scopes); chkExpr(s.value,scopes); break;
+      case "callstmt": for(const a of s.call.args) chkExpr(a,scopes); break;
+      case "block": chkBlock(s.body,scopes); break;
+      case "if": chkExpr(s.cond,scopes); chkBlock(s.then,scopes); if(s.els) chkBlock(s.els,scopes); break;
+      case "while": chkExpr(s.cond,scopes); chkBlock(s.body,scopes); break;
+      case "dowhile": chkBlock(s.body,scopes); chkExpr(s.cond,scopes); break;
+      case "for":{ const fs=new Set(); const sc=scopes.concat([fs]); if(s.init) chkStmt(s.init,sc,fs); if(s.cond) chkExpr(s.cond,sc); if(s.update) chkStmt(s.update,sc,fs); chkBlock(s.body,sc); break; }
+      case "return": if(s.value) chkExpr(s.value,scopes); break;
+    }
+  }
+  const methods=ast.methods||{};
+  for(const name in methods){ const m=methods[name]; const ps=new Set(); (m.params||[]).forEach(p=>ps.add(p.name)); chkBlock(m.body,[ps]); }
+  if(ast.main && !methods.main) chkBlock(ast.main, []);
 }
 
 /* ---------- INTERPRETER ---------- */
@@ -383,7 +464,7 @@ function injectStyles(){
   .hv.fill .hv-main{flex:1;min-height:0}
   .hv.fill .editor{min-height:340px}
   .hv.fill .boardWrap{min-height:200px}
-  .hv .hv-pane{background:#fff;border:2px solid #e6ebf2;border-radius:14px;overflow:hidden;display:flex;flex-direction:column;min-width:0}
+  .hv .hv-pane{position:relative;background:#fff;border:2px solid #e6ebf2;border-radius:14px;overflow:hidden;display:flex;flex-direction:column;min-width:0}
   .hv .hv-ph{padding:8px 12px;border-bottom:1px solid #eef2f7;font-weight:800;font-size:13px;color:#7a8aa0;display:flex;align-items:center;gap:8px}
   .hv .editor{display:flex;flex:1;min-height:300px;background:#1f2530;border-radius:0}
   .hv #g,.hv .gut{width:42px;flex:none;background:#2a313e;overflow:hidden;position:relative;border-right:1px solid #323a47}
@@ -420,6 +501,15 @@ function injectStyles(){
   .hv .cbtn:disabled{opacity:.45;cursor:default}
   .hv .speed{margin-left:auto;display:flex;align-items:center;gap:6px;font-size:12px;color:#7a8aa0}
   .hv .speed input{width:90px;accent-color:#e7a13a}
+  .hv .cbtn.cmds{font-weight:800}
+  .hv .hv-cheat{position:absolute;inset:0;z-index:20;background:#fff;border-radius:13px;display:flex;flex-direction:column;overflow:hidden}
+  .hv .hv-cheat-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 12px;border-bottom:1px solid #eef2f7;background:#fafbfd;font-size:14px}
+  .hv .hv-cheat-body{flex:1;overflow:auto;padding:8px 12px 14px}
+  .hv .hv-cheat h4{margin:12px 0 3px;font-size:11px;font-weight:900;color:#7a8aa0;text-transform:uppercase;letter-spacing:.6px}
+  .hv .hv-cheat h4:first-child{margin-top:2px}
+  .hv .hv-cheat .crow{display:grid;grid-template-columns:minmax(130px,42%) 1fr;gap:10px;align-items:baseline;padding:4px 0;border-bottom:1px dashed #eef2f7}
+  .hv .hv-cheat code{font-family:"JetBrains Mono",Consolas,monospace;font-size:12px;color:#2b2f3a;background:#f3f5f9;padding:2px 6px;border-radius:6px;white-space:nowrap}
+  .hv .hv-cheat .crow span{font-size:12.5px;color:#5a6675}
   .hv .tools{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:8px;border-bottom:1px solid #eef2f7;background:#fafbfd}
   .hv .tool{border:1px solid #e6ebf2;background:#fff;border-radius:8px;padding:6px 9px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit}
   .hv .tool.on{border-color:#e7a13a;background:#fff7ea;color:#c9851f}
@@ -445,6 +535,7 @@ class HamsterView{
     this.mode = opts.mode || "solve";          // solve | design | view
     this.fill = !!opts.fill;                   // Container-Höhe ausfüllen (großes Arbeitsfenster)
     this.goal = opts.goal || null;             // Auto-Check-Ziel -> Live-Anzeige nach dem Lauf
+    this.showCommands = !!opts.commands;       // Befehls-Übersicht (Spickzettel) im Editor einblendbar
     this.initial = toModel(opts.model);
     this.model = cloneModel(this.initial);
     this.code = opts.code!=null ? opts.code : "";
@@ -473,8 +564,10 @@ class HamsterView{
           <button class="cbtn step">⏭</button>
           <button class="cbtn red stopb" disabled>⏹</button>
           <button class="cbtn reset">⟲</button>
+          ${this.showCommands?'<button class="cbtn cmds" type="button" title="Befehls-Übersicht">📖 Befehle</button>':''}
           <label class="speed">🐢<input type="range" class="sp" min="1" max="10" value="4">🐇</label>
         </div>
+        ${this.showCommands?`<div class="hv-cheat" style="display:none"><div class="hv-cheat-head"><b>📖 Befehle &amp; Sprache</b><button class="cbtn cheatclose" type="button">✕ schließen</button></div><div class="hv-cheat-body">${CHEAT_HTML}</div></div>`:""}
       </div>` : "";
     const designTools = m==="design" ? `
       <div class="tools">
@@ -515,12 +608,31 @@ class HamsterView{
       this.code_.value=this.code; this._refreshEditor();
       this.code_.addEventListener("input",()=>{ this.code=this.code_.value; this._refreshEditor(); if(this.onCode)this.onCode(this.code); });
       this.code_.addEventListener("scroll",()=>this._syncScroll());
-      this.code_.addEventListener("keydown",e=>{ if(e.key==="Tab"&&!this.code_.readOnly){ e.preventDefault(); const s=this.code_.selectionStart,en=this.code_.selectionEnd; this.code_.value=this.code_.value.slice(0,s)+"    "+this.code_.value.slice(en); this.code_.selectionStart=this.code_.selectionEnd=s+4; this.code=this.code_.value; this._refreshEditor(); } });
+      this.code_.addEventListener("keydown",e=>{
+        const ta=this.code_; if(ta.readOnly) return;
+        if(e.key==="Tab"){
+          e.preventDefault();
+          const s=ta.selectionStart, en=ta.selectionEnd;
+          ta.value=ta.value.slice(0,s)+"\t"+ta.value.slice(en);
+          ta.selectionStart=ta.selectionEnd=s+1;
+          this.code=ta.value; this._refreshEditor();
+        } else if(e.key==="Enter"){
+          e.preventDefault();
+          const s=ta.selectionStart, en=ta.selectionEnd, v=ta.value;
+          const lineStart=v.lastIndexOf("\n",s-1)+1;            // Beginn der aktuellen Zeile
+          const indent=(v.slice(lineStart).match(/^[\t ]*/)||[""])[0];  // führende Einrückung (echte Tabs)
+          const ins="\n"+indent;
+          ta.value=v.slice(0,s)+ins+v.slice(en);
+          ta.selectionStart=ta.selectionEnd=s+ins.length;
+          this.code=ta.value; this._refreshEditor();
+        }
+      });
       this.$(".run").onclick=()=>this.run();
       this.$(".pause").onclick=()=>this._pauseResume();
       this.$(".step").onclick=()=>this._stepOnce();
       this.$(".stopb").onclick=()=>this._stopRun(false);
       this.$(".reset").onclick=()=>{ this._stopRun(true); this._resetModel(); this._clearOut(); this.runState="idle"; this._updateBtns(); };
+      { const cb=this.$(".cmds"); if(cb){ const panel=this.$(".hv-cheat"); cb.onclick=()=>{ panel.style.display=(panel.style.display==="none"?"flex":"none"); }; const cc=this.$(".cheatclose"); if(cc) cc.onclick=()=>{ panel.style.display="none"; }; } }
     }
     if(m==="design"){
       this.$(".rIn").value=this.model.rows; this.$(".cIn").value=this.model.cols; this.$(".mIn").value=this.model.hamster.grains;
@@ -598,7 +710,7 @@ class HamsterView{
 
   /* ----- Lauf ----- */
   _prepare(){
-    let ast; try{ ast=parse(this.code_.value); }catch(e){ this._showErr(e); return null; }
+    let ast; try{ ast=parse(this.code_.value); compileCheck(ast); }catch(e){ this._showErr(e); return null; }
     this.model=cloneModel(this.initial); this._render();
     const im=makeInterpreter(ast, { rows:this.model.rows, cols:this.model.cols, walls:this.model.walls, grains:this.model.grains, hamster:this.model.hamster, onWrite:(s)=>this._log("🗨 "+s,"say") });
     return im.run();
@@ -714,6 +826,6 @@ function checkGoal(goal, model){
 }
 
 window.HamsterView = HamsterView;
-window.HamsterEngine = { parse, makeInterpreter, buildTerr, blankTerr, toJSON, toModel, cloneModel, checkGoal };
+window.HamsterEngine = { parse, compileCheck, makeInterpreter, buildTerr, blankTerr, toJSON, toModel, cloneModel, checkGoal };
 window.HamsterEngineReady = true;
 })();

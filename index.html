@@ -112,6 +112,8 @@
   .row{display:flex;align-items:center;gap:12px;background:#fff;border:2px solid var(--line);border-radius:14px;padding:13px 15px}
   .row .grow{flex:1;min-width:0}
   .row .grow .t{display:block;font-weight:800}
+  .row .grow .t.clickable{cursor:pointer;display:inline-block}
+  .row .grow .t.clickable:hover{color:var(--blue);text-decoration:underline}
   .row .grow .s{display:block;color:var(--muted);font-size:13px;font-weight:700;margin-top:2px}
   .acts{display:flex;gap:5px;flex:none}
   .abtn{border:1px solid var(--line);background:#fff;border-radius:9px;padding:6px 9px;font-size:14px;line-height:1;cursor:pointer;transition:.1s}
@@ -164,7 +166,7 @@
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="config.js"></script>
-  <script src="engine.js"></script>
-  <script src="app.js"></script>
+  <script src="engine.js?v=h1"></script>
+  <script src="app.js?v=h1"></script>
 </body>
 </html>

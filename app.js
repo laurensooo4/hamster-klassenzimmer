@@ -223,7 +223,7 @@ const api = {
 /* ===== Aufgaben & Abgaben ===== */
 let modalView=null, pageView=null;
 let solveState=null, reviewState=null, sampleState=null, sandboxState=null;
-const DEFAULT_STARTER = "void main() {\n    \n}";
+const DEFAULT_STARTER = "void main() {\n\t\n}";
 api.listAssignments = async (classId)=>{ const {data,error}=await sb.from("assignments").select("*").eq("class_id",classId).order("position").order("created_at"); if(error) throw error; return data||[]; };
 api.getAssignment = async (id)=>{ const {data,error}=await sb.from("assignments").select("*").eq("id",id).single(); if(error) throw error; return data; };
 api.createAssignment = async (a)=>{ const {data:mx}=await sb.from("assignments").select("position").eq("class_id",a.class_id).order("position",{ascending:false}).limit(1); const position=(mx&&mx[0]?mx[0].position:0)+1; const {data,error}=await sb.from("assignments").insert(Object.assign({position},a)).select().single(); if(error) throw error; return data; };
@@ -232,6 +232,7 @@ api.updateAssignment = async (id, patch)=>{ const {data,error}=await sb.from("as
 api.listTemplates = async ()=>{ const {data,error}=await sb.from("templates").select("*").order("created_at",{ascending:false}); if(error) throw error; return data||[]; };
 api.createTemplate = async (t)=>{ const {data,error}=await sb.from("templates").insert(Object.assign({owner_id:ME.id},t)).select().single(); if(error) throw error; return data; };
 api.deleteTemplate = async (id)=>{ const {error}=await sb.from("templates").delete().eq("id",id); if(error) throw error; };
+api.updateTemplate = async (id, patch)=>{ const {data,error}=await sb.from("templates").update(patch).eq("id",id).select().single(); if(error) throw error; return data; };
 async function moveAssignment(list, id, dir){ const i=list.findIndex(x=>x.id===id); const j=i+dir; if(i<0||j<0||j>=list.length) return; const a=list[i], b=list[j]; await api.updateAssignment(a.id,{position:b.position}); await api.updateAssignment(b.id,{position:a.position}); }
 /* Abgaben: mehrere je Schüler:in + Historie; genau eine ist "aktuell" (is_current) */
 api.addSubmission = async (s)=>{ const row=Object.assign({student_id:ME.id, is_current:true, submitted_at:new Date().toISOString()}, s); const {data,error}=await sb.from("submissions").insert(row).select().single(); if(error) throw error; return data; };
@@ -276,7 +277,7 @@ api.setAdmin = async (userId, makeAdmin)=>{ const {error}=await sb.rpc("set_admi
 
 /* Headless: Code auf frischer Kopie des Territoriums laufen lassen -> Endmodell (wirft bei Fehler) */
 function runHeadless(code, territory){
-  const ast=HamsterEngine.parse(code);
+  const ast=HamsterEngine.parse(code); HamsterEngine.compileCheck(ast);
   const model=HamsterEngine.toModel(territory);
   const m={rows:model.rows,cols:model.cols,walls:model.walls,grains:model.grains,hamster:model.hamster,onWrite:()=>{}};
   const it=HamsterEngine.makeInterpreter(ast,m); const g=it.run(); let n=0;
@@ -305,32 +306,35 @@ function goalLabel(goal){
 }
 
 /* ---------- Lehrer: Aufgabe stellen / bearbeiten ---------- */
-function newAssignmentDialog(classId, onDone, existing){
+function newAssignmentDialog(classId, onDone, existing, tplMode){
   const ex = existing || null;
+  const titleTxt = ex ? (tplMode?"Vorlage bearbeiten":"Aufgabe bearbeiten") : (tplMode?"Neue Vorlage":"Neue Aufgabe");
+  const saveTxt  = tplMode ? "Vorlage speichern" : (ex?"Änderungen speichern":"Aufgabe stellen");
   openModal(`<button class="x" onclick="closeModal()">✕</button>
-    <h3>${ex?"Aufgabe bearbeiten":"Neue Aufgabe"}</h3>
-    ${ex?"":`<div class="field"><label>Aus Vorlage laden</label>
+    <h3>${titleTxt}</h3>
+    ${(ex||tplMode)?"":`<div class="field"><label>Aus Vorlage laden</label>
       <div style="display:flex;gap:8px"><select class="input" id="asTpl" style="flex:1"><option value="">– keine –</option></select>
       <button class="btn btn-ghost btn-sm" id="asDelTpl" title="Vorlage löschen" style="display:none">🗑️</button></div></div>`}
     <div class="field"><label>Titel</label><input class="input" id="asTitle" placeholder="z. B. Lauf bis zur Wand" maxlength="80"></div>
     <div class="field"><label>Aufgabenstellung</label><textarea class="input" id="asDesc" placeholder="Was soll der Hamster tun?"></textarea></div>
     <div class="field"><label>Territorium (anklicken zum Bearbeiten)</label><div id="asDesign"></div></div>
     <div class="field"><label>Startcode für Schüler (optional)</label><textarea class="input" id="asStarter" style="font-family:monospace;font-size:13px;min-height:70px" placeholder="${esc(DEFAULT_STARTER)}"></textarea></div>
-    <div class="field"><label>Spickzettel / Tipp (optional)</label><textarea class="input" id="asHint" style="min-height:54px" placeholder="Hinweis, den Schüler:innen einblenden können"></textarea></div>
+    <div class="field"><label>Tipp / Hinweis (optional)</label><textarea class="input" id="asHint" style="min-height:54px" placeholder="Eigener Hinweis, den Schüler:innen einblenden können"></textarea></div>
     <div class="field"><label>Auto-Check (optional)</label>
       <select class="input" id="asGoalType">
         <option value="">Kein Auto-Check</option>
         <option value="noGrains">Feld leer – alle Körner gefressen</option>
         <option value="grainsInMaul">Hamster hat ≥ N Körner im Maul</option>
         <option value="atPos">Hamster steht am Ziel (Reihe/Spalte)</option>
-        <option value="solution">Mit Musterlösung vergleichen (Lösungscode)</option>
+        <option value="solution">Soll-Zustand vergleichen</option>
       </select>
       <div id="asGoalExtra" style="margin-top:8px"></div>
     </div>
-    <label style="display:flex;gap:9px;align-items:center;font-weight:800;margin:2px 0 14px;cursor:pointer"><input type="checkbox" id="asPublish" style="width:18px;height:18px"> Für die Klasse sichtbar (veröffentlichen)</label>
+    <label style="display:flex;gap:9px;align-items:center;font-weight:800;margin:2px 0 10px;cursor:pointer"><input type="checkbox" id="asShowCmd" style="width:18px;height:18px"> 📖 Befehls-Übersicht (Spickzettel) für Schüler:innen einblendbar</label>
+    ${tplMode?"":`<label style="display:flex;gap:9px;align-items:center;font-weight:800;margin:2px 0 14px;cursor:pointer"><input type="checkbox" id="asPublish" style="width:18px;height:18px"> Für die Klasse sichtbar (veröffentlichen)</label>`}
     <div style="display:flex;gap:10px">
-      <button class="btn btn-ghost" id="asSaveTpl" style="flex:none">💾 Als Vorlage</button>
-      <button class="btn btn-primary" id="asSave" style="flex:1">${ex?"Änderungen speichern":"Aufgabe stellen"}</button>
+      ${tplMode?"":`<button class="btn btn-ghost" id="asSaveTpl" style="flex:none">💾 Als Vorlage</button>`}
+      <button class="btn btn-primary" id="asSave" style="flex:1">${saveTxt}</button>
     </div>`, true);
   modalView = new HamsterView("#asDesign", { mode:"design", model: ex? ex.territory : HamsterEngine.blankTerr() });
   const gt=document.getElementById("asGoalType"), extra=document.getElementById("asGoalExtra");
@@ -342,28 +346,37 @@ function newAssignmentDialog(classId, onDone, existing){
   const gatherGoal=()=>{ if(gt.value==="noGrains")return{type:"noGrains"}; if(gt.value==="grainsInMaul")return{type:"grainsInMaul",n:Math.max(1,+(document.getElementById("asGoalN")||{}).value||1)}; if(gt.value==="atPos")return{type:"atPos",row:+(document.getElementById("asGoalR")||{}).value||0,col:+(document.getElementById("asGoalC")||{}).value||0};
     if(gt.value==="solution"){ const code=((document.getElementById("asSolCode")||{}).value||"").trim(); if(!code) throw new Error("Bitte den Lösungscode eingeben."); return computeSolutionGoal(code, modalView.getTerritory(), !!(document.getElementById("asSolHam")||{}).checked); }
     return null; };
-  const fill=(o, withTerritory)=>{ document.getElementById("asTitle").value=o.title||""; document.getElementById("asDesc").value=o.description||""; document.getElementById("asStarter").value=o.starter_code||""; document.getElementById("asHint").value=o.hint||""; gt.value=(o.goal&&o.goal.type)||""; renderExtra(); if(o.goal){ if(o.goal.type==="grainsInMaul"&&document.getElementById("asGoalN"))document.getElementById("asGoalN").value=o.goal.n; if(o.goal.type==="atPos"){ if(document.getElementById("asGoalR"))document.getElementById("asGoalR").value=o.goal.row; if(document.getElementById("asGoalC"))document.getElementById("asGoalC").value=o.goal.col; } } if(o.goal&&o.goal.type==="solution"){ const t=document.getElementById("asSolCode"); if(t&&o.solution_code!=null) t.value=o.solution_code; const h=document.getElementById("asSolHam"); if(h) h.checked=!!o.match_hamster; } if(withTerritory&&o.territory){ modalView.destroy(); modalView=new HamsterView("#asDesign",{mode:"design",model:o.territory}); } };
-  document.getElementById("asPublish").checked = ex? !!ex.published : true;
-  if(ex){ fill(ex, false); if(ex.goal&&ex.goal.type==="solution"){ api.getAssignmentSolution(ex.id).then(s=>{ if(s){ const t=document.getElementById("asSolCode"); if(t) t.value=s.code||""; const h=document.getElementById("asSolHam"); if(h) h.checked=!!s.match_hamster; } }).catch(()=>{}); } }
-  else { renderExtra();
+  const fill=(o, withTerritory)=>{ document.getElementById("asTitle").value=o.title||""; document.getElementById("asDesc").value=o.description||""; document.getElementById("asStarter").value=o.starter_code||""; document.getElementById("asHint").value=o.hint||""; const scEl=document.getElementById("asShowCmd"); if(scEl&&o.show_commands!=null) scEl.checked=o.show_commands!==false; gt.value=(o.goal&&o.goal.type)||""; renderExtra(); if(o.goal){ if(o.goal.type==="grainsInMaul"&&document.getElementById("asGoalN"))document.getElementById("asGoalN").value=o.goal.n; if(o.goal.type==="atPos"){ if(document.getElementById("asGoalR"))document.getElementById("asGoalR").value=o.goal.row; if(document.getElementById("asGoalC"))document.getElementById("asGoalC").value=o.goal.col; } } if(o.goal&&o.goal.type==="solution"){ const t=document.getElementById("asSolCode"); if(t&&o.solution_code!=null) t.value=o.solution_code; const h=document.getElementById("asSolHam"); if(h) h.checked=!!o.match_hamster; } if(withTerritory&&o.territory){ modalView.destroy(); modalView=new HamsterView("#asDesign",{mode:"design",model:o.territory}); } };
+  { const pub=document.getElementById("asPublish"); if(pub) pub.checked = ex? !!ex.published : true; }
+  { const sc=document.getElementById("asShowCmd"); if(sc) sc.checked = ex? (ex.show_commands!==false) : true; }
+  if(ex){ fill(ex, false); if(!tplMode && ex.goal && ex.goal.type==="solution"){ api.getAssignmentSolution(ex.id).then(s=>{ if(s){ const t=document.getElementById("asSolCode"); if(t) t.value=s.code||""; const h=document.getElementById("asSolHam"); if(h) h.checked=!!s.match_hamster; } }).catch(()=>{}); } }
+  else if(!tplMode){ renderExtra();
     const tplSel=document.getElementById("asTpl"), delTpl=document.getElementById("asDelTpl");
     api.listTemplates().then(tpls=>{ window._tpls=tpls; tplSel.innerHTML='<option value="">– keine –</option>'+tpls.map(t=>`<option value="${t.id}">${esc(t.title)}</option>`).join(""); }).catch(()=>{});
     tplSel.onchange=()=>{ const t=(window._tpls||[]).find(x=>x.id===tplSel.value); delTpl.style.display=t?"inline-flex":"none"; if(t) fill(t, true); };
     delTpl.onclick=async()=>{ if(!tplSel.value)return; if(!confirm("Vorlage löschen?"))return; try{ await api.deleteTemplate(tplSel.value); window._tpls=(window._tpls||[]).filter(x=>x.id!==tplSel.value); tplSel.innerHTML='<option value="">– keine –</option>'+window._tpls.map(t=>`<option value="${t.id}">${esc(t.title)}</option>`).join(""); delTpl.style.display="none"; toast("Vorlage gelöscht","ok"); }catch(e){ toast(e.message,"err"); } };
   }
+  else { renderExtra(); }
   document.getElementById("asTitle").focus();
-  document.getElementById("asSaveTpl").onclick=async()=>{
+  { const saveTplBtn=document.getElementById("asSaveTpl"); if(saveTplBtn) saveTplBtn.onclick=async()=>{
     const title=document.getElementById("asTitle").value.trim()||"Unbenannte Vorlage";
     let goal; try{ goal=gatherGoal(); }catch(e){ toast(e.message||"Lösungscode fehlerhaft","err"); return; }
-    try{ await api.createTemplate({ title, description:document.getElementById("asDesc").value.trim(), territory:modalView.getTerritory(), starter_code:document.getElementById("asStarter").value.trim()||null, goal, hint:document.getElementById("asHint").value.trim()||null, solution_code:(document.getElementById("asSolCode")||{}).value||null, match_hamster:!!(document.getElementById("asSolHam")||{}).checked }); toast("Als Vorlage gespeichert 💾","ok"); }
+    try{ await api.createTemplate({ title, description:document.getElementById("asDesc").value.trim(), territory:modalView.getTerritory(), starter_code:document.getElementById("asStarter").value.trim()||null, goal, hint:document.getElementById("asHint").value.trim()||null, solution_code:(document.getElementById("asSolCode")||{}).value||null, match_hamster:!!(document.getElementById("asSolHam")||{}).checked, show_commands:document.getElementById("asShowCmd").checked }); toast("Als Vorlage gespeichert 💾","ok"); }
     catch(e){ toast(e.message||"Fehler","err"); }
-  };
+  }; }
   document.getElementById("asSave").onclick=async()=>{
     const title=document.getElementById("asTitle").value.trim(); if(!title){ document.getElementById("asTitle").focus(); return; }
     let goal; try{ goal=gatherGoal(); }catch(e){ toast(e.message||"Lösungscode fehlerhaft","err"); return; }
     const solCode=(document.getElementById("asSolCode")||{}).value||"", solHam=!!(document.getElementById("asSolHam")||{}).checked;
-    const payload={ title, description:document.getElementById("asDesc").value.trim(), territory:modalView.getTerritory(), starter_code:document.getElementById("asStarter").value.trim()||null, goal, hint:document.getElementById("asHint").value.trim()||null, published:document.getElementById("asPublish").checked };
+    const showCmd=document.getElementById("asShowCmd").checked;
     const btn=document.getElementById("asSave"); btn.disabled=true; btn.textContent="Speichere…";
+    if(tplMode){
+      const tplPayload={ title, description:document.getElementById("asDesc").value.trim(), territory:modalView.getTerritory(), starter_code:document.getElementById("asStarter").value.trim()||null, goal, hint:document.getElementById("asHint").value.trim()||null, solution_code:solCode||null, match_hamster:solHam, show_commands:showCmd };
+      try{ if(ex) await api.updateTemplate(ex.id, tplPayload); else await api.createTemplate(tplPayload); closeModal(); toast(ex?"Vorlage aktualisiert ✓":"Vorlage gespeichert 💾","ok"); if(onDone) onDone(); }
+      catch(e){ btn.disabled=false; btn.textContent=saveTxt; toast(e.message||"Fehler","err"); }
+      return;
+    }
+    const payload={ title, description:document.getElementById("asDesc").value.trim(), territory:modalView.getTerritory(), starter_code:document.getElementById("asStarter").value.trim()||null, goal, hint:document.getElementById("asHint").value.trim()||null, published:document.getElementById("asPublish").checked, show_commands:showCmd };
     try{
       let aid;
       if(ex){ await api.updateAssignment(ex.id, payload); aid=ex.id; }
@@ -372,8 +385,28 @@ function newAssignmentDialog(classId, onDone, existing){
       else { try{ await api.deleteAssignmentSolution(aid); }catch(_){} }
       closeModal(); toast(ex?"Aufgabe aktualisiert ✓":(payload.published?"Aufgabe veröffentlicht 🎉":"Entwurf gespeichert ✓"),"ok");
       if(onDone) onDone();
-    } catch(e){ btn.disabled=false; btn.textContent=ex?"Änderungen speichern":"Aufgabe stellen"; toast(e.message||"Fehler","err"); }
+    } catch(e){ btn.disabled=false; btn.textContent=saveTxt; toast(e.message||"Fehler","err"); }
   };
+}
+
+/* ---------- Lehrer: Vorlagen-Übersicht ---------- */
+async function templatesPage(){
+  shell(`<div class="center-load"><span class="spin"></span>Vorlagen…</div>`);
+  let tpls=[];
+  try{ tpls=await api.listTemplates(); }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
+  const list = tpls.length ? `<div class="list">${tpls.map(t=>`
+      <div class="row"><span class="grow"><span class="t clickable" data-edit="${t.id}" title="Vorlage bearbeiten">${esc(t.title)}</span><span class="s">${t.description?esc(t.description.slice(0,80)):"keine Beschreibung"}${t.goal&&t.goal.type?` · 🎯 ${esc(goalLabel(t.goal))}`:""}</span></span>
+        <span class="acts"><button class="abtn" data-edit="${t.id}" title="bearbeiten">✏️</button><button class="abtn" data-del="${t.id}" title="löschen">🗑️</button></span></div>`).join("")}</div>`
+    : `<div class="empty"><span class="ic">📋</span>Noch keine Vorlagen. Erstelle deine erste!</div>`;
+  document.getElementById("view").innerHTML = `
+    <div class="page-head"><button class="crumb" id="back">← Meine Klassen</button></div>
+    <div class="page-head" style="margin-top:0"><h2>📋 Aufgaben-Vorlagen</h2><div class="spacer"></div><button class="btn btn-primary" id="btnNewTpl">+ Neue Vorlage</button></div>
+    <div class="card" style="margin-bottom:12px;padding:12px 16px"><span class="muted" style="font-size:13px">Vorlagen sind wiederverwendbare Aufgaben-Bausteine. Beim Erstellen einer Aufgabe kannst du oben „Aus Vorlage laden" wählen.</span></div>
+    ${list}`;
+  document.getElementById("back").onclick = teacherHome;
+  document.getElementById("btnNewTpl").onclick = ()=> newAssignmentDialog(null, templatesPage, null, true);
+  document.querySelectorAll("[data-edit]").forEach(b=> b.onclick=()=>{ const t=tpls.find(x=>x.id===b.dataset.edit); newAssignmentDialog(null, templatesPage, t, true); });
+  document.querySelectorAll("[data-del]").forEach(b=> b.onclick=async()=>{ if(!confirm("Vorlage löschen?")) return; try{ await api.deleteTemplate(b.dataset.del); templatesPage(); }catch(e){ toast(e.message||"Fehler","err"); } });
 }
 
 /* ---------- Lehrer: Abgabe(n) live öffnen, bearbeiten, kommentieren ---------- */
@@ -428,7 +461,7 @@ async function showReviewVersion(sub){
   const passed = sub.passed===true ? `<span class="badge">bestanden ✓</span>` : `<span class="badge gold">abgegeben</span>`;
   const st=document.getElementById("revStatus"); if(st) st.innerHTML = passed + ` <span class="muted" style="font-size:12px">${esc(fmtDateTime(sub.submitted_at))}</span>`;
   if(pageView){ try{ pageView.destroy(); }catch(e){} }
-  pageView = new HamsterView("#reviewHost", { mode:"solve", model:s.assignment.territory, code:sub.code, fill:true, goal:s.assignment.goal });
+  pageView = new HamsterView("#reviewHost", { mode:"solve", model:s.assignment.territory, code:sub.code, fill:true, goal:s.assignment.goal, commands:true });
   if(s.history.length>1) renderVerNav();
   const ta=document.getElementById("revComment"), rel=document.getElementById("revRelease"), del=document.getElementById("revDelete"), msg=document.getElementById("revMsg");
   if(ta) ta.value=""; if(rel) rel.checked=false; if(del) del.style.display="none"; if(msg) msg.textContent="";
@@ -479,7 +512,7 @@ async function sampleManager(assignment, classId){
       <span id="smMsg" class="muted"></span>
     </div>`;
   document.getElementById("back").onclick = ()=> teacherClassView(classId);
-  pageView = new HamsterView("#smEditHost", { mode:"solve", model:assignment.territory, code:(assignment.starter_code||DEFAULT_STARTER), fill:true, goal:assignment.goal });
+  pageView = new HamsterView("#smEditHost", { mode:"solve", model:assignment.territory, code:(assignment.starter_code||DEFAULT_STARTER), fill:true, goal:assignment.goal, commands:true });
   renderSampleList();
   document.getElementById("smSave").onclick = saveSampleFromEditor;
   document.getElementById("smNew").onclick = ()=> resetSampleEditor();
@@ -560,7 +593,7 @@ async function solveAssignment(assignmentId){
     <div id="histCard"></div>`;
   document.getElementById("back").onclick = ()=> studentClassView(a.class_id);
   if(a.hint){ const hb=document.getElementById("hintBox"), bh=document.getElementById("btnHint"); bh.onclick=()=>{ const show=hb.style.display==="none"; hb.style.display=show?"block":"none"; bh.textContent=show?"💡 Tipp verbergen":"💡 Tipp anzeigen"; }; }
-  pageView = new HamsterView("#solveHost", { mode:"solve", model:a.territory, code, fill:true, goal:a.goal });
+  pageView = new HamsterView("#solveHost", { mode:"solve", model:a.territory, code, fill:true, goal:a.goal, commands: a.show_commands!==false });
   renderHistoryCard();
   const sb2=document.getElementById("btnSamples"); if(sb2) sb2.onclick=()=> openSamplesViewer(a, samples);
   document.getElementById("btnToLive").onclick = ()=> loadVersion(solveState.current);
@@ -579,11 +612,16 @@ function setEditNote(){
     if(toLive) toLive.style.display="none";
   }
 }
+function renderSolveComment(subId){
+  const el=document.getElementById("curComment"); if(!el||!solveState) return;
+  const c=(solveState.comments||[]).find(x=>x.submission_id===subId && x.released);
+  el.innerHTML = c ? `<div class="card" style="background:#eef6ff;border-color:#bcd9f5"><b>💬 Rückmeldung deiner Lehrkraft:</b><div style="margin-top:4px;white-space:pre-wrap">${esc(c.body)}</div></div>` : "";
+}
 function loadVersion(sub){
   if(!sub||!solveState) return;
   solveState.viewingId = sub.id;
   if(pageView) pageView.setCode(sub.code);
-  setEditNote();
+  setEditNote(); renderSolveComment(sub.id);
   const h=document.getElementById("solveHost"); if(h) h.scrollIntoView({behavior:"smooth",block:"start"});
 }
 function renderHistoryCard(){
@@ -612,20 +650,28 @@ async function submitSolution(){
     s.history.unshift(row); s.current=row; s.viewingId=row.id;
     document.getElementById("solveStatus").innerHTML = passed===true?`<span class="badge">bestanden ✓</span>`:`<span class="badge gold">abgegeben</span>`;
     document.getElementById("submitMsg").textContent = passed===true ? "Super, Ziel erreicht! 🎉" : passed===false ? "Abgegeben – Ziel noch nicht erfüllt, du kannst es nochmal versuchen." : "Abgegeben! ✓";
-    setEditNote(); renderHistoryCard();
+    setEditNote(); renderHistoryCard(); renderSolveComment(row.id);
     btn.disabled=false; btn.textContent="📤 Erneut abgeben";
     toast("Abgegeben!","ok");
   }catch(e){ btn.disabled=false; btn.textContent="📤 Abgeben"; toast(e.message||"Fehler","err"); }
 }
 function openSamplesViewer(a, samples){
-  let idx=0; const nav = samples.length>1;
+  let idx=0;
+  const tabs = samples.length>1
+    ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">${samples.map((sm,i)=>`<button class="btn btn-ghost btn-sm smtab" data-i="${i}">${esc(sm.title||("Lösung "+(i+1)))}</button>`).join("")}</div>`
+    : `<div id="smTitle" style="font-weight:800;margin-bottom:8px"></div>`;
   openModal(`<button class="x" onclick="closeModal()">✕</button>
     <h3>🏆 Musterlösung${samples.length>1?"en":""}</h3>
-    ${nav?`<div style="display:flex;gap:8px;align-items:center;margin-bottom:8px"><button class="btn btn-ghost btn-sm" id="smPrev">←</button><span id="smTitle" style="font-weight:800;flex:1;text-align:center"></span><button class="btn btn-ghost btn-sm" id="smNext">→</button></div>`:`<div id="smTitle" style="font-weight:800;margin-bottom:8px"></div>`}
-    <p class="muted" style="font-size:12px;margin:0 0 8px">Du kannst die Lösung laufen lassen und Schritt für Schritt nachvollziehen.</p>
+    ${tabs}
+    <p class="muted" style="font-size:12px;margin:0 0 8px">Wähle eine Lösung; du kannst sie laufen lassen und Schritt für Schritt nachvollziehen.</p>
     <div id="smHost" style="height:64vh;min-height:460px"></div>`, true);
-  const show=()=>{ const sm=samples[idx]; document.getElementById("smTitle").textContent=sm.title||("Musterlösung "+(idx+1)); if(modalView){ try{ modalView.destroy(); }catch(e){} } modalView=new HamsterView("#smHost",{mode:"solve", model:a.territory, code:sm.code, fill:true, goal:a.goal}); };
-  if(nav){ document.getElementById("smPrev").onclick=()=>{ idx=(idx-1+samples.length)%samples.length; show(); }; document.getElementById("smNext").onclick=()=>{ idx=(idx+1)%samples.length; show(); }; }
+  const show=()=>{ const sm=samples[idx];
+    if(modalView){ try{ modalView.destroy(); }catch(e){} }
+    modalView=new HamsterView("#smHost",{mode:"solve", model:a.territory, code:sm.code, fill:true, goal:a.goal, commands:true});
+    if(samples.length>1){ document.querySelectorAll(".smtab").forEach((b,i)=>{ b.classList.toggle("btn-blue", i===idx); b.classList.toggle("btn-ghost", i!==idx); }); }
+    else { const t=document.getElementById("smTitle"); if(t) t.textContent=sm.title||"Musterlösung"; }
+  };
+  document.querySelectorAll(".smtab").forEach(b=> b.onclick=()=>{ idx=+b.dataset.i; show(); });
   show();
 }
 
@@ -743,8 +789,10 @@ async function teacherHome(){
     : `<div class="empty"><span class="ic">📚</span>Noch keine Klassen. Erstelle deine erste Klasse!</div>`;
   document.getElementById("view").innerHTML = `
     <div class="page-head"><h2>Meine Klassen</h2><div class="spacer"></div>
-      <button class="btn btn-primary" id="btnNewClass">+ Neue Klasse</button></div>
+      <button class="btn btn-ghost" id="btnTemplates">📋 Vorlagen</button>
+      <button class="btn btn-primary" id="btnNewClass" style="margin-left:8px">+ Neue Klasse</button></div>
     ${cards}`;
+  document.getElementById("btnTemplates").onclick = templatesPage;
   document.getElementById("btnNewClass").onclick = newClassDialog;
   document.querySelectorAll(".card.click").forEach(c=> c.onclick=()=>{ viewFromAdmin=false; teacherClassView(c.dataset.id); });
 }
@@ -787,7 +835,7 @@ async function teacherClassView(classId){
   catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
 
   const assignHtml = assignments.length ? `<div class="list">${assignments.map(a=>`
-      <div class="row"><span class="grow"><span class="t">${esc(a.title)} ${a.published?"":'<span class="badge gold">Entwurf</span>'}</span><span class="s">${a.goal?`🎯 ${esc(goalLabel(a.goal))}`:"kein Auto-Check"}</span></span>
+      <div class="row"><span class="grow"><span class="t clickable" data-edit="${a.id}" title="Aufgabe bearbeiten">${esc(a.title)} ${a.published?"":'<span class="badge gold">Entwurf</span>'}</span><span class="s">${a.goal?`🎯 ${esc(goalLabel(a.goal))}`:"kein Auto-Check"}</span></span>
         <span class="acts">
           <button class="abtn" data-up="${a.id}" title="nach oben">↑</button>
           <button class="abtn" data-down="${a.id}" title="nach unten">↓</button>
@@ -805,8 +853,8 @@ async function teacherClassView(classId){
     <div class="page-head" style="margin-top:0">
       <h2>${esc(cls.name)} <button class="btn btn-ghost btn-sm" id="btnRename" title="Klasse umbenennen" style="vertical-align:middle">✏️</button></h2>
       <div class="spacer"></div>
-      <span class="codechip" title="Einlade-Code">🔑 ${esc(cls.code)} <button class="btn btn-sm btn-ghost" id="copyCode" style="margin-left:4px">Kopieren</button></span>
-      <button class="btn btn-ghost btn-sm" id="btnSandbox" style="margin-left:8px" title="Freien Sandbox-Modus für Schüler:innen an/aus">${cls.sandbox_enabled?"🧪 Sandbox: an":"🧪 Sandbox: aus"}</button>
+      <button class="btn btn-ghost btn-sm" id="btnSandbox" title="Freien Sandbox-Modus für Schüler:innen an/aus">${cls.sandbox_enabled?"🧪 Sandbox: an":"🧪 Sandbox: aus"}</button>
+      <span class="codechip" title="Einlade-Code" style="margin-left:8px">🔑 ${esc(cls.code)} <button class="btn btn-sm btn-ghost" id="copyCode" style="margin-left:4px">Kopieren</button></span>
       ${canTeam?`<button class="btn btn-ghost btn-sm" id="btnDeleteClass" style="margin-left:8px;color:#e63a3a" title="Klasse löschen">🗑️ Löschen</button>`:""}
     </div>
     <div class="card" style="margin-bottom:14px">
@@ -1108,7 +1156,7 @@ async function sandboxProject(classId, projectId){
 function buildSandboxView(){
   const s=sandboxState; if(!s) return;
   if(pageView){ try{ pageView.destroy(); }catch(e){} }
-  if(s.sub==="code") pageView=new HamsterView("#sbxHost",{mode:"solve", model:s.territory, code:s.code, fill:true});
+  if(s.sub==="code") pageView=new HamsterView("#sbxHost",{mode:"solve", model:s.territory, code:s.code, fill:true, commands:true});
   else pageView=new HamsterView("#sbxHost",{mode:"design", model:s.territory, fill:true});
 }
 function syncSandbox(){
@@ -1139,7 +1187,7 @@ function errBox(e){ console.error(e); return `<div class="empty"><span class="ic
 function fmtDate(s){ try{ const d=new Date(s); return d.toLocaleDateString("de-DE",{day:"2-digit",month:"2-digit",year:"2-digit"}); }catch(e){ return ""; } }
 
 /* ---------- Footer: Version (letztes Update) + Copyright ---------- */
-const APP_BUILD = "2026-06-05 20:12";
+const APP_BUILD = "2026-06-05 20:50";
 (function(){ const f=document.getElementById("appfoot"); if(f) f.innerHTML='© 2026 <b>Laurens Offinger</b> &middot; Version '+APP_BUILD+' Uhr'; })();
 
 boot();
