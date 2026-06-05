@@ -46,10 +46,10 @@ async function loadMe(uid){
   ME = data || null;
   return ME;
 }
+let viewFromAdmin=false;   // merkt sich, ob eine Klasse aus der Admin-Ansicht geöffnet wurde
 function route(){
   if(!ME){ renderAuth(); return; }
-  if(ME.role==="admin") adminHome();
-  else if(ME.role==="teacher") teacherHome();
+  if(ME.role==="teacher") teacherHome();
   else studentHome();
 }
 async function signOut(){ await sb.auth.signOut(); ME=null; renderAuth(); }
@@ -160,17 +160,19 @@ function setBusy(b){ const btn=document.getElementById("auSubmit"); if(btn){ btn
    ============================================================================ */
 function shell(inner){
   if(typeof pageView!=="undefined" && pageView){ try{ pageView.destroy(); }catch(e){} pageView=null; }
-  const roleBadge = ME.role==="admin" ? `<span class="badge" style="background:#ffe0b2;color:#b35900">Admin</span>` : ME.role==="teacher" ? `<span class="badge blue">Lehrkraft</span>` : `<span class="badge">Schüler:in</span>`;
+  const roleBadge = ME.is_admin ? `<span class="badge" style="background:#ffe0b2;color:#b35900">Admin</span>` : ME.role==="teacher" ? `<span class="badge blue">Lehrkraft</span>` : `<span class="badge">Schüler:in</span>`;
   app().innerHTML = `
     <div class="topbar">
       <div class="brand"><span class="h">${HAMSTER}</span> Informatik am Gymnasium Wesermünde</div>
       <div class="spacer"></div>
       ${roleBadge}
       <span class="chip ${ME.role}"><span class="av">${esc(initials(ME.display_name||ME.username))}</span>${esc(ME.display_name||ME.username)}</span>
+      ${ME.is_admin?`<button class="btn btn-ghost btn-sm" id="btnAdmin" title="Admin-Bereich öffnen">🛠️ Admin</button>`:""}
       <button class="btn btn-ghost btn-sm" id="btnChangePw" title="Passwort ändern">🔑 Passwort</button>
       <button class="btn btn-ghost btn-sm" id="btnLogout">Abmelden</button>
     </div>
     <div class="container" id="view"></div>`;
+  { const ba=document.getElementById("btnAdmin"); if(ba) ba.onclick=()=> adminHome(); }
   document.getElementById("btnChangePw").onclick = changePasswordDialog;
   document.getElementById("btnLogout").onclick = signOut;
   document.getElementById("view").innerHTML = inner;
@@ -253,13 +255,14 @@ api.createSandboxProject = async (p)=>{ const {data,error}=await sb.from("sandbo
 api.updateSandboxProject = async (id, patch)=>{ const {data,error}=await sb.from("sandbox_projects").update(Object.assign({updated_at:new Date().toISOString()},patch)).eq("id",id).select().single(); if(error) throw error; return data; };
 api.deleteSandboxProject = async (id)=>{ const {error}=await sb.from("sandbox_projects").delete().eq("id",id); if(error) throw error; };
 
-/* Mehrere Lehrkräfte je Klasse + Schüler entfernen/löschen */
-api.listTeachers = async ()=>{ const {data,error}=await sb.from("profiles").select("id,username,display_name").eq("role","teacher").order("display_name"); if(error) throw error; return data||[]; };
-api.listClassTeachers = async (classId)=>{ const {data,error}=await sb.from("class_teachers").select("teacher_id, profiles:teacher_id(username,display_name)").eq("class_id",classId); if(error) throw error; return data||[]; };
+/* Mehrere Lehrkräfte je Klasse + Schüler/Lehrer entfernen/löschen + Admin-Flag */
+api.assignableTeachers = async ()=>{ const {data,error}=await sb.rpc("assignable_teachers"); if(error) throw error; return data||[]; };
+api.classTeachersNamed = async (classId)=>{ const {data,error}=await sb.rpc("class_teachers_named",{p_class:classId}); if(error) throw error; return data||[]; };
 api.addClassTeacher = async (classId, teacherId)=>{ const {error}=await sb.from("class_teachers").insert({class_id:classId, teacher_id:teacherId}); if(error) throw error; };
 api.removeClassTeacher = async (classId, teacherId)=>{ const {error}=await sb.from("class_teachers").delete().eq("class_id",classId).eq("teacher_id",teacherId); if(error) throw error; };
 api.removeMembership = async (classId, studentId)=>{ const {error}=await sb.from("memberships").delete().eq("class_id",classId).eq("student_id",studentId); if(error) throw error; };
-api.adminDeleteStudent = async (studentId)=>{ const {error}=await sb.rpc("admin_delete_student",{p_user:studentId}); if(error) throw error; };
+api.adminDeleteUser = async (userId)=>{ const {error}=await sb.rpc("admin_delete_user",{p_user:userId}); if(error) throw error; };
+api.setAdmin = async (userId, makeAdmin)=>{ const {error}=await sb.rpc("set_admin",{p_user:userId, p_make:!!makeAdmin}); if(error) throw error; };
 
 /* Headless: Code auf frischer Kopie des Territoriums laufen lassen -> Endmodell (wirft bei Fehler) */
 function runHeadless(code, territory){
@@ -657,12 +660,13 @@ async function adminHome(){
   let classes=[], users=[];
   try{
     const c=await sb.from("classes").select("*, teacher:teacher_id(display_name,username)").order("created_at",{ascending:false}); if(c.error) throw c.error; classes=c.data||[];
-    const u=await sb.from("profiles").select("id,username,display_name,role").order("role"); if(u.error) throw u.error; users=u.data||[];
+    const u=await sb.from("profiles").select("id,username,display_name,role,is_admin").order("role"); if(u.error) throw u.error; users=u.data||[];
   }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
   adminState={classes, users};
-  const tN=users.filter(u=>u.role==="teacher").length, sN=users.filter(u=>u.role==="student").length, aN=users.filter(u=>u.role==="admin").length;
+  const tN=users.filter(u=>u.role==="teacher").length, sN=users.filter(u=>u.role==="student").length, aN=users.filter(u=>u.is_admin).length;
   document.getElementById("view").innerHTML = `
-    <div class="page-head"><h2>🛠️ Admin</h2><div class="spacer"></div><button class="btn btn-primary" id="btnNewClass">+ Neue Klasse</button></div>
+    <div class="page-head"><button class="crumb" id="admBack">← Lehrer-Ansicht</button></div>
+    <div class="page-head" style="margin-top:0"><h2>🛠️ Admin</h2><div class="spacer"></div><button class="btn btn-primary" id="btnNewClass">+ Neue Klasse</button></div>
     <div class="card" style="margin-bottom:16px">
       <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px"><h3 style="margin:0">📚 Klassen <span class="badge gray">${classes.length}</span></h3><div style="flex:1"></div>
         <input class="input" id="admClsSearch" placeholder="🔍 Klasse · Code · Lehrkraft" style="max-width:260px"></div>
@@ -671,6 +675,7 @@ async function adminHome(){
       <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px"><h3 style="margin:0">👥 Nutzer:innen <span class="badge gray">${users.length}</span> <span class="muted" style="font-weight:600;font-size:12px">· ${tN} Lehrkräfte · ${sN} Schüler:innen${aN?" · "+aN+" Admin":""}</span></h3><div style="flex:1"></div>
         <input class="input" id="admUsrSearch" placeholder="🔍 Name · Benutzername" style="max-width:260px"></div>
       <div id="admUsers" style="margin-top:12px"></div></div>`;
+  document.getElementById("admBack").onclick = teacherHome;
   document.getElementById("btnNewClass").onclick = newClassDialog;
   const cs=document.getElementById("admClsSearch"), us=document.getElementById("admUsrSearch");
   cs.oninput=()=> renderAdminClasses(cs.value); us.oninput=()=> renderAdminUsers(us.value);
@@ -685,19 +690,32 @@ function renderAdminClasses(q){
       <div class="card click" data-id="${c.id}"><h3>${esc(c.name)}</h3>
         <div class="meta">Code: <b>${esc(c.code)}</b> · 👩‍🏫 ${esc(tname(c)||"–")}${c.sandbox_enabled?" · 🧪":""}</div></div>`).join("")}</div>`
     : `<div class="empty" style="padding:14px"><span class="ic">🔍</span>Keine Klasse gefunden.</div>`;
-  el.querySelectorAll(".card.click").forEach(c=> c.onclick=()=> teacherClassView(c.dataset.id));
+  el.querySelectorAll(".card.click").forEach(c=> c.onclick=()=>{ viewFromAdmin=true; teacherClassView(c.dataset.id); });
 }
 function renderAdminUsers(q){
   const el=document.getElementById("admUsers"); if(!el||!adminState) return;
   q=(q||"").trim().toLowerCase();
   const list=adminState.users.filter(u=> !q || (u.display_name||"").toLowerCase().includes(q)||(u.username||"").toLowerCase().includes(q));
-  const rows=list.map(u=>`<tr><td class="stu">${esc(u.display_name||u.username)}</td><td><code>${esc(u.username)}</code></td>
-      <td>${u.role==="admin"?'<span class="badge" style="background:#ffe0b2;color:#b35900">Admin</span>':u.role==="teacher"?'<span class="badge blue">Lehrkraft</span>':'<span class="badge gray">Schüler:in</span>'}</td>
-      <td style="white-space:nowrap">${u.role==="admin"?"":`<button class="btn btn-sm btn-ghost" data-role="${u.id}" data-to="${u.role==="teacher"?"student":"teacher"}" data-nm="${esc(u.display_name||u.username)}">${u.role==="teacher"?"→ Schüler:in":"→ Lehrkraft"}</button>${u.role==="student"?` <button class="btn btn-sm btn-ghost" data-delusr="${u.id}" data-nm="${esc(u.display_name||u.username)}" title="Account löschen">🗑️</button>`:""}`}</td></tr>`).join("");
+  const rows=list.map(u=>{
+    const nm=esc(u.display_name||u.username);
+    const badge = u.is_admin?'<span class="badge" style="background:#ffe0b2;color:#b35900">Admin</span>':u.role==="teacher"?'<span class="badge blue">Lehrkraft</span>':'<span class="badge gray">Schüler:in</span>';
+    let acts="";
+    if(u.is_admin){
+      acts = (u.id===ME.id) ? '<span class="muted" style="font-size:12px">(du)</span>'
+        : `<button class="btn btn-sm btn-ghost" data-unadmin="${u.id}" data-nm="${nm}">Admin-Rang entfernen</button>`;
+    } else {
+      if(u.role==="teacher") acts += `<button class="btn btn-sm btn-ghost" data-mkadmin="${u.id}" data-nm="${nm}" title="zum Admin machen">⭐ Admin</button> `;
+      acts += `<button class="btn btn-sm btn-ghost" data-pw="${u.id}" data-nm="${nm}" title="Passwort neu generieren">🔑</button> `;
+      acts += `<button class="btn btn-sm btn-ghost" data-deluser="${u.id}" data-nm="${nm}" title="Account löschen">🗑️</button>`;
+    }
+    return `<tr><td class="stu">${nm}</td><td><code>${esc(u.username)}</code></td><td>${badge}</td><td style="white-space:nowrap">${acts}</td></tr>`;
+  }).join("");
   el.innerHTML = list.length ? `<div style="overflow:auto"><table class="matrix" style="width:100%"><thead><tr><th class="stu">Name</th><th>Benutzername</th><th>Rolle</th><th>Aktionen</th></tr></thead><tbody>${rows}</tbody></table></div>`
     : `<div class="empty" style="padding:14px"><span class="ic">🔍</span>Niemand gefunden.</div>`;
-  el.querySelectorAll("[data-role]").forEach(b=> b.onclick=async()=>{ if(!confirm("Rolle von "+b.dataset.nm+" auf „"+(b.dataset.to==="teacher"?"Lehrkraft":"Schüler:in")+"“ ändern?")) return; try{ await sb.rpc("set_user_role",{p_user:b.dataset.role, p_role:b.dataset.to}); toast("Rolle geändert ✓","ok"); adminHome(); }catch(e){ toast(e.message||"Fehler","err"); } });
-  el.querySelectorAll("[data-delusr]").forEach(b=> b.onclick=async()=>{ if(!confirm("Account von "+b.dataset.nm+" WIRKLICH löschen? Alle Abgaben & Daten werden entfernt – nicht umkehrbar.")) return; try{ await api.adminDeleteStudent(b.dataset.delusr); toast("Account gelöscht","ok"); adminHome(); }catch(e){ toast(e.message||"Fehler","err"); } });
+  el.querySelectorAll("[data-pw]").forEach(b=> b.onclick=()=> resetStudentPw(b.dataset.pw, b.dataset.nm));
+  el.querySelectorAll("[data-deluser]").forEach(b=> b.onclick=async()=>{ if(!confirm("Account von "+b.dataset.nm+" WIRKLICH löschen? Alle zugehörigen Daten – bei Lehrkräften auch ihre erstellten Klassen – werden entfernt. Nicht umkehrbar.")) return; try{ await api.adminDeleteUser(b.dataset.deluser); toast("Account gelöscht","ok"); adminHome(); }catch(e){ toast(e.message||"Fehler","err"); } });
+  el.querySelectorAll("[data-mkadmin]").forEach(b=> b.onclick=async()=>{ if(!confirm(b.dataset.nm+" zum Admin machen? (Behält die Lehrer-Rolle.)")) return; try{ await api.setAdmin(b.dataset.mkadmin, true); toast("Ist jetzt Admin ⭐","ok"); adminHome(); }catch(e){ toast(e.message||"Fehler","err"); } });
+  el.querySelectorAll("[data-unadmin]").forEach(b=> b.onclick=async()=>{ if(!confirm(b.dataset.nm+" den Admin-Rang entziehen?")) return; try{ await api.setAdmin(b.dataset.unadmin, false); toast("Admin-Rang entfernt","ok"); adminHome(); }catch(e){ toast(e.message||"Fehler","err"); } });
 }
 
 /* ============================================================================
@@ -718,7 +736,7 @@ async function teacherHome(){
       <button class="btn btn-primary" id="btnNewClass">+ Neue Klasse</button></div>
     ${cards}`;
   document.getElementById("btnNewClass").onclick = newClassDialog;
-  document.querySelectorAll(".card.click").forEach(c=> c.onclick=()=> teacherClassView(c.dataset.id));
+  document.querySelectorAll(".card.click").forEach(c=> c.onclick=()=>{ viewFromAdmin=false; teacherClassView(c.dataset.id); });
 }
 function newClassDialog(){
   openModal(`<button class="x" onclick="closeModal()">✕</button>
@@ -742,6 +760,8 @@ async function teacherClassView(classId){
     cls=data; roster = await api.classRoster(classId);
   }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
   if(!cls){ document.getElementById("view").innerHTML=errBox({message:"Klasse nicht gefunden."}); return; }
+  let teachers=[]; try{ teachers = await api.classTeachersNamed(classId); }catch(e){ teachers=[]; }
+  const canTeam = (cls.teacher_id===ME.id || ME.is_admin);
 
   const rosterHtml = roster.length ? `<div class="list">${roster.map(m=>{
       const p=m.profiles||{}; const nm=p.display_name||p.username||"?";
@@ -771,24 +791,26 @@ async function teacherClassView(classId){
     : `<div class="empty"><span class="ic">📊</span>${!assignments.length?"Stelle Aufgaben – dann erscheint hier, wer was abgegeben hat.":"Noch keine Schüler:innen in der Klasse."}</div>`;
 
   document.getElementById("view").innerHTML = `
-    <div class="page-head"><button class="crumb" id="back">← Meine Klassen</button></div>
+    <div class="page-head"><button class="crumb" id="back">${viewFromAdmin?"← Admin-Bereich":"← Meine Klassen"}</button></div>
     <div class="page-head" style="margin-top:0">
       <h2>${esc(cls.name)} <button class="btn btn-ghost btn-sm" id="btnRename" title="Klasse umbenennen" style="vertical-align:middle">✏️</button></h2>
       <div class="spacer"></div>
       <span class="codechip" title="Einlade-Code">🔑 ${esc(cls.code)} <button class="btn btn-sm btn-ghost" id="copyCode" style="margin-left:4px">Kopieren</button></span>
       <button class="btn btn-ghost btn-sm" id="btnSandbox" style="margin-left:8px" title="Freien Sandbox-Modus für Schüler:innen an/aus">${cls.sandbox_enabled?"🧪 Sandbox: an":"🧪 Sandbox: aus"}</button>
-      ${ME.role==="admin"?`<button class="btn btn-ghost btn-sm" id="btnTeachers" style="margin-left:8px" title="Lehrkräfte dieser Klasse zuweisen">👩‍🏫 Lehrkräfte</button>`:""}
     </div>
     <div class="card" style="margin-bottom:14px">
       <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px"><h3 style="margin:0">🎒 Schüler:innen <span class="badge gray">${roster.length}</span></h3><div style="flex:1"></div><button class="btn btn-ghost btn-sm" id="btnImport">📥 Importieren</button></div>
       <div style="margin-top:12px">${rosterHtml}</div></div>
+    <div class="card" style="margin-bottom:14px">
+      <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px"><h3 style="margin:0">👩‍🏫 Lehrkräfte <span class="badge gray">${teachers.length}</span></h3><div style="flex:1"></div>${canTeam?'<button class="btn btn-ghost btn-sm" id="btnTeachers">+ verwalten</button>':''}</div>
+      <div class="list" style="margin-top:12px">${teachers.length?teachers.map(t=>`<div class="row"><span class="chip"><span class="av">${esc(initials(t.display_name||t.username))}</span>${esc(t.display_name||t.username)}</span><div class="grow"></div>${t.is_owner?'<span class="badge blue">Ersteller:in</span>':'<span class="badge gray">Co-Lehrkraft</span>'}</div>`).join(""):'<div class="muted" style="font-size:13px">—</div>'}</div></div>
     <div class="card" style="margin-bottom:16px">
       <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px"><h3 style="margin:0">📝 Aufgaben <span class="badge gray">${assignments.length}</span></h3>
         <div style="flex:1"></div><button class="btn btn-blue btn-sm" id="btnNewAssign">+ Aufgabe stellen</button></div>
       <div style="margin-top:12px">${assignHtml}</div></div>
     <h3 style="margin:0 0 10px">📊 Abgabe-Matrix</h3>
     ${matrixHtml}`;
-  document.getElementById("back").onclick = ()=> (ME.role==="admin"?adminHome():teacherHome());
+  document.getElementById("back").onclick = ()=> (viewFromAdmin?adminHome():teacherHome());
   document.getElementById("copyCode").onclick = ()=>{ if(navigator.clipboard) navigator.clipboard.writeText(cls.code); toast("Code kopiert: "+cls.code,"ok"); };
   document.getElementById("btnSandbox").onclick = async ()=>{ try{ await api.setSandboxEnabled(classId, !cls.sandbox_enabled); toast(cls.sandbox_enabled?"Sandbox deaktiviert":"Sandbox aktiviert 🧪","ok"); teacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } };
   document.getElementById("btnRename").onclick = ()=> renameClassDialog(classId, cls.name);
@@ -932,17 +954,16 @@ async function classTeachersDialog(classId, cls){
       <div style="display:flex;gap:8px"><select class="input" id="ctSelect" style="flex:1"><option value="">– wählen –</option></select>
       <button class="btn btn-primary" id="ctAdd" style="flex:none">Hinzufügen</button></div></div>`);
   async function refresh(){
-    let cot=[], teachers=[];
-    try{ cot=await api.listClassTeachers(classId); teachers=await api.listTeachers(); }
+    let named=[], assignable=[];
+    try{ named=await api.classTeachersNamed(classId); assignable=await api.assignableTeachers(); }
     catch(e){ toast(e.message||"Fehler","err"); }
-    const ow=teachers.find(t=>t.id===cls.teacher_id);
-    const ownerName=ow?(ow.display_name||ow.username):"Ersteller:in";
-    const coIds=new Set(cot.map(c=>c.teacher_id));
-    const ownerRow=`<div class="row"><span class="grow"><span class="t">${esc(ownerName)}</span><span class="s">Ersteller:in</span></span><span class="badge blue">Eigentümer</span></div>`;
-    const coRows=cot.map(c=>{ const p=c.profiles||{}; const nm=p.display_name||p.username||"?"; return `<div class="row"><span class="grow"><span class="t">${esc(nm)}</span><span class="s">Co-Lehrkraft</span></span><button class="btn btn-sm btn-ghost" data-rmteacher="${c.teacher_id}" title="entfernen">🗑️</button></div>`; }).join("");
+    const owner=named.find(t=>t.is_owner), cos=named.filter(t=>!t.is_owner);
+    const assignedIds=new Set(named.map(t=>t.id));
+    const ownerRow=`<div class="row"><span class="grow"><span class="t">${esc(owner?(owner.display_name||owner.username):"–")}</span><span class="s">Ersteller:in</span></span><span class="badge blue">Eigentümer</span></div>`;
+    const coRows=cos.map(c=>`<div class="row"><span class="grow"><span class="t">${esc(c.display_name||c.username)}</span><span class="s">Co-Lehrkraft</span></span><button class="btn btn-sm btn-ghost" data-rmteacher="${c.id}" title="entfernen">🗑️</button></div>`).join("");
     const lst=document.getElementById("ctList"); if(lst) lst.innerHTML=ownerRow+coRows;
     const sel=document.getElementById("ctSelect");
-    if(sel){ const avail=teachers.filter(t=> t.id!==cls.teacher_id && !coIds.has(t.id)); sel.innerHTML='<option value="">– wählen –</option>'+avail.map(t=>`<option value="${t.id}">${esc(t.display_name||t.username)}</option>`).join(""); }
+    if(sel){ const avail=assignable.filter(t=> !assignedIds.has(t.id)); sel.innerHTML='<option value="">– wählen –</option>'+avail.map(t=>`<option value="${t.id}">${esc(t.display_name||t.username)}</option>`).join(""); }
     document.querySelectorAll("[data-rmteacher]").forEach(b=> b.onclick=async()=>{ try{ await api.removeClassTeacher(classId, b.dataset.rmteacher); toast("Entfernt","ok"); refresh(); }catch(e){ toast(e.message||"Fehler","err"); } });
   }
   document.getElementById("ctAdd").onclick=async()=>{ const sel=document.getElementById("ctSelect"); if(!sel.value) return; try{ await api.addClassTeacher(classId, sel.value); toast("Hinzugefügt ✓","ok"); refresh(); }catch(e){ toast(e.message||"Fehler","err"); } };
@@ -1106,7 +1127,7 @@ function errBox(e){ console.error(e); return `<div class="empty"><span class="ic
 function fmtDate(s){ try{ const d=new Date(s); return d.toLocaleDateString("de-DE",{day:"2-digit",month:"2-digit",year:"2-digit"}); }catch(e){ return ""; } }
 
 /* ---------- Footer: Version (letztes Update) + Copyright ---------- */
-const APP_BUILD = "2026-06-05 19:25";
+const APP_BUILD = "2026-06-05 19:54";
 (function(){ const f=document.getElementById("appfoot"); if(f) f.innerHTML='© 2026 <b>Laurens Offinger</b> &middot; Version '+APP_BUILD+' Uhr'; })();
 
 boot();
