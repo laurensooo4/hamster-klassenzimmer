@@ -78,6 +78,24 @@
   #appfoot{position:fixed;left:0;right:0;bottom:0;text-align:center;font-size:11px;color:var(--muted);font-weight:700;padding:5px 10px;background:rgba(247,249,252,.93);border-top:1px solid var(--line);z-index:30;pointer-events:none}
   #appfoot b{color:var(--gold-d)}
 
+  /* ---------- Patch-Notes (Fab unten links + Verlauf) ---------- */
+  .patch-fab{position:fixed;left:16px;bottom:30px;z-index:40;background:#fff;color:var(--muted);border:none;border-radius:999px;
+    box-shadow:0 6px 18px rgba(40,60,90,.18),0 0 0 1.5px var(--line) inset;padding:9px 15px 9px 13px;font-family:inherit;font-weight:800;
+    font-size:13px;cursor:pointer;display:inline-flex;align-items:center;gap:7px;transition:transform .08s,box-shadow .14s,color .14s}
+  .patch-fab:hover{color:var(--ink);transform:translateY(-2px);box-shadow:0 9px 22px rgba(40,60,90,.24),0 0 0 1.5px var(--blue) inset}
+  .patch-fab:active{transform:translateY(0)}
+  .patch-fab .dot{width:8px;height:8px;border-radius:50%;background:var(--blue);box-shadow:0 0 0 3px #d8f0ff}
+  @media (max-width:560px){ .patch-fab span.lbl{display:none} .patch-fab{padding:11px;left:12px;bottom:36px} }
+  .patchlog{display:flex;flex-direction:column;gap:6px;margin-top:8px}
+  .patchlog .pn{border-left:3px solid var(--line);padding:8px 0 8px 15px}
+  .patchlog .pn.latest{border-left-color:var(--green)}
+  .patchlog .pn h4{margin:0;font-size:15.5px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .patchlog .pn .ver{font-size:11px;font-weight:900;color:var(--muted);background:var(--line2);padding:2px 8px;border-radius:7px;letter-spacing:.4px}
+  .patchlog .pn .date{font-size:12px;color:var(--muted);font-weight:700;margin-left:auto}
+  .patchlog .pn ul{margin:8px 0 2px;padding-left:19px}
+  .patchlog .pn li{margin:0 0 5px;font-weight:600;line-height:1.45}
+  .patchlog .pn li b{font-weight:800;color:var(--ink)}
+
   /* ---------- App shell ---------- */
   .topbar{position:sticky;top:0;z-index:20;background:#fff;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:12px;padding:11px 18px;box-shadow:0 2px 10px rgba(40,60,90,.04)}
   .topbar .brand{display:flex;align-items:center;gap:9px;font-weight:900;font-size:16px;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -166,7 +184,7 @@
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="config.js"></script>
-  <script src="engine.js?v=h1"></script>
-  <script src="app.js?v=h1"></script>
+  <script src="engine.js?v=h2"></script>
+  <script src="app.js?v=h2"></script>
 </body>
 </html>

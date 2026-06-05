@@ -171,10 +171,12 @@ function shell(inner){
       <button class="btn btn-ghost btn-sm" id="btnChangePw" title="Passwort ändern">🔑 Passwort</button>
       <button class="btn btn-danger btn-sm" id="btnLogout">Abmelden</button>
     </div>
-    <div class="container" id="view"></div>`;
+    <div class="container" id="view"></div>
+    ${ME.role==="teacher"?`<button class="patch-fab" id="btnPatch" title="Patch-Notes – was ist neu?"><span class="dot"></span>🗒️<span class="lbl">&nbsp;Patch-Notes</span></button>`:""}`;
   { const ba=document.getElementById("btnAdmin"); if(ba) ba.onclick=()=> adminHome(); }
   document.getElementById("btnChangePw").onclick = changePasswordDialog;
   document.getElementById("btnLogout").onclick = signOut;
+  { const bp=document.getElementById("btnPatch"); if(bp) bp.onclick = patchNotesDialog; }
   document.getElementById("view").innerHTML = inner;
 }
 
@@ -1186,8 +1188,77 @@ async function saveSandbox(){
 function errBox(e){ console.error(e); return `<div class="empty"><span class="ic">⚠️</span>${esc(e&&e.message||"Etwas ist schiefgelaufen.")}</div>`; }
 function fmtDate(s){ try{ const d=new Date(s); return d.toLocaleDateString("de-DE",{day:"2-digit",month:"2-digit",year:"2-digit"}); }catch(e){ return ""; } }
 
+/* ============================================================================
+   PATCH-NOTES (Änderungsverlauf) – Knopf unten links in Lehrer-/Admin-Ansicht
+   Neueste Version zuerst. Bei jedem Deploy oben einen Eintrag ergänzen.
+   ============================================================================ */
+const PATCH_NOTES = [
+  { v:"1.9", date:"5. Juni 2026", title:"Patch-Notes & Neuigkeiten", items:[
+    `Neuer <b>🗒️ Patch-Notes-Knopf</b> unten links (Lehrer- &amp; Admin-Ansicht): zeigt, was sich mit jedem Update geändert hat.`,
+  ]},
+  { v:"1.8", date:"5. Juni 2026", title:"Editor & Vorlagen", items:[
+    `Der Editor erkennt <b>Compilerfehler schon vor dem Start</b> – z. B. wenn eine Variable ohne Datentyp benutzt wird – und führt nur fehlerfreien Code aus.`,
+    `<b>Tab-Taste</b> fügt jetzt einen echten Tabulator ein; nach einem <b>Zeilenumbruch</b> wird automatisch genauso weit eingerückt wie die Zeile davor.`,
+    `Neue <b>📖 Befehls-Übersicht</b> im Editor – pro Aufgabe einstellbar, ob Schüler:innen sie einblenden dürfen.`,
+    `Eigene Seite <b>📋 Vorlagen</b>: Aufgaben-Vorlagen anlegen, bearbeiten und löschen.`,
+    `Aufgaben lassen sich jetzt per <b>Klick auf den Titel</b> bearbeiten.`,
+    `Musterlösungen werden über <b>Schaltflächen</b> direkt ausgewählt (statt mit Pfeilen).`,
+    `Schüler:innen sehen die Lehrer-Rückmeldung nun immer zur <b>gerade geöffneten Abgabe</b>.`,
+  ]},
+  { v:"1.7", date:"5. Juni 2026", title:"Admin-Modell & Lehrer-Teams", items:[
+    `<b>Admin</b> ist jetzt ein Zusatz-Rang für Lehrkräfte (Knopf „🛠️ Admin") – die Lehrer-Rolle bleibt erhalten, Wechsel hin und zurück möglich.`,
+    `In der Klassenansicht zeigt eine <b>Lehrkräfte-Karte</b>, wer die Klasse betreut; Ersteller:in und Admin verwalten Co-Lehrkräfte.`,
+    `Klassen können <b>gelöscht</b> werden; der „Abmelden"-Knopf ist jetzt rot.`,
+  ]},
+  { v:"1.6", date:"5. Juni 2026", title:"Verwaltung & Suche", items:[
+    `<b>Suche</b> nach Klassen und Nutzer:innen im Admin-Bereich.`,
+    `Schüler:innen aus einer Klasse <b>entfernen</b>; Admin kann ganze Accounts löschen.`,
+    `<b>Mehrere Lehrkräfte</b> pro Klasse möglich.`,
+  ]},
+  { v:"1.5", date:"5. Juni 2026", title:"Schüler-Import & Admin-Bereich", items:[
+    `<b>📥 Schüler:innen-Import</b>: einfach „Vorname,Nachname" einfügen – Benutzernamen und Passwörter werden automatisch erzeugt (Liste zum Verteilen, kein E-Mail-Versand).`,
+    `Erster <b>Admin-Bereich</b> zum Verwalten aller Klassen und Nutzer:innen.`,
+  ]},
+  { v:"1.4", date:"4. Juni 2026", title:"Bewertung & Sandbox", items:[
+    `Neuer Auto-Check <b>„Soll-Zustand vergleichen"</b>: du hinterlegst einen Lösungscode, das Ergebnis wird automatisch mit der Schüler-Abgabe verglichen.`,
+    `<b>🧪 Sandbox-Modus</b> je Klasse: Schüler:innen bauen frei Welt + Code und speichern eigene Projekte.`,
+    `<b>Größerer Code-Editor</b> für angenehmeres Programmieren.`,
+  ]},
+  { v:"1.3", date:"4. Juni 2026", title:"Abgaben & Feedback", items:[
+    `<b>Mehrere Abgaben</b> je Aufgabe mit Verlauf („🗂️ Meine Abgaben") – ältere Versionen öffnen und weiterbearbeiten.`,
+    `<b>Lehrer-Kommentare</b> je Abgabe, gezielt für Schüler:innen freigebbar.`,
+    `<b>Musterlösungen</b> anlegen, freigeben und ansehen.`,
+  ]},
+  { v:"1.2", date:"4. Juni 2026", title:"Aufgaben-Workflow", items:[
+    `<b>Entwurf / Veröffentlichen</b> und <b>Reihenfolge</b> (↑/↓) für Aufgaben.`,
+    `<b>Tipp/Hinweis</b> je Aufgabe; Vor- und Nachname bei der Registrierung.`,
+    `Erste <b>Aufgaben-Vorlagen</b> zum Wiederverwenden.`,
+  ]},
+  { v:"1.1", date:"3. Juni 2026", title:"Komfort-Updates", items:[
+    `Live-Anzeige des <b>Ziels</b> nach „Start"; Körner-Anzahl pro Feld einstellbar.`,
+    `Klasse <b>umbenennen</b>, Aufgaben nachträglich <b>bearbeiten</b>, Klassencode optional.`,
+  ]},
+  { v:"1.0", date:"3. Juni 2026", title:"Erste Version", items:[
+    `Logins für <b>Lehrkräfte und Schüler:innen</b>, Klassen mit Einlade-Code.`,
+    `Aufgaben mit selbst gebautem <b>Territorium</b> + Auto-Check-Ziel stellen.`,
+    `Schüler:innen lösen im eingebauten <b>Hamster-Simulator</b> und geben ab.`,
+    `<b>Abgabe-Matrix</b> (✓ abgegeben, ★ bestanden) und Live-Korrektur durch die Lehrkraft.`,
+  ]},
+];
+function patchNotesDialog(){
+  const html = PATCH_NOTES.map((p,i)=>`
+    <div class="pn${i===0?" latest":""}">
+      <h4><span class="ver">v${esc(p.v)}</span>${esc(p.title)}${i===0?' <span class="badge">neu</span>':""}<span class="date">${esc(p.date)}</span></h4>
+      <ul>${p.items.map(it=>`<li>${it}</li>`).join("")}</ul>
+    </div>`).join("");
+  openModal(`<button class="x" onclick="closeModal()">✕</button>
+    <h3>🗒️ Patch-Notes</h3>
+    <p class="muted" style="margin:2px 0 4px;font-size:13.5px">Was sich in „Informatik am Gymnasium Wesermünde" getan hat – neueste Updates zuerst. Aktuelle Version: <b>${esc(APP_BUILD)} Uhr</b>.</p>
+    <div class="patchlog">${html}</div>`);
+}
+
 /* ---------- Footer: Version (letztes Update) + Copyright ---------- */
-const APP_BUILD = "2026-06-05 20:50";
+const APP_BUILD = "2026-06-05 21:15";
 (function(){ const f=document.getElementById("appfoot"); if(f) f.innerHTML='© 2026 <b>Laurens Offinger</b> &middot; Version '+APP_BUILD+' Uhr'; })();
 
 boot();
