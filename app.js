@@ -48,7 +48,8 @@ async function loadMe(uid){
 }
 function route(){
   if(!ME){ renderAuth(); return; }
-  if(ME.role==="teacher") teacherHome();
+  if(ME.role==="admin") adminHome();
+  else if(ME.role==="teacher") teacherHome();
   else studentHome();
 }
 async function signOut(){ await sb.auth.signOut(); ME=null; renderAuth(); }
@@ -159,7 +160,7 @@ function setBusy(b){ const btn=document.getElementById("auSubmit"); if(btn){ btn
    ============================================================================ */
 function shell(inner){
   if(typeof pageView!=="undefined" && pageView){ try{ pageView.destroy(); }catch(e){} pageView=null; }
-  const roleBadge = ME.role==="teacher" ? `<span class="badge blue">Lehrkraft</span>` : `<span class="badge">Schüler:in</span>`;
+  const roleBadge = ME.role==="admin" ? `<span class="badge" style="background:#ffe0b2;color:#b35900">Admin</span>` : ME.role==="teacher" ? `<span class="badge blue">Lehrkraft</span>` : `<span class="badge">Schüler:in</span>`;
   app().innerHTML = `
     <div class="topbar">
       <div class="brand"><span class="h">${HAMSTER}</span> Informatik am Gymnasium Wesermünde</div>
@@ -640,6 +641,34 @@ async function resetStudentPw(studentId, name){
 }
 
 /* ============================================================================
+   ADMIN-ANSICHT (alle Klassen & Nutzer:innen verwalten)
+   ============================================================================ */
+async function adminHome(){
+  shell(`<div class="center-load"><span class="spin"></span>Admin lädt…</div>`);
+  let classes=[], users=[];
+  try{
+    const c=await sb.from("classes").select("*, teacher:teacher_id(display_name,username)").order("created_at",{ascending:false}); if(c.error) throw c.error; classes=c.data||[];
+    const u=await sb.from("profiles").select("id,username,display_name,role").order("role"); if(u.error) throw u.error; users=u.data||[];
+  }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
+  const tN=users.filter(u=>u.role==="teacher").length, sN=users.filter(u=>u.role==="student").length;
+  const classCards = classes.length ? `<div class="grid">${classes.map(c=>`
+      <div class="card click" data-id="${c.id}"><h3>${esc(c.name)}</h3>
+        <div class="meta">Code: <b>${esc(c.code)}</b> · 👩‍🏫 ${esc((c.teacher&&(c.teacher.display_name||c.teacher.username))||"–")}${c.sandbox_enabled?" · 🧪":""}</div></div>`).join("")}</div>`
+    : `<div class="empty"><span class="ic">📚</span>Noch keine Klassen.</div>`;
+  const userRows = users.map(u=>`<tr><td class="stu">${esc(u.display_name||u.username)}</td><td><code>${esc(u.username)}</code></td>
+      <td>${u.role==="admin"?'<span class="badge" style="background:#ffe0b2;color:#b35900">Admin</span>':u.role==="teacher"?'<span class="badge blue">Lehrkraft</span>':'<span class="badge gray">Schüler:in</span>'}</td>
+      <td>${u.role==="admin"?"":`<button class="btn btn-sm btn-ghost" data-role="${u.id}" data-to="${u.role==="teacher"?"student":"teacher"}" data-nm="${esc(u.display_name||u.username)}">${u.role==="teacher"?"→ Schüler:in":"→ Lehrkraft"}</button>`}</td></tr>`).join("");
+  document.getElementById("view").innerHTML = `
+    <div class="page-head"><h2>🛠️ Admin</h2><div class="spacer"></div><button class="btn btn-primary" id="btnNewClass">+ Neue Klasse</button></div>
+    <div class="card" style="margin-bottom:16px"><h3 style="margin:0 0 10px">📚 Alle Klassen <span class="badge gray">${classes.length}</span></h3>${classCards}</div>
+    <div class="card"><h3 style="margin:0 0 10px">👥 Alle Nutzer:innen <span class="badge gray">${users.length}</span> <span class="muted" style="font-weight:600;font-size:12px">· ${tN} Lehrkräfte · ${sN} Schüler:innen</span></h3>
+      <div style="overflow:auto"><table class="matrix" style="width:100%"><thead><tr><th class="stu">Name</th><th>Benutzername</th><th>Rolle</th><th>Rolle ändern</th></tr></thead><tbody>${userRows}</tbody></table></div></div>`;
+  document.getElementById("btnNewClass").onclick = newClassDialog;
+  document.querySelectorAll(".card.click").forEach(c=> c.onclick=()=> teacherClassView(c.dataset.id));
+  document.querySelectorAll("[data-role]").forEach(b=> b.onclick=async()=>{ if(!confirm("Rolle von "+b.dataset.nm+" auf „"+(b.dataset.to==="teacher"?"Lehrkraft":"Schüler:in")+"“ ändern?")) return; try{ await sb.rpc("set_user_role",{p_user:b.dataset.role, p_role:b.dataset.to}); toast("Rolle geändert ✓","ok"); adminHome(); }catch(e){ toast(e.message||"Fehler","err"); } });
+}
+
+/* ============================================================================
    LEHRER-ANSICHT
    ============================================================================ */
 async function teacherHome(){
@@ -725,7 +754,7 @@ async function teacherClassView(classId){
       <div style="margin-top:12px">${assignHtml}</div></div>
     <h3 style="margin:0 0 10px">📊 Abgabe-Matrix</h3>
     ${matrixHtml}`;
-  document.getElementById("back").onclick = teacherHome;
+  document.getElementById("back").onclick = ()=> (ME.role==="admin"?adminHome():teacherHome());
   document.getElementById("copyCode").onclick = ()=>{ if(navigator.clipboard) navigator.clipboard.writeText(cls.code); toast("Code kopiert: "+cls.code,"ok"); };
   document.getElementById("btnSandbox").onclick = async ()=>{ try{ await api.setSandboxEnabled(classId, !cls.sandbox_enabled); toast(cls.sandbox_enabled?"Sandbox deaktiviert":"Sandbox aktiviert 🧪","ok"); teacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } };
   document.getElementById("btnRename").onclick = ()=> renameClassDialog(classId, cls.name);
@@ -1014,7 +1043,7 @@ function errBox(e){ console.error(e); return `<div class="empty"><span class="ic
 function fmtDate(s){ try{ const d=new Date(s); return d.toLocaleDateString("de-DE",{day:"2-digit",month:"2-digit",year:"2-digit"}); }catch(e){ return ""; } }
 
 /* ---------- Footer: Version (letztes Update) + Copyright ---------- */
-const APP_BUILD = "2026-06-05 16:34";
+const APP_BUILD = "2026-06-05 18:35";
 (function(){ const f=document.getElementById("appfoot"); if(f) f.innerHTML='© 2026 <b>Laurens Offinger</b> &middot; Version '+APP_BUILD+' Uhr'; })();
 
 boot();
