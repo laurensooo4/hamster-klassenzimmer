@@ -716,7 +716,8 @@ async function teacherClassView(classId){
       <span class="codechip" title="Einlade-Code">🔑 ${esc(cls.code)} <button class="btn btn-sm btn-ghost" id="copyCode" style="margin-left:4px">Kopieren</button></span>
       <button class="btn btn-ghost btn-sm" id="btnSandbox" style="margin-left:8px" title="Freien Sandbox-Modus für Schüler:innen an/aus">${cls.sandbox_enabled?"🧪 Sandbox: an":"🧪 Sandbox: aus"}</button>
     </div>
-    <div class="card" style="margin-bottom:14px"><h3>🎒 Schüler:innen <span class="badge gray">${roster.length}</span></h3>
+    <div class="card" style="margin-bottom:14px">
+      <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px"><h3 style="margin:0">🎒 Schüler:innen <span class="badge gray">${roster.length}</span></h3><div style="flex:1"></div><button class="btn btn-ghost btn-sm" id="btnImport">📥 Importieren</button></div>
       <div style="margin-top:12px">${rosterHtml}</div></div>
     <div class="card" style="margin-bottom:16px">
       <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px"><h3 style="margin:0">📝 Aufgaben <span class="badge gray">${assignments.length}</span></h3>
@@ -728,6 +729,7 @@ async function teacherClassView(classId){
   document.getElementById("copyCode").onclick = ()=>{ if(navigator.clipboard) navigator.clipboard.writeText(cls.code); toast("Code kopiert: "+cls.code,"ok"); };
   document.getElementById("btnSandbox").onclick = async ()=>{ try{ await api.setSandboxEnabled(classId, !cls.sandbox_enabled); toast(cls.sandbox_enabled?"Sandbox deaktiviert":"Sandbox aktiviert 🧪","ok"); teacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } };
   document.getElementById("btnRename").onclick = ()=> renameClassDialog(classId, cls.name);
+  document.getElementById("btnImport").onclick = ()=> importStudentsDialog(classId, cls.code, ()=>teacherClassView(classId));
   document.getElementById("btnNewAssign").onclick = ()=> newAssignmentDialog(classId, ()=>teacherClassView(classId));
   document.querySelectorAll("[data-edit]").forEach(b=> b.onclick=()=>{ const a=assignments.find(x=>x.id===b.dataset.edit); newAssignmentDialog(classId, ()=>teacherClassView(classId), a); });
   document.querySelectorAll("[data-sample]").forEach(b=> b.onclick=()=>{ const a=assignments.find(x=>x.id===b.dataset.sample); sampleManager(a, classId); });
@@ -761,6 +763,84 @@ function buildMatrix(roster, assignments, subs){
     return `<tr><td class="stu">${esc(nm)}</td>${cells}</tr>`;
   }).join("");
   return `<div class="matrix-wrap"><table class="matrix"><thead><tr><th class="stu">Schüler:in</th>${head}</tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+/* ---------- Lehrer: Schüler:innen per Liste importieren (Accounts + Passwörter) ---------- */
+function parseStudents(text){
+  return String(text||"").split(/\r?\n/).map(s=>s.trim()).filter(Boolean).map(line=>{
+    let parts = line.indexOf(",")>=0 ? line.split(",") : line.split(/\t+|\s{2,}|\s/);
+    parts = parts.map(p=>p.trim()).filter(Boolean);
+    const first=parts[0]||""; const last=parts.slice(1).join(" ");
+    return { first, last, name:(first+" "+last).trim() };
+  }).filter(x=>x.first);
+}
+function slugUser(first,last){
+  const m={'ä':'ae','ö':'oe','ü':'ue','ß':'ss','é':'e','è':'e','ê':'e','á':'a','à':'a','â':'a','ï':'i','î':'i','ô':'o','û':'u','ç':'c','ñ':'n'};
+  const clean=s=>String(s||"").toLowerCase().replace(/[äöüßéèêáàâïîôûçñ]/g,c=>m[c]||"").replace(/[^a-z0-9]+/g,"");
+  let u=clean(first); const l=clean(last); if(l) u+="."+l; u=u.replace(/^\.+|\.+$/g,"");
+  if(u.length<3) u=(u+"abc").slice(0,3);
+  return u.slice(0,18);
+}
+function genPass(){ const a="abcdefghijkmnpqrstuvwxyz23456789"; let s=""; const r=new Uint32Array(7); window.crypto.getRandomValues(r); for(let i=0;i<7;i++) s+=a[r[i]%a.length]; return s; }
+function importStudentsDialog(classId, classCode, onDone){
+  openModal(`<button class="x" onclick="closeModal()">✕</button>
+    <h3>📥 Schüler:innen importieren</h3>
+    <p class="muted" style="margin:2px 0 12px">Eine Person pro Zeile als <b>Vorname,Nachname</b> (Komma oder Tab, z. B. aus Excel kopiert). Benutzernamen &amp; Passwörter werden automatisch erzeugt – ohne E-Mail-Versand.</p>
+    <div class="field"><textarea class="input" id="impText" style="min-height:150px;font-family:monospace;font-size:13px" placeholder="Max,Mustermann&#10;Erika,Musterfrau"></textarea></div>
+    <div id="impMsg" class="auth-msg" style="display:none"></div>
+    <div style="display:flex;gap:10px"><button class="btn btn-ghost" id="impCancel" style="flex:none">Abbrechen</button><button class="btn btn-primary" id="impParse" style="flex:1">Weiter</button></div>
+    <div id="impStage" style="margin-top:14px"></div>`, true);
+  document.getElementById("impCancel").onclick = closeModal;
+  document.getElementById("impText").focus();
+  document.getElementById("impParse").onclick = ()=>{
+    const list = parseStudents(document.getElementById("impText").value);
+    const msg=document.getElementById("impMsg");
+    if(!list.length){ msg.style.display="block"; msg.className="auth-msg err"; msg.textContent="Keine gültigen Zeilen erkannt."; return; }
+    msg.style.display="none";
+    document.getElementById("impStage").innerHTML = `
+      <div class="card" style="margin-bottom:10px"><b>${list.length} Schüler:in${list.length>1?"nen":""} erkannt:</b><div class="muted" style="margin-top:4px;font-size:13px">${list.map(l=>esc(l.name)).join(" · ")}</div></div>
+      <button class="btn btn-primary btn-lg" id="impCreate">${list.length} Account${list.length>1?"s":""} jetzt erstellen</button>`;
+    document.getElementById("impCreate").onclick = ()=> doImport(list, classCode, classId, onDone);
+  };
+}
+async function doImport(list, classCode, classId, onDone){
+  const stage=document.getElementById("impStage");
+  stage.innerHTML = `<div class="card" id="impProg">⏳ Erstelle Accounts… <b id="impCount">0</b> / ${list.length}</div>`;
+  const imp = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_KEY, { auth:{ persistSession:false, autoRefreshToken:false } });
+  const used=new Set(), results=[];
+  const setCount=n=>{ const c=document.getElementById("impCount"); if(c) c.textContent=String(n); };
+  for(let i=0;i<list.length;i++){
+    const stu=list[i]; let base=slugUser(stu.first,stu.last), uname=base, k=1;
+    while(used.has(uname)) uname=base+(++k);
+    const pass=genPass(); let res=null, ok=false, lastErr="";
+    for(let attempt=0; attempt<6 && !ok; attempt++){
+      res = await imp.auth.signUp({ email:userEmail(uname), password:pass });
+      if(!res.error){ ok=true; break; }
+      lastErr=res.error.message;
+      if(/already|exists|registered/i.test(lastErr)){ uname=base+(++k); continue; }
+      break;
+    }
+    if(!ok){ results.push({name:stu.name, username:uname, password:"", status:"✗ "+lastErr}); setCount(i+1); continue; }
+    const uid=res.data.user.id;
+    const pe = await imp.from("profiles").insert({ id:uid, username:uname, role:"student", display_name:stu.name });
+    if(pe.error){ results.push({name:stu.name, username:uname, password:pass, status:"✗ Profil: "+pe.error.message}); try{await imp.auth.signOut();}catch(e){} setCount(i+1); continue; }
+    const je = await imp.rpc("join_class",{ p_code:classCode });
+    try{ await imp.auth.signOut(); }catch(e){}
+    used.add(uname);
+    results.push({ name:stu.name, username:uname, password:pass, status: je.error? "⚠ Konto ok, Klasse: "+je.error.message : "✓" });
+    setCount(i+1);
+    await new Promise(r=>setTimeout(r,180));
+  }
+  renderImportResults(stage, results, onDone);
+}
+function renderImportResults(stage, results, onDone){
+  const okN=results.filter(r=>r.status==="✓").length;
+  const rows=results.map(r=>`<tr><td class="stu">${esc(r.name)}</td><td><code>${esc(r.username)}</code></td><td><code>${esc(r.password||"–")}</code></td><td>${esc(r.status)}</td></tr>`).join("");
+  stage.innerHTML = `
+    <div class="card" style="background:#eefdf3;border-color:#bfe7cd"><b>${okN} von ${results.length} Account${results.length>1?"s":""} angelegt.</b> Gib die Zugangsdaten weiter – Schüler:innen können ihr Passwort später unter „🔑 Passwort" selbst ändern.</div>
+    <div style="overflow:auto;max-height:40vh;margin-top:10px"><table class="matrix" style="width:100%"><thead><tr><th class="stu">Name</th><th>Benutzername</th><th>Passwort</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <div style="display:flex;gap:10px;margin-top:12px"><button class="btn btn-ghost" id="impCopy" style="flex:1">📋 Liste kopieren</button><button class="btn btn-primary" id="impDone" style="flex:1">Fertig</button></div>`;
+  document.getElementById("impCopy").onclick=()=>{ const txt="Name\tBenutzername\tPasswort\n"+results.filter(r=>r.password).map(r=>r.name+"\t"+r.username+"\t"+r.password).join("\n"); if(navigator.clipboard) navigator.clipboard.writeText(txt); toast("Liste kopiert","ok"); };
+  document.getElementById("impDone").onclick=()=>{ closeModal(); if(onDone) onDone(); };
 }
 function renameClassDialog(classId, current){
   openModal(`<button class="x" onclick="closeModal()">✕</button>
@@ -934,7 +1014,7 @@ function errBox(e){ console.error(e); return `<div class="empty"><span class="ic
 function fmtDate(s){ try{ const d=new Date(s); return d.toLocaleDateString("de-DE",{day:"2-digit",month:"2-digit",year:"2-digit"}); }catch(e){ return ""; } }
 
 /* ---------- Footer: Version (letztes Update) + Copyright ---------- */
-const APP_BUILD = "2026-06-04 14:51";
+const APP_BUILD = "2026-06-05 16:34";
 (function(){ const f=document.getElementById("appfoot"); if(f) f.innerHTML='© 2026 <b>Laurens Offinger</b> &middot; Version '+APP_BUILD+' Uhr'; })();
 
 boot();
