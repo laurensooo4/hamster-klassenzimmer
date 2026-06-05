@@ -169,7 +169,7 @@ function shell(inner){
       <span class="chip ${ME.role}"><span class="av">${esc(initials(ME.display_name||ME.username))}</span>${esc(ME.display_name||ME.username)}</span>
       ${ME.is_admin?`<button class="btn btn-ghost btn-sm" id="btnAdmin" title="Admin-Bereich öffnen">🛠️ Admin</button>`:""}
       <button class="btn btn-ghost btn-sm" id="btnChangePw" title="Passwort ändern">🔑 Passwort</button>
-      <button class="btn btn-ghost btn-sm" id="btnLogout">Abmelden</button>
+      <button class="btn btn-danger btn-sm" id="btnLogout">Abmelden</button>
     </div>
     <div class="container" id="view"></div>`;
   { const ba=document.getElementById("btnAdmin"); if(ba) ba.onclick=()=> adminHome(); }
@@ -189,6 +189,16 @@ const api = {
     const { data, error } = await sb.from("classes").select("*").order("created_at",{ascending:false});
     if(error) throw error; return data||[];
   },
+  // Lehrer-Ansicht: NUR eigene + Klassen, in denen ich Co-Lehrkraft bin (auch als Admin)
+  async myTeacherClasses(){
+    const own = await sb.from("classes").select("*").eq("teacher_id", ME.id); if(own.error) throw own.error;
+    const ct = await sb.from("class_teachers").select("class_id").eq("teacher_id", ME.id); if(ct.error) throw ct.error;
+    const coIds = (ct.data||[]).map(r=>r.class_id);
+    let co=[]; if(coIds.length){ const r = await sb.from("classes").select("*").in("id", coIds); if(r.error) throw r.error; co=r.data||[]; }
+    const map=new Map(); [...(own.data||[]), ...co].forEach(c=> map.set(c.id, c));
+    return [...map.values()].sort((a,b)=> new Date(b.created_at)-new Date(a.created_at));
+  },
+  async deleteClass(id){ const { error } = await sb.from("classes").delete().eq("id", id); if(error) throw error; },
   async createClass(name){
     for(let tries=0; tries<5; tries++){
       const code = genCode(6);
@@ -724,7 +734,7 @@ function renderAdminUsers(q){
 async function teacherHome(){
   shell(`<div class="center-load"><span class="spin"></span>Klassen werden geladen…</div>`);
   let classes=[];
-  try{ classes = await api.myClasses(); }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
+  try{ classes = await api.myTeacherClasses(); }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
   const cards = classes.length ? `<div class="grid">${classes.map(c=>`
       <div class="card click" data-id="${c.id}">
         <h3>${esc(c.name)}</h3>
@@ -797,6 +807,7 @@ async function teacherClassView(classId){
       <div class="spacer"></div>
       <span class="codechip" title="Einlade-Code">🔑 ${esc(cls.code)} <button class="btn btn-sm btn-ghost" id="copyCode" style="margin-left:4px">Kopieren</button></span>
       <button class="btn btn-ghost btn-sm" id="btnSandbox" style="margin-left:8px" title="Freien Sandbox-Modus für Schüler:innen an/aus">${cls.sandbox_enabled?"🧪 Sandbox: an":"🧪 Sandbox: aus"}</button>
+      ${canTeam?`<button class="btn btn-ghost btn-sm" id="btnDeleteClass" style="margin-left:8px;color:#e63a3a" title="Klasse löschen">🗑️ Löschen</button>`:""}
     </div>
     <div class="card" style="margin-bottom:14px">
       <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px"><h3 style="margin:0">🎒 Schüler:innen <span class="badge gray">${roster.length}</span></h3><div style="flex:1"></div><button class="btn btn-ghost btn-sm" id="btnImport">📥 Importieren</button></div>
@@ -814,6 +825,7 @@ async function teacherClassView(classId){
   document.getElementById("copyCode").onclick = ()=>{ if(navigator.clipboard) navigator.clipboard.writeText(cls.code); toast("Code kopiert: "+cls.code,"ok"); };
   document.getElementById("btnSandbox").onclick = async ()=>{ try{ await api.setSandboxEnabled(classId, !cls.sandbox_enabled); toast(cls.sandbox_enabled?"Sandbox deaktiviert":"Sandbox aktiviert 🧪","ok"); teacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } };
   document.getElementById("btnRename").onclick = ()=> renameClassDialog(classId, cls.name);
+  { const bd=document.getElementById("btnDeleteClass"); if(bd) bd.onclick=async()=>{ if(!confirm(`Klasse „${cls.name}" wirklich löschen? Alle Aufgaben, Abgaben und Zuordnungen dieser Klasse werden unwiderruflich entfernt.`)) return; try{ await api.deleteClass(classId); toast("Klasse gelöscht","ok"); if(viewFromAdmin) adminHome(); else teacherHome(); }catch(e){ toast(e.message||"Fehler","err"); } }; }
   document.getElementById("btnImport").onclick = ()=> importStudentsDialog(classId, cls.code, ()=>teacherClassView(classId));
   { const bt=document.getElementById("btnTeachers"); if(bt) bt.onclick=()=> classTeachersDialog(classId, cls); }
   document.querySelectorAll("[data-rmstu]").forEach(b=> b.onclick=async()=>{ if(!confirm(b.dataset.nm+" aus dieser Klasse entfernen? (Der Account bleibt bestehen.)")) return; try{ await api.removeMembership(classId, b.dataset.rmstu); toast("Entfernt","ok"); teacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } });
@@ -1127,7 +1139,7 @@ function errBox(e){ console.error(e); return `<div class="empty"><span class="ic
 function fmtDate(s){ try{ const d=new Date(s); return d.toLocaleDateString("de-DE",{day:"2-digit",month:"2-digit",year:"2-digit"}); }catch(e){ return ""; } }
 
 /* ---------- Footer: Version (letztes Update) + Copyright ---------- */
-const APP_BUILD = "2026-06-05 19:54";
+const APP_BUILD = "2026-06-05 20:12";
 (function(){ const f=document.getElementById("appfoot"); if(f) f.innerHTML='© 2026 <b>Laurens Offinger</b> &middot; Version '+APP_BUILD+' Uhr'; })();
 
 boot();
