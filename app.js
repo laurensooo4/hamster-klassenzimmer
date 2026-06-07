@@ -88,7 +88,6 @@ function renderAuth(){
       <input class="input" id="auPass" type="password" placeholder="Passwort" autocomplete="${isReg?"new-password":"current-password"}"></div>
     <button class="btn btn-primary btn-lg" id="auSubmit">${isReg?"Account erstellen":"Anmelden"}</button>
     <p class="auth-foot">${foot}</p>
-    <div class="auth-credit">🎮 Vibe-Coded von <b>Laurens Offinger</b></div>
   </div></div>`;
   app().querySelectorAll(".tabs button").forEach(b=> b.onclick=()=>{ authState.mode=b.dataset.m; renderAuth(); });
   app().querySelectorAll(".role-opt").forEach(r=> r.onclick=()=>{ authState.role=r.dataset.role; renderAuth(); });
@@ -1394,6 +1393,11 @@ function fmtDate(s){ try{ const d=new Date(s); return d.toLocaleDateString("de-D
    Neueste Version zuerst. Bei jedem Deploy oben einen Eintrag ergänzen.
    ============================================================================ */
 const PATCH_NOTES = [
+  { v:"2.3", date:"7. Juni 2026", title:"Editor robuster & Feinschliff", items:[
+    `Klarere Fehlermeldungen im Editor: <b>break/continue</b> nur in Schleifen, <b>Endlosschleifen</b> und <b>endlose Rekursion</b> werden erkannt und sauber gestoppt, nicht geschlossene Texte (<code>"…</code>) werden gemeldet.`,
+    `Laufzeitfehler markieren jetzt zuverlässiger die <b>betroffene Zeile</b>.`,
+    `Oberflächen-Feinschliff (Login &amp; Fußzeile).`,
+  ]},
   { v:"2.2", date:"7. Juni 2026", title:"Benutzernamen & Admin-Profile", items:[
     `Im Schüler-Profil steht jetzt auch der <b>Benutzername</b> – praktisch, falls jemand ihn vergisst.`,
     `Im <b>Admin-Bereich</b> öffnet ein Klick auf eine:n Nutzer:in ein <b>Info-Profil</b>: für <b>Schüler:innen</b> mit ihren Klassen-Mitgliedschaften, für <b>Lehrkräfte</b> mit ihren eigenen und Co-Klassen – jeweils mit Benutzername und letztem Login.`,
@@ -1474,8 +1478,8 @@ function patchNotesDialog(){
     <div class="patchlog">${html}</div>`);
 }
 
-/* ---------- Footer: Version (letztes Update) + Copyright ---------- */
-const APP_BUILD = "2026-06-07 14:28";
-(function(){ const f=document.getElementById("appfoot"); if(f) f.innerHTML='© 2026 <b>Laurens Offinger</b> &middot; Version '+APP_BUILD+' Uhr'; })();
+/* ---------- Footer: Versionsnummer (aus den Patch-Notes) + Copyright ---------- */
+const APP_BUILD = "2026-06-07 15:54";   // letztes Update (im Patch-Notes-Dialog angezeigt)
+(function(){ const f=document.getElementById("appfoot"); if(f){ const v=(typeof PATCH_NOTES!=="undefined"&&PATCH_NOTES[0])?PATCH_NOTES[0].v:""; f.textContent='© 2026 Laurens Offinger · Version '+v; } })();
 
 boot();

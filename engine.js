@@ -80,7 +80,7 @@ function lex(src){
     if(c===" "||c==="\t"||c==="\r"){i++;continue;}
     if(c==="/"&&src[i+1]==="/"){ while(i<src.length&&src[i]!=="\n")i++; continue; }
     if(c==="/"&&src[i+1]==="*"){ i+=2; while(i<src.length&&!(src[i]==="*"&&src[i+1]==="/")){ if(src[i]==="\n")line++; i++; } i+=2; continue; }
-    if(c==='"'){ let s="",st=line; i++; while(i<src.length&&src[i]!=='"'){ if(src[i]==="\\"){ const n=src[i+1]; s+= n==="n"?"\n":n==="t"?"\t":n; i+=2; } else { if(src[i]==="\n")line++; s+=src[i]; i++; } } i++; toks.push({type:"string",value:s,line:st}); continue; }
+    if(c==='"'){ let s="",st=line; i++; while(i<src.length&&src[i]!=='"'){ if(src[i]==="\\"){ const n=src[i+1]; s+= n==="n"?"\n":n==="t"?"\t":n; i+=2; } else { if(src[i]==="\n")line++; s+=src[i]; i++; } } if(i>=src.length) throw {hamsterError:true, message:"Text wurde nicht geschlossen – es fehlt ein abschließendes \"", line:st}; i++; toks.push({type:"string",value:s,line:st}); continue; }
     if(/[0-9]/.test(c)){ let n=""; while(i<src.length&&/[0-9]/.test(src[i])){n+=src[i];i++;} push("int",parseInt(n,10)); continue; }
     if(isIdStart(c)){ let id=""; while(i<src.length&&isId(src[i])){id+=src[i];i++;} push(KW.includes(id)?id:"ident",id); continue; }
     const two=src.substr(i,2);
@@ -243,8 +243,8 @@ function compileCheck(ast){
       case "mcall": if(!(e.obj&&e.obj.kind==="ref"&&e.obj.name==="Territorium")) chkExpr(e.obj,scopes); for(const a of e.args) chkExpr(a,scopes); break;
     }
   }
-  function chkBlock(list,scopes){ const sc=new Set(); const s2=scopes.concat([sc]); for(const st of (list||[])) chkStmt(st,s2,sc); }
-  function chkStmt(s,scopes,cur){
+  function chkBlock(list,scopes,inLoop){ const sc=new Set(); const s2=scopes.concat([sc]); for(const st of (list||[])) chkStmt(st,s2,sc,inLoop); }
+  function chkStmt(s,scopes,cur,inLoop){
     switch(s.kind){
       case "vardecl": if(s.init) chkExpr(s.init,scopes); cur.add(s.name); break;
       case "assign": case "incdec":
@@ -254,17 +254,18 @@ function compileCheck(ast){
         if(!known(s.name,scopes)) cerr("Die Variable '"+s.name+"' wurde nicht deklariert (z. B. \"int[] "+s.name+";\").", s.line);
         chkExpr(s.idx,scopes); chkExpr(s.value,scopes); break;
       case "callstmt": for(const a of s.call.args) chkExpr(a,scopes); break;
-      case "block": chkBlock(s.body,scopes); break;
-      case "if": chkExpr(s.cond,scopes); chkBlock(s.then,scopes); if(s.els) chkBlock(s.els,scopes); break;
-      case "while": chkExpr(s.cond,scopes); chkBlock(s.body,scopes); break;
-      case "dowhile": chkBlock(s.body,scopes); chkExpr(s.cond,scopes); break;
-      case "for":{ const fs=new Set(); const sc=scopes.concat([fs]); if(s.init) chkStmt(s.init,sc,fs); if(s.cond) chkExpr(s.cond,sc); if(s.update) chkStmt(s.update,sc,fs); chkBlock(s.body,sc); break; }
+      case "block": chkBlock(s.body,scopes,inLoop); break;
+      case "if": chkExpr(s.cond,scopes); chkBlock(s.then,scopes,inLoop); if(s.els) chkBlock(s.els,scopes,inLoop); break;
+      case "while": chkExpr(s.cond,scopes); chkBlock(s.body,scopes,true); break;
+      case "dowhile": chkBlock(s.body,scopes,true); chkExpr(s.cond,scopes); break;
+      case "for":{ const fs=new Set(); const sc=scopes.concat([fs]); if(s.init) chkStmt(s.init,sc,fs,inLoop); if(s.cond) chkExpr(s.cond,sc); if(s.update) chkStmt(s.update,sc,fs,inLoop); chkBlock(s.body,sc,true); break; }
+      case "break": case "continue": if(!inLoop) cerr("'"+s.kind+"' ist nur innerhalb einer Schleife (while, for, do) erlaubt.", s.line); break;
       case "return": if(s.value) chkExpr(s.value,scopes); break;
     }
   }
   const methods=ast.methods||{};
-  for(const name in methods){ const m=methods[name]; const ps=new Set(); (m.params||[]).forEach(p=>ps.add(p.name)); chkBlock(m.body,[ps]); }
-  if(ast.main && !methods.main) chkBlock(ast.main, []);
+  for(const name in methods){ const m=methods[name]; const ps=new Set(); (m.params||[]).forEach(p=>ps.add(p.name)); chkBlock(m.body,[ps],false); }
+  if(ast.main && !methods.main) chkBlock(ast.main, [], false);
 }
 
 /* ---------- INTERPRETER ---------- */
@@ -279,9 +280,10 @@ function makeInterpreter(ast, model){
   const globalEnv=new Env(null);
   const consts={NORD:0,OST:1,SUED:2,WEST:3,BLAU:0,BLUE:0,ROT:1,RED:1,GRUEN:2,GREEN:2,GELB:3,YELLOW:3,CYAN:4,MAGENTA:5,ORANGE:6,PINK:7,GRAU:8,GRAY:8,WEISS:9,WHITE:9};
   for(const k in consts) globalEnv.declare(k,consts[k]);
-  let steps=0;
-  const guard=()=>{ if(++steps>6000000) throw {hamsterError:true,message:"Zu viele Schritte – vermutlich eine Endlosschleife. (Stopp gedrückt?)"}; };
+  let steps=0, curLine=0;
+  const guard=()=>{ if(++steps>6000000) throw {hamsterError:true,message:"Zu viele Schritte – vermutlich eine Endlosschleife. (Stopp gedrückt?)",line:curLine}; };
   const herr=(type,msg,line)=>({hamsterError:true,type,message:msg,line});
+  const rerr=(msg)=>({hamsterError:true,message:msg,line:curLine});
   const ham=()=>model.hamster;
   const front=()=>{ const h=ham(); return {r:h.row+DIRS[h.dir].dr, c:h.col+DIRS[h.dir].dc}; };
   const blocked=t=> t.r<0||t.c<0||t.r>=model.rows||t.c>=model.cols||model.walls.has(t.r+","+t.c);
@@ -298,7 +300,7 @@ function makeInterpreter(ast, model){
       case "getAnzahlHamster":
         if(args.length>=2){ const r=args[0],c=args[1]; return (model.hamster.row===r&&model.hamster.col===c)?1:0; }
         return 1;
-      default: throw {hamsterError:true,message:"Unbekannte Methode: Territorium."+name+"()"};
+      default: throw rerr("Unbekannte Methode: Territorium."+name+"()");
     }
   }
   const builtins={
@@ -319,6 +321,7 @@ function makeInterpreter(ast, model){
   };
   const fmt=x=> typeof x==="boolean"?(x?"true":"false"): Array.isArray(x)?("["+x.map(fmt).join(", ")+"]"): (x==null?"null":String(x));
   function* evalCall(node, env){
+    if(node.line) curLine=node.line;
     const args=[]; for(const a of node.args) args.push(yield* evalE(a, env));
     if(builtins[node.name]) return yield* builtins[node.name](args, node.line);
     if(methods[node.name]) return yield* callUser(node.name, args);
@@ -336,18 +339,18 @@ function makeInterpreter(ast, model){
       case "int": case "bool": case "str": return n.v;
       case "ref": return env.get(n.name);
       case "call": return yield* evalCall(n, env);
-      case "index":{ const a=yield* evalE(n.arr,env); const i=yield* evalE(n.idx,env); if(!Array.isArray(a)) throw {hamsterError:true,message:"Kein Array – Zugriff mit [] nicht möglich"}; if(i<0||i>=a.length) throw {hamsterError:true,message:"Array-Index "+i+" außerhalb der Grenzen (Länge "+a.length+")"}; return a[i]; }
+      case "index":{ const a=yield* evalE(n.arr,env); const i=yield* evalE(n.idx,env); if(!Array.isArray(a)) throw rerr("Kein Array – Zugriff mit [] nicht möglich"); if(i<0||i>=a.length) throw rerr("Array-Index "+i+" außerhalb der Grenzen (Länge "+a.length+")"); return a[i]; }
       case "newarray":{ let sz=yield* evalE(n.size,env); sz=Math.max(0,sz|0); const def=n.base==="boolean"?false:n.base==="String"?"":0; const a=[]; for(let i=0;i<sz;i++)a.push(def); return a; }
       case "arraylit":{ const a=[]; for(const e of n.elems) a.push(yield* evalE(e,env)); return a; }
-      case "member":{ const o=yield* evalE(n.obj,env); if((Array.isArray(o)||typeof o==="string")&&n.name==="length") return o.length; throw {hamsterError:true,message:"Unbekanntes Attribut ."+n.name}; }
+      case "member":{ const o=yield* evalE(n.obj,env); if((Array.isArray(o)||typeof o==="string")&&n.name==="length") return o.length; throw rerr("Unbekanntes Attribut ."+n.name); }
       case "mcall":{
         if(n.obj.kind==="ref"&&n.obj.name==="Territorium"){ const args=[]; for(const a of n.args) args.push(yield* evalE(a,env)); return territorium(n.name,args); }
         const o=yield* evalE(n.obj,env); const args=[]; for(const a of n.args) args.push(yield* evalE(a,env));
         if(typeof o==="string"){
-          switch(n.name){ case "length":return o.length; case "equals":return o===String(args[0]); case "charAt":return o.charAt(args[0])||""; case "substring":return args.length>1?o.substring(args[0],args[1]):o.substring(args[0]); case "indexOf":return o.indexOf(String(args[0])); case "toUpperCase":return o.toUpperCase(); case "toLowerCase":return o.toLowerCase(); default: throw {hamsterError:true,message:"Unbekannte String-Methode ."+n.name+"()"}; }
+          switch(n.name){ case "length":return o.length; case "equals":return o===String(args[0]); case "charAt":return o.charAt(args[0])||""; case "substring":return args.length>1?o.substring(args[0],args[1]):o.substring(args[0]); case "indexOf":return o.indexOf(String(args[0])); case "toUpperCase":return o.toUpperCase(); case "toLowerCase":return o.toLowerCase(); default: throw rerr("Unbekannte String-Methode ."+n.name+"()"); }
         }
         if(Array.isArray(o)&&n.name==="length") return o.length;
-        throw {hamsterError:true,message:"Unbekannte Methode ."+n.name+"()"};
+        throw rerr("Unbekannte Methode ."+n.name+"()");
       }
       case "not": return !(yield* evalE(n.e, env));
       case "neg": return -(yield* evalE(n.e, env));
@@ -357,8 +360,8 @@ function makeInterpreter(ast, model){
         const a=yield* evalE(n.l,env), b=yield* evalE(n.r,env);
         switch(n.op){
           case "+":return a+b; case "-":return a-b; case "*":return a*b;
-          case "/": if(b===0) throw {hamsterError:true,message:"Division durch 0"}; return Math.trunc(a/b);
-          case "%": if(b===0) throw {hamsterError:true,message:"Division durch 0"}; return a%b;
+          case "/": if(b===0) throw rerr("Division durch 0"); return Math.trunc(a/b);
+          case "%": if(b===0) throw rerr("Division durch 0"); return a%b;
           case "<":return a<b; case ">":return a>b; case "<=":return a<=b; case ">=":return a>=b;
           case "==":return a===b; case "!=":return a!==b;
         }
@@ -367,6 +370,7 @@ function makeInterpreter(ast, model){
   }
   function* execList(list, env){ for(const s of list) yield* execS(s, env); }
   function* execS(s, env){
+    if(s.line) curLine=s.line;
     switch(s.kind){
       case "block": yield* execList(s.body, new Env(env)); break;
       case "empty": break;
@@ -380,18 +384,18 @@ function makeInterpreter(ast, model){
       case "continue": throw {CONTINUE:true};
       case "if":{ yield {line:s.line,check:true}; if(yield* evalE(s.cond,env)) yield* execList(s.then,new Env(env)); else if(s.els) yield* execList(s.els,new Env(env)); break; }
       case "while":{
-        while(true){ yield {line:s.line,check:true}; if(!(yield* evalE(s.cond,env))) break;
+        while(true){ guard(); yield {line:s.line,check:true}; if(!(yield* evalE(s.cond,env))) break;
           try{ yield* execList(s.body,new Env(env)); }catch(e){ if(e&&e.BREAK)break; if(e&&e.CONTINUE)continue; throw e; } }
         break;
       }
       case "dowhile":{
-        do{ try{ yield* execList(s.body,new Env(env)); }catch(e){ if(e&&e.BREAK)break; if(e&&e.CONTINUE){} else throw e; }
+        do{ guard(); try{ yield* execList(s.body,new Env(env)); }catch(e){ if(e&&e.BREAK)break; if(e&&e.CONTINUE){} else throw e; }
             yield {line:s.line,check:true}; }while(yield* evalE(s.cond,env));
         break;
       }
       case "for":{
         const e=new Env(env); if(s.init) yield* execS(s.init,e);
-        while(true){ yield {line:s.line,check:true}; if(s.cond&&!(yield* evalE(s.cond,e))) break;
+        while(true){ guard(); yield {line:s.line,check:true}; if(s.cond&&!(yield* evalE(s.cond,e))) break;
           try{ yield* execList(s.body,new Env(e)); }catch(ex){ if(ex&&ex.BREAK)break; if(ex&&ex.CONTINUE){ if(s.update) yield* execS(s.update,e); continue; } throw ex; }
           if(s.update) yield* execS(s.update,e); }
         break;
@@ -740,7 +744,7 @@ class HamsterView{
   }
   _showErr(e){
     if(e&&e.hamsterError){ this._log("✖ "+(e.type?e.type+": ":"")+e.message+(e.line?" (Zeile "+e.line+")":""),"err"); if(e.line)this._setActive(e.line,true); if(e.type){ this.ham.classList.add("bonk"); setTimeout(()=>this.ham.classList.remove("bonk"),460); } }
-    else { this._log("✖ Interner Fehler: "+(e&&e.message||e),"err"); console.error(e); }
+    else { const m=(e&&e.message)?String(e.message):""; const txt=/call stack|stack size|recursion/i.test(m) ? "Zu viele verschachtelte Aufrufe – läuft eine Rekursion ohne Abbruchbedingung?" : (m?("Interner Fehler: "+m):"Unerwarteter Fehler – bitte prüfe deinen Code."); this._log("✖ "+txt,"err"); console.error(e); }
   }
   _showGoal(){ if(!this.goal) return; const g=this.$(".hv-goal"); if(!g) return; const ok=checkGoal(this.goal,this.model)===true; g.style.display="block"; g.className="hv-goal "+(ok?"ok":"no"); g.textContent=ok?"🎉 Ziel erreicht!":"Ziel noch nicht erreicht – probier es nochmal!"; }
   _hideGoal(){ const g=this.$(".hv-goal"); if(g) g.style.display="none"; }
