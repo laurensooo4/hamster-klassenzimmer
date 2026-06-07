@@ -109,6 +109,20 @@
   .badge.gold{background:#fff0d6;color:var(--gold-d)}
   .badge.gray{background:var(--line2);color:var(--muted)}
 
+  /* ---------- Konto-Dropdown (Topbar) ---------- */
+  .usermenu{position:relative;display:inline-block}
+  .chipbtn{border:none;cursor:pointer;font-family:inherit;font-size:13.5px;transition:filter .1s}
+  .chipbtn:hover{filter:brightness(.97)}
+  .chip .caret{font-size:11px;opacity:.65;margin-left:1px}
+  .menu{position:absolute;right:0;top:calc(100% + 8px);background:#fff;border-radius:14px;
+    box-shadow:0 12px 30px rgba(40,60,90,.18),0 0 0 1px var(--line) inset;padding:6px;min-width:210px;z-index:60;
+    display:flex;flex-direction:column;gap:2px;animation:pop .14s cubic-bezier(.2,1.2,.4,1)}
+  .menu-item{display:flex;align-items:center;gap:10px;width:100%;text-align:left;border:none;background:none;
+    font-family:inherit;font-weight:800;font-size:14px;color:var(--ink);padding:11px 13px;border-radius:10px;cursor:pointer}
+  .menu-item:hover{background:var(--line2)}
+  .menu-item.danger{color:var(--red-d)}
+  .menu-item.danger:hover{background:#fff0f0}
+
   .container{max-width:1080px;margin:0 auto;padding:22px 18px 60px}
   .page-head{display:flex;align-items:center;gap:12px;margin:4px 0 20px;flex-wrap:wrap}
   .page-head h2{font-size:24px;margin:0}
@@ -146,6 +160,8 @@
   table.matrix thead th{position:sticky;top:0;background:#fff;font-weight:900;color:var(--muted);border-bottom:2px solid var(--line);font-size:12.5px}
   table.matrix th.stu{text-align:left;position:sticky;left:0;background:#fff;z-index:1}
   table.matrix td.stu{text-align:left;position:sticky;left:0;background:#fff;font-weight:800;z-index:1;border-right:2px solid var(--line)}
+  table.matrix td.stu.clickable{cursor:pointer}
+  table.matrix td.stu.clickable:hover{color:var(--blue);text-decoration:underline}
   table.matrix tbody tr:nth-child(even) td{background:#fafcff}
   table.matrix tbody tr:nth-child(even) td.stu{background:#fafcff}
   .cell{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:10px;font-size:17px;font-weight:900}
@@ -184,7 +200,7 @@
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="config.js"></script>
-  <script src="engine.js?v=h3"></script>
-  <script src="app.js?v=h3"></script>
+  <script src="engine.js?v=h4"></script>
+  <script src="app.js?v=h4"></script>
 </body>
 </html>

@@ -166,16 +166,24 @@ function shell(inner){
       <div class="brand"><span class="h">${HAMSTER}</span> Informatik am Gymnasium Wesermünde</div>
       <div class="spacer"></div>
       ${roleBadge}
-      <span class="chip ${ME.role}"><span class="av">${esc(initials(ME.display_name||ME.username))}</span>${esc(ME.display_name||ME.username)}</span>
-      ${ME.is_admin?`<button class="btn btn-ghost btn-sm" id="btnAdmin" title="Admin-Bereich öffnen">🛠️ Admin</button>`:""}
-      <button class="btn btn-ghost btn-sm" id="btnChangePw" title="Passwort ändern">🔑 Passwort</button>
-      <button class="btn btn-danger btn-sm" id="btnLogout">Abmelden</button>
+      <div class="usermenu">
+        <button class="chip ${ME.role} chipbtn" id="userBtn" title="Konto-Menü"><span class="av">${esc(initials(ME.display_name||ME.username))}</span>${esc(ME.display_name||ME.username)}<span class="caret">▾</span></button>
+        <div class="menu" id="userMenu" style="display:none">
+          ${ME.is_admin?`<button class="menu-item" data-act="admin">🛠️ Admin-Bereich</button>`:""}
+          <button class="menu-item" data-act="pw">🔑 Passwort ändern</button>
+          <button class="menu-item danger" data-act="logout">🚪 Abmelden</button>
+        </div>
+      </div>
     </div>
     <div class="container" id="view"></div>
     ${ME.role==="teacher"?`<button class="patch-fab" id="btnPatch" title="Patch-Notes – was ist neu?"><span class="dot"></span>🗒️<span class="lbl">&nbsp;Patch-Notes</span></button>`:""}`;
-  { const ba=document.getElementById("btnAdmin"); if(ba) ba.onclick=()=> adminHome(); }
-  document.getElementById("btnChangePw").onclick = changePasswordDialog;
-  document.getElementById("btnLogout").onclick = signOut;
+  { const ub=document.getElementById("userBtn"), um=document.getElementById("userMenu");
+    if(ub&&um){
+      ub.onclick=(e)=>{ e.stopPropagation(); um.style.display = (um.style.display==="none"?"block":"none"); };
+      um.querySelectorAll("[data-act]").forEach(b=> b.onclick=()=>{ const a=b.dataset.act; um.style.display="none"; if(a==="admin") adminHome(); else if(a==="pw") changePasswordDialog(); else if(a==="logout") signOut(); });
+    }
+  }
+  if(!window._umClose){ window._umClose=true; document.addEventListener("click",(e)=>{ const um=document.getElementById("userMenu"); if(um && um.style.display!=="none" && !e.target.closest("#userMenu") && !e.target.closest("#userBtn")) um.style.display="none"; }); }
   { const bp=document.getElementById("btnPatch"); if(bp) bp.onclick = patchNotesDialog; }
   document.getElementById("view").innerHTML = inner;
 }
@@ -241,6 +249,17 @@ api.addSubmission = async (s)=>{ const row=Object.assign({student_id:ME.id, is_c
 api.myCurrentSubmission = async (assignmentId)=>{ const {data,error}=await sb.from("submissions").select("*").eq("assignment_id",assignmentId).eq("student_id",ME.id).eq("is_current",true).maybeSingle(); if(error) throw error; return data; };
 api.mySubmissions = async (assignmentId)=>{ const {data,error}=await sb.from("submissions").select("*").eq("assignment_id",assignmentId).eq("student_id",ME.id).order("submitted_at",{ascending:false}); if(error) throw error; return data||[]; };
 api.classSubmissions = async (assignmentIds)=>{ if(!assignmentIds.length) return []; const {data,error}=await sb.from("submissions").select("*").in("assignment_id",assignmentIds).order("submitted_at",{ascending:false}); if(error) throw error; return data||[]; };
+
+/* Schüler-Kommentar zur eigenen Abgabe (Lehrkraft kann lesen) */
+api.getSubmissionNote = async (subId)=>{ const {data,error}=await sb.from("submission_student_notes").select("*").eq("submission_id",subId).maybeSingle(); if(error) throw error; return data; };
+api.saveSubmissionNote = async (subId, body)=>{ const {error}=await sb.from("submission_student_notes").upsert({submission_id:subId, body, updated_at:new Date().toISOString()},{onConflict:"submission_id"}); if(error) throw error; };
+api.deleteSubmissionNote = async (subId)=>{ const {error}=await sb.from("submission_student_notes").delete().eq("submission_id",subId); if(error) throw error; };
+api.submissionNotes = async (subIds)=>{ if(!subIds.length) return []; const {data,error}=await sb.from("submission_student_notes").select("*").in("submission_id",subIds); if(error) throw error; return data||[]; };
+
+/* Lehrer: Schüler-Überblick + Notizen */
+api.studentOverview = async (sid)=>{ const {data,error}=await sb.rpc("student_overview",{p_student:sid}); if(error) throw error; return (Array.isArray(data)?data[0]:data)||null; };
+api.getStudentNote = async (classId, sid)=>{ const {data,error}=await sb.from("student_notes").select("*").eq("class_id",classId).eq("student_id",sid).maybeSingle(); if(error) throw error; return data; };
+api.saveStudentNote = async (classId, sid, body)=>{ const {error}=await sb.from("student_notes").upsert({class_id:classId, student_id:sid, author_id:ME.id, body, updated_at:new Date().toISOString()},{onConflict:"class_id,student_id"}); if(error) throw error; };
 
 /* Lehrer-Kommentare zu einer Abgabe (für Schüler:in freigebbar) */
 api.getComment = async (submissionId)=>{ const {data,error}=await sb.from("submission_comments").select("*").eq("submission_id",submissionId).maybeSingle(); if(error) throw error; return data; };
@@ -467,6 +486,7 @@ function reviewSubmission(assignment, history, studentName, classId){
     </div>
     ${history.length>1?`<div class="card" style="margin-bottom:10px;padding:10px 14px"><b style="font-size:13px">Versionen (neueste zuerst):</b> <span id="verNav"></span></div>`:""}
     <div id="reviewHost" style="height:76vh;min-height:560px"></div>
+    <div id="revStudentNote" style="margin-top:14px"></div>
     <div class="card" style="margin-top:14px">
       <h3 style="margin:0 0 8px">💬 Rückmeldung an ${esc(studentName)}</h3>
       <textarea class="input" id="revComment" style="min-height:70px" placeholder="Kommentar zu dieser Abgabe…"></textarea>
@@ -504,6 +524,10 @@ async function showReviewVersion(sub){
   const ta=document.getElementById("revComment"), rel=document.getElementById("revRelease"), del=document.getElementById("revDelete"), msg=document.getElementById("revMsg");
   if(ta) ta.value=""; if(rel) rel.checked=false; if(del) del.style.display="none"; if(msg) msg.textContent="";
   try{ const c=await api.getComment(sub.id); if(c){ if(ta) ta.value=c.body||""; if(rel) rel.checked=!!c.released; if(del) del.style.display=""; } }catch(e){}
+  const snEl=document.getElementById("revStudentNote");
+  if(snEl){ snEl.innerHTML="";
+    try{ const sn=await api.getSubmissionNote(sub.id); if(sn && (sn.body||"").trim()) snEl.innerHTML=`<div class="card" style="background:#fff7e9;border-color:#ffe0a3"><b>✍️ Kommentar von ${esc(s.studentName)}:</b><div style="margin-top:4px;white-space:pre-wrap">${esc(sn.body)}</div></div>`; }catch(e){}
+  }
 }
 async function saveReviewComment(){
   const s=reviewState; const body=document.getElementById("revComment").value.trim();
@@ -602,16 +626,17 @@ async function saveSampleFromEditor(){
 /* ---------- Schüler: Aufgabe lösen (Historie, Kommentare, Musterlösung) ---------- */
 async function solveAssignment(assignmentId){
   shell(`<div class="center-load"><span class="spin"></span>Aufgabe lädt…</div>`);
-  let a, history=[], comments=[], samples=[];
+  let a, history=[], comments=[], samples=[], notes=[];
   try{
     a = await api.getAssignment(assignmentId);
     history = await api.mySubmissions(assignmentId);
     comments = await api.myComments(history.map(s=>s.id));
     samples = await api.releasedSamples(assignmentId);
+    try{ notes = await api.submissionNotes(history.map(s=>s.id)); }catch(e){ notes=[]; }
   }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
   const current = history.find(s=>s.is_current) || null;
   const code = current ? current.code : (a.starter_code || DEFAULT_STARTER);
-  solveState = { a, history, comments, samples, current, viewingId: current?current.id:null };
+  solveState = { a, history, comments, samples, notes, current, viewingId: current?current.id:null };
   const statusHtml = current ? (current.passed===true?`<span class="badge">bestanden ✓</span>`:`<span class="badge gold">abgegeben</span>`) : `<span class="badge gray">offen</span>`;
   const curComment = current ? comments.find(c=>c.submission_id===current.id && c.released) : null;
   document.getElementById("view").innerHTML = `
@@ -628,6 +653,11 @@ async function solveAssignment(assignmentId){
       ${samples.length?`<button class="btn btn-ghost" id="btnSamples">🏆 Musterlösung${samples.length>1?"en":""} ansehen</button>`:""}
       <span id="submitMsg" class="muted"></span>
     </div>
+    <div class="card" id="myNoteCard" style="margin-top:14px">
+      <h3 style="margin:0 0 8px">✍️ Mein Kommentar an die Lehrkraft <span class="muted" style="font-weight:600;font-size:12px">(optional, zur geöffneten Abgabe)</span></h3>
+      <textarea class="input" id="myNote" style="min-height:64px" placeholder="z. B. eine Frage oder was du ausprobiert hast…"></textarea>
+      <div style="display:flex;gap:10px;align-items:center;margin-top:8px"><button class="btn btn-ghost" id="myNoteSave">Kommentar speichern</button><span id="myNoteMsg" class="muted" style="font-size:13px"></span></div>
+    </div>
     <div id="histCard"></div>`;
   document.getElementById("back").onclick = ()=> studentClassView(a.class_id);
   if(a.hint){ const hb=document.getElementById("hintBox"), bh=document.getElementById("btnHint"); bh.onclick=()=>{ const show=hb.style.display==="none"; hb.style.display=show?"block":"none"; bh.textContent=show?"💡 Tipp verbergen":"💡 Tipp anzeigen"; }; }
@@ -636,6 +666,29 @@ async function solveAssignment(assignmentId){
   const sb2=document.getElementById("btnSamples"); if(sb2) sb2.onclick=()=> openSamplesViewer(a, samples);
   document.getElementById("btnToLive").onclick = ()=> loadVersion(solveState.current);
   document.getElementById("btnSubmit").onclick = submitSolution;
+  renderMyNote(current?current.id:null);
+  document.getElementById("myNoteSave").onclick = saveMyNote;
+}
+function renderMyNote(subId){
+  const card=document.getElementById("myNoteCard"); if(!card||!solveState) return;
+  const ta=document.getElementById("myNote"), btn=document.getElementById("myNoteSave"), msg=document.getElementById("myNoteMsg");
+  if(!subId){ if(ta){ta.value="";ta.disabled=true;} if(btn) btn.disabled=true; if(msg) msg.textContent="Erst nach dem Abgeben möglich."; return; }
+  if(ta) ta.disabled=false; if(btn) btn.disabled=false;
+  const n=(solveState.notes||[]).find(x=>x.submission_id===subId);
+  if(ta) ta.value = n?n.body:""; if(msg) msg.textContent = (n&&n.updated_at)? ("gespeichert: "+fmtDateTime(n.updated_at)) : "";
+}
+async function saveMyNote(){
+  const s=solveState; if(!s) return; const subId=s.viewingId;
+  if(!subId){ toast("Erst abgeben, dann kommentieren.","err"); return; }
+  const body=document.getElementById("myNote").value;
+  const btn=document.getElementById("myNoteSave"); btn.disabled=true; btn.textContent="Speichere…";
+  try{
+    await api.saveSubmissionNote(subId, body);
+    const arr=s.notes||(s.notes=[]); const i=arr.findIndex(x=>x.submission_id===subId);
+    const row={submission_id:subId, body, updated_at:new Date().toISOString()}; if(i>=0) arr[i]=row; else arr.push(row);
+    const msg=document.getElementById("myNoteMsg"); if(msg) msg.textContent="gespeichert ✓"; toast("Kommentar gespeichert ✓","ok");
+  }catch(e){ toast(e.message||"Fehler","err"); }
+  finally{ btn.disabled=false; btn.textContent="Kommentar speichern"; }
 }
 function setEditNote(){
   const el=document.getElementById("editNote"); if(!el||!solveState) return;
@@ -659,7 +712,7 @@ function loadVersion(sub){
   if(!sub||!solveState) return;
   solveState.viewingId = sub.id;
   if(pageView) pageView.setCode(sub.code);
-  setEditNote(); renderSolveComment(sub.id);
+  setEditNote(); renderSolveComment(sub.id); renderMyNote(sub.id);
   const h=document.getElementById("solveHost"); if(h) h.scrollIntoView({behavior:"smooth",block:"start"});
 }
 function renderHistoryCard(){
@@ -688,7 +741,7 @@ async function submitSolution(){
     s.history.unshift(row); s.current=row; s.viewingId=row.id;
     document.getElementById("solveStatus").innerHTML = passed===true?`<span class="badge">bestanden ✓</span>`:`<span class="badge gold">abgegeben</span>`;
     document.getElementById("submitMsg").textContent = passed===true ? "Super, Ziel erreicht! 🎉" : passed===false ? "Abgegeben – Ziel noch nicht erfüllt, du kannst es nochmal versuchen." : "Abgegeben! ✓";
-    setEditNote(); renderHistoryCard(); renderSolveComment(row.id);
+    setEditNote(); renderHistoryCard(); renderSolveComment(row.id); renderMyNote(row.id);
     btn.disabled=false; btn.textContent="📤 Erneut abgeben";
     toast("Abgegeben!","ok");
   }catch(e){ btn.disabled=false; btn.textContent="📤 Abgeben"; toast(e.message||"Fehler","err"); }
@@ -864,7 +917,7 @@ async function teacherClassView(classId){
 
   const rosterHtml = roster.length ? `<div class="list">${roster.map(m=>{
       const p=m.profiles||{}; const nm=p.display_name||p.username||"?";
-      return `<div class="row"><span class="chip"><span class="av">${esc(initials(nm))}</span>${esc(nm)}</span>
+      return `<div class="row"><span class="chip chipbtn" data-prof="${m.student_id}" title="Profil ansehen" style="cursor:pointer"><span class="av">${esc(initials(nm))}</span>${esc(nm)}</span>
         <div class="grow"></div><span class="muted" style="font-size:11.5px;margin-right:4px">${fmtDate(m.joined_at)}</span>
         <button class="btn btn-sm btn-ghost" data-stu="${m.student_id}" data-nm="${esc(nm)}" title="Passwort zurücksetzen">🔑</button>
         <button class="btn btn-sm btn-ghost" data-rmstu="${m.student_id}" data-nm="${esc(nm)}" title="aus Klasse entfernen">🗑️</button></div>`;
@@ -886,9 +939,6 @@ async function teacherClassView(classId){
           <button class="abtn" data-del="${a.id}" title="löschen">🗑️</button>
         </span></div>`).join("")}</div>`
     : `<div class="empty" style="padding:16px"><span class="ic">📝</span>Noch keine Aufgaben.</div>`;
-  const matrixHtml = (assignments.length && roster.length) ? buildMatrix(roster, assignments, subs)
-    : `<div class="empty"><span class="ic">📊</span>${!assignments.length?"Stelle Aufgaben – dann erscheint hier, wer was abgegeben hat.":"Noch keine Schüler:innen in der Klasse."}</div>`;
-
   document.getElementById("view").innerHTML = `
     <div class="page-head"><button class="crumb" id="back">${viewFromAdmin?"← Admin-Bereich":"← Meine Klassen"}</button></div>
     <div class="page-head" style="margin-top:0">
@@ -908,8 +958,8 @@ async function teacherClassView(classId){
       <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px"><h3 style="margin:0">📝 Aufgaben <span class="badge gray">${assignments.length}</span></h3>
         <div style="flex:1"></div><button class="btn btn-blue btn-sm" id="btnNewAssign">+ Aufgabe stellen</button></div>
       <div style="margin-top:12px">${assignHtml}</div></div>
-    <h3 style="margin:0 0 10px">📊 Abgabe-Matrix</h3>
-    ${matrixHtml}`;
+    <div class="page-head" style="margin:0 0 10px"><h3 style="margin:0">📊 Abgabe-Matrix</h3><div class="spacer"></div>${(assignments.length&&roster.length)?`<input class="input" id="matrixSearch" placeholder="🔍 Schüler:in suchen" style="max-width:240px">`:""}</div>
+    <div id="matrixHost"></div>`;
   document.getElementById("back").onclick = ()=> (viewFromAdmin?adminHome():teacherHome());
   document.getElementById("copyCode").onclick = ()=>{ if(navigator.clipboard) navigator.clipboard.writeText(cls.code); toast("Code kopiert: "+cls.code,"ok"); };
   document.getElementById("btnSandbox").onclick = async ()=>{ try{ await api.setSandboxEnabled(classId, !cls.sandbox_enabled); toast(cls.sandbox_enabled?"Sandbox deaktiviert":"Sandbox aktiviert 🧪","ok"); teacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } };
@@ -926,21 +976,30 @@ async function teacherClassView(classId){
   document.querySelectorAll("[data-down]").forEach(b=> b.onclick=async()=>{ await moveAssignment(assignments, b.dataset.down, 1); teacherClassView(classId); });
   document.querySelectorAll("[data-pub]").forEach(b=> b.onclick=async()=>{ try{ await api.updateAssignment(b.dataset.pub, { published: b.dataset.on!=="1" }); teacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } });
   document.querySelectorAll("[data-del]").forEach(b=> b.onclick=async()=>{ if(!confirm("Aufgabe wirklich löschen?")) return; try{ await api.deleteAssignment(b.dataset.del); teacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } });
-  document.querySelectorAll(".cell[data-aid]").forEach(c=> c.onclick=()=>{
-    const aid=c.dataset.aid, sid=c.dataset.sid;
-    const a=assignments.find(x=>x.id===aid);
-    const hist=subs.filter(x=>x.assignment_id===aid && x.student_id===sid);
-    if(!a||!hist.length) return;
-    const stu=roster.find(r=>r.student_id===sid);
-    const nm=(stu&&stu.profiles&&(stu.profiles.display_name||stu.profiles.username))||"?";
-    reviewSubmission(a, hist, nm, classId);
-  });
+  const nameOf=(sid)=>{ const stu=roster.find(r=>r.student_id===sid); return (stu&&stu.profiles&&(stu.profiles.display_name||stu.profiles.username))||"?"; };
+  const openProfile=(sid)=> studentProfilePage(classId, sid, nameOf(sid));
+  const wireMatrixHost=()=>{ const host=document.getElementById("matrixHost"); if(!host) return;
+    host.querySelectorAll(".cell[data-aid]").forEach(c=> c.onclick=()=>{ const aid=c.dataset.aid, sid=c.dataset.sid; const a=assignments.find(x=>x.id===aid); const hist=subs.filter(x=>x.assignment_id===aid && x.student_id===sid); if(!a||!hist.length) return; reviewSubmission(a, hist, nameOf(sid), classId); });
+    host.querySelectorAll("[data-prof]").forEach(b=> b.onclick=()=> openProfile(b.dataset.prof));
+  };
+  const paintMatrix=(q)=>{ const host=document.getElementById("matrixHost"); if(!host) return;
+    host.innerHTML = (assignments.length&&roster.length) ? buildMatrix(roster, assignments, subs, q)
+      : `<div class="empty"><span class="ic">📊</span>${!assignments.length?"Stelle Aufgaben – dann erscheint hier, wer was abgegeben hat.":"Noch keine Schüler:innen in der Klasse."}</div>`;
+    wireMatrixHost();
+  };
+  paintMatrix("");
+  { const ms=document.getElementById("matrixSearch"); if(ms) ms.oninput=()=> paintMatrix(ms.value); }
+  document.querySelectorAll(".chip[data-prof]").forEach(b=> b.onclick=()=> openProfile(b.dataset.prof));
   document.querySelectorAll("[data-stu]").forEach(b=> b.onclick=()=> resetStudentPw(b.dataset.stu, b.dataset.nm));
 }
-function buildMatrix(roster, assignments, subs){
+function buildMatrix(roster, assignments, subs, q){
+  q=(q||"").trim().toLowerCase();
+  const nmeOf=stu=>(stu.profiles&&(stu.profiles.display_name||stu.profiles.username))||"?";
+  const list = q ? roster.filter(stu=> nmeOfSafe(nmeOf(stu)).includes(q)) : roster;
   const head = assignments.map(a=>`<th title="${esc(a.title)}">${esc(a.title.length>14?a.title.slice(0,13)+"…":a.title)}</th>`).join("");
-  const rows = roster.map(stu=>{
-    const nm=(stu.profiles&&(stu.profiles.display_name||stu.profiles.username))||"?";
+  if(!list.length) return `<div class="empty" style="padding:16px"><span class="ic">🔍</span>Keine Schüler:in gefunden.</div>`;
+  const rows = list.map(stu=>{
+    const nm=nmeOf(stu);
     const cells = assignments.map(a=>{
       const mine=subs.filter(x=>x.assignment_id===a.id && x.student_id===stu.student_id);
       const cur=mine.find(z=>z.is_current) || mine[0];
@@ -949,9 +1008,56 @@ function buildMatrix(roster, assignments, subs){
       const cnt=mine.length>1?`<sup style="font-size:9px;font-weight:800">${mine.length}</sup>`:"";
       return `<td><span class="cell ${cl}" data-aid="${a.id}" data-sid="${stu.student_id}" title="${mine.length} Abgabe(n) – ansehen">${ic}${cnt}</span></td>`;
     }).join("");
-    return `<tr><td class="stu">${esc(nm)}</td>${cells}</tr>`;
+    return `<tr><td class="stu clickable" data-prof="${stu.student_id}" title="Profil ansehen">${esc(nm)}</td>${cells}</tr>`;
   }).join("");
   return `<div class="matrix-wrap"><table class="matrix"><thead><tr><th class="stu">Schüler:in</th>${head}</tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+function nmeOfSafe(s){ return String(s||"").toLowerCase(); }
+
+/* ---------- Lehrer: Schüler-Profil (Überblick, Aufgaben, Notizen) ---------- */
+async function studentProfilePage(classId, studentId, studentName){
+  shell(`<div class="center-load"><span class="spin"></span>Profil…</div>`);
+  let assignments=[], subs=[], overview=null, note=null;
+  try{
+    assignments = await api.listAssignments(classId);
+    subs = (await api.classSubmissions(assignments.map(a=>a.id))).filter(s=> s.student_id===studentId);
+    try{ overview = await api.studentOverview(studentId); }catch(e){ overview=null; }
+    try{ note = await api.getStudentNote(classId, studentId); }catch(e){ note=null; }
+  }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
+  const lastSub = overview && overview.last_submission ? new Date(overview.last_submission) : null;
+  const lastSbx = overview && overview.last_sandbox ? new Date(overview.last_sandbox) : null;
+  let activity="—";
+  if(lastSbx && (!lastSub || lastSbx>lastSub)) activity = "🧪 Sandbox gespeichert · "+fmtDateTime(overview.last_sandbox);
+  else if(lastSub) activity = "📤 Aufgabe abgegeben · "+fmtDateTime(overview.last_submission);
+  const lastLogin = (overview && overview.last_login) ? fmtDateTime(overview.last_login) : "—";
+  const doneCount = assignments.filter(a=> subs.some(s=>s.assignment_id===a.id)).length;
+  const passCount = assignments.filter(a=>{ const mine=subs.filter(s=>s.assignment_id===a.id); const cur=mine.find(z=>z.is_current)||mine[0]; return cur&&cur.passed===true; }).length;
+  const aRows = assignments.length ? assignments.map(a=>{
+    const mine=subs.filter(s=>s.assignment_id===a.id); const cur=mine.find(z=>z.is_current)||mine[0];
+    const badge = !cur ? `<span class="badge gray">offen</span>` : (cur.passed===true?`<span class="badge">bestanden ✓</span>`:`<span class="badge gold">abgegeben</span>`);
+    const cnt = mine.length>1?` <span class="muted" style="font-size:12px">(${mine.length} Abgaben)</span>`:"";
+    const open = mine.length?`<button class="btn btn-sm btn-ghost" data-aopen="${a.id}">ansehen</button>`:"";
+    return `<div class="row"><span class="grow"><span class="t">${esc(a.title)}${cnt}</span><span class="s">${a.goal?`🎯 ${esc(goalLabel(a.goal))}`:"kein Auto-Check"}</span></span>${badge}${open}</div>`;
+  }).join("") : `<div class="muted" style="font-size:13px">Keine Aufgaben.</div>`;
+  document.getElementById("view").innerHTML = `
+    <div class="page-head"><button class="crumb" id="back">← zurück zur Klasse</button></div>
+    <div class="page-head" style="margin-top:0"><h2><span class="chip" style="font-size:16px"><span class="av">${esc(initials(studentName))}</span>${esc(studentName)}</span></h2></div>
+    <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(220px,1fr));margin-bottom:14px">
+      <div class="card"><div class="meta">🕐 Zuletzt eingeloggt</div><div style="font-weight:900;margin-top:4px">${esc(lastLogin)}</div></div>
+      <div class="card"><div class="meta">⚡ Letzte Aktivität</div><div style="font-weight:900;margin-top:4px">${esc(activity)}</div></div>
+      <div class="card"><div class="meta">✅ Fortschritt</div><div style="font-weight:900;margin-top:4px">${passCount} bestanden · ${doneCount}/${assignments.length} bearbeitet</div></div>
+    </div>
+    <div class="card" style="margin-bottom:14px">
+      <h3 style="margin:0 0 10px">📋 Aufgaben</h3>
+      <div class="list">${aRows}</div></div>
+    <div class="card">
+      <h3 style="margin:0 0 8px">📝 Notizen zu ${esc(studentName)} <span class="muted" style="font-weight:600;font-size:12px">(privat – nur Lehrkräfte)</span></h3>
+      <textarea class="input" id="snNote" style="min-height:90px" placeholder="Notizen zu ${esc(studentName)}…">${esc(note?note.body:"")}</textarea>
+      <div style="display:flex;gap:10px;align-items:center;margin-top:10px"><button class="btn btn-primary" id="snSave">Notiz speichern</button><span id="snMsg" class="muted" style="font-size:13px">${note&&note.updated_at?("zuletzt: "+esc(fmtDateTime(note.updated_at))):""}</span></div>
+    </div>`;
+  document.getElementById("back").onclick = ()=> teacherClassView(classId);
+  document.querySelectorAll("[data-aopen]").forEach(b=> b.onclick=()=>{ const a=assignments.find(x=>x.id===b.dataset.aopen); const hist=subs.filter(s=>s.assignment_id===a.id); if(a&&hist.length) reviewSubmission(a, hist, studentName, classId); });
+  document.getElementById("snSave").onclick=async()=>{ const body=document.getElementById("snNote").value; const btn=document.getElementById("snSave"); btn.disabled=true; btn.textContent="Speichere…"; try{ await api.saveStudentNote(classId, studentId, body); document.getElementById("snMsg").textContent="gespeichert ✓"; toast("Notiz gespeichert ✓","ok"); }catch(e){ toast(e.message||"Fehler","err"); } finally{ btn.disabled=false; btn.textContent="Notiz speichern"; } };
 }
 /* ---------- Lehrer: Schüler:innen per Liste importieren (Accounts + Passwörter) ---------- */
 function parseStudents(text){
@@ -1241,6 +1347,12 @@ function fmtDate(s){ try{ const d=new Date(s); return d.toLocaleDateString("de-D
    Neueste Version zuerst. Bei jedem Deploy oben einen Eintrag ergänzen.
    ============================================================================ */
 const PATCH_NOTES = [
+  { v:"2.1", date:"7. Juni 2026", title:"Schüler-Profile, Matrix-Suche & Konto-Menü", items:[
+    `In der <b>Abgabe-Matrix</b> kannst du jetzt nach <b>Schülernamen suchen</b> – praktisch bei großen Klassen.`,
+    `<b>Klick auf eine:n Schüler:in</b> (in der Liste oder Matrix) öffnet ein <b>Profil</b>: zuletzt eingeloggt, letzte Aktivität, Aufgaben-Übersicht und private <b>Notizen</b> (nur für Lehrkräfte).`,
+    `Schüler:innen können ihre <b>Abgabe mit einem Kommentar</b> an die Lehrkraft versehen – sichtbar in der Korrektur.`,
+    `Oben rechts: <b>Konto-Menü</b> unter dem eigenen Namen (Admin-Bereich, Passwort ändern, Abmelden).`,
+  ]},
   { v:"2.0", date:"6. Juni 2026", title:"Lehrer-Editor, eigene Sandbox & Klassen-Übergabe", items:[
     `Aufgaben erstellen/bearbeiten jetzt auf einer <b>eigenen Seite</b> statt im Pop-up – mit dem <b>gleichen Editor wie die Schüler:innen</b>: der <b>Startcode ist direkt ausführbar</b> (▶ Start), Umschalter <b>📝 Code / 🌍 Welt</b> fürs Territorium.`,
     `Lehrkräfte haben jetzt eine <b>eigene 🧪 Sandbox</b> (Knopf auf „Meine Klassen") – eigene Projekte frei bauen, speichern und öffnen, ganz ohne Klasse.`,
@@ -1312,7 +1424,7 @@ function patchNotesDialog(){
 }
 
 /* ---------- Footer: Version (letztes Update) + Copyright ---------- */
-const APP_BUILD = "2026-06-06 23:06";
+const APP_BUILD = "2026-06-07 14:09";
 (function(){ const f=document.getElementById("appfoot"); if(f) f.innerHTML='© 2026 <b>Laurens Offinger</b> &middot; Version '+APP_BUILD+' Uhr'; })();
 
 boot();
