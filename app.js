@@ -855,14 +855,59 @@ function renderAdminUsers(q){
       acts += `<button class="btn btn-sm btn-ghost" data-pw="${u.id}" data-nm="${nm}" title="Passwort neu generieren">🔑</button> `;
       acts += `<button class="btn btn-sm btn-ghost" data-deluser="${u.id}" data-nm="${nm}" title="Account löschen">🗑️</button>`;
     }
-    return `<tr><td class="stu">${nm}</td><td><code>${esc(u.username)}</code></td><td>${badge}</td><td style="white-space:nowrap">${acts}</td></tr>`;
+    return `<tr><td class="stu clickable" data-prof="${u.id}" title="Profil ansehen">${nm}</td><td><code>${esc(u.username)}</code></td><td>${badge}</td><td style="white-space:nowrap">${acts}</td></tr>`;
   }).join("");
   el.innerHTML = list.length ? `<div style="overflow:auto"><table class="matrix" style="width:100%"><thead><tr><th class="stu">Name</th><th>Benutzername</th><th>Rolle</th><th>Aktionen</th></tr></thead><tbody>${rows}</tbody></table></div>`
     : `<div class="empty" style="padding:14px"><span class="ic">🔍</span>Niemand gefunden.</div>`;
+  el.querySelectorAll("[data-prof]").forEach(b=> b.onclick=()=> adminUserProfile(b.dataset.prof));
   el.querySelectorAll("[data-pw]").forEach(b=> b.onclick=()=> resetStudentPw(b.dataset.pw, b.dataset.nm));
   el.querySelectorAll("[data-deluser]").forEach(b=> b.onclick=async()=>{ if(!confirm("Account von "+b.dataset.nm+" WIRKLICH löschen? Alle zugehörigen Daten – bei Lehrkräften auch ihre erstellten Klassen – werden entfernt. Nicht umkehrbar.")) return; try{ await api.adminDeleteUser(b.dataset.deluser); toast("Account gelöscht","ok"); adminHome(); }catch(e){ toast(e.message||"Fehler","err"); } });
   el.querySelectorAll("[data-mkadmin]").forEach(b=> b.onclick=async()=>{ if(!confirm(b.dataset.nm+" zum Admin machen? (Behält die Lehrer-Rolle.)")) return; try{ await api.setAdmin(b.dataset.mkadmin, true); toast("Ist jetzt Admin ⭐","ok"); adminHome(); }catch(e){ toast(e.message||"Fehler","err"); } });
   el.querySelectorAll("[data-unadmin]").forEach(b=> b.onclick=async()=>{ if(!confirm(b.dataset.nm+" den Admin-Rang entziehen?")) return; try{ await api.setAdmin(b.dataset.unadmin, false); toast("Admin-Rang entfernt","ok"); adminHome(); }catch(e){ toast(e.message||"Fehler","err"); } });
+}
+
+/* ---------- Admin: Nutzer-Profil (Schüler & Lehrkräfte) ---------- */
+async function adminUserProfile(userId){
+  shell(`<div class="center-load"><span class="spin"></span>Profil…</div>`);
+  let prof=null, overview=null;
+  try{ const {data,error}=await sb.from("profiles").select("*").eq("id",userId).single(); if(error) throw error; prof=data; }
+  catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
+  if(!prof){ document.getElementById("view").innerHTML=errBox({message:"Nutzer:in nicht gefunden."}); return; }
+  try{ overview=await api.studentOverview(userId); }catch(e){ overview=null; }
+  const name=prof.display_name||prof.username;
+  const roleBadge = prof.is_admin?'<span class="badge" style="background:#ffe0b2;color:#b35900">Admin</span>':prof.role==="teacher"?'<span class="badge blue">Lehrkraft</span>':'<span class="badge gray">Schüler:in</span>';
+  const lastLogin=(overview&&overview.last_login)?fmtDateTime(overview.last_login):"—";
+  const lastSub=overview&&overview.last_submission?new Date(overview.last_submission):null;
+  const lastSbx=overview&&overview.last_sandbox?new Date(overview.last_sandbox):null;
+  let activity="—";
+  if(lastSbx && (!lastSub||lastSbx>lastSub)) activity="🧪 Sandbox gespeichert · "+fmtDateTime(overview.last_sandbox);
+  else if(lastSub) activity="📤 Aufgabe abgegeben · "+fmtDateTime(overview.last_submission);
+  let classesHtml="";
+  try{
+    if(prof.role==="student"){
+      const {data:ms}=await sb.from("memberships").select("joined_at, classes:class_id(id,name,code,teacher:teacher_id(display_name,username))").eq("student_id",userId);
+      const rows=(ms||[]).map(m=>{ const c=m.classes||{}; const t=c.teacher||{}; return `<div class="row clickrow" data-cls="${c.id}" style="cursor:pointer"><span class="grow"><span class="t">${esc(c.name||"?")}</span><span class="s">Code: ${esc(c.code||"–")} · 👩‍🏫 ${esc(t.display_name||t.username||"–")}</span></span><span style="color:#7a8aa0">→</span></div>`; }).join("");
+      classesHtml=`<h3 style="margin:0 0 10px">🎒 Klassen (Mitglied) <span class="badge gray">${(ms||[]).length}</span></h3><div class="list">${rows||'<div class="muted" style="font-size:13px">In keiner Klasse.</div>'}</div>`;
+    } else {
+      const own=await sb.from("classes").select("id,name,code").eq("teacher_id",userId).order("created_at",{ascending:false});
+      const co=await sb.from("class_teachers").select("classes:class_id(id,name,code)").eq("teacher_id",userId);
+      const ownRows=((own.data)||[]).map(c=>`<div class="row clickrow" data-cls="${c.id}" style="cursor:pointer"><span class="grow"><span class="t">${esc(c.name)}</span><span class="s">Code: ${esc(c.code)} · Eigentümer:in</span></span><span style="color:#7a8aa0">→</span></div>`).join("");
+      const coRows=((co.data)||[]).map(x=>{ const c=x.classes||{}; return `<div class="row clickrow" data-cls="${c.id}" style="cursor:pointer"><span class="grow"><span class="t">${esc(c.name||"?")}</span><span class="s">Code: ${esc(c.code||"–")} · Co-Lehrkraft</span></span><span style="color:#7a8aa0">→</span></div>`; }).join("");
+      const cnt=((own.data)||[]).length+((co.data)||[]).length;
+      classesHtml=`<h3 style="margin:0 0 10px">👩‍🏫 Klassen <span class="badge gray">${cnt}</span></h3><div class="list">${(ownRows+coRows)||'<div class="muted" style="font-size:13px">Keine Klassen.</div>'}</div>`;
+    }
+  }catch(e){ classesHtml=`<div class="muted" style="font-size:13px">Klassen konnten nicht geladen werden.</div>`; }
+  document.getElementById("view").innerHTML=`
+    <div class="page-head"><button class="crumb" id="back">← Admin-Bereich</button></div>
+    <div class="page-head" style="margin-top:0"><h2><span class="chip" style="font-size:16px"><span class="av">${esc(initials(name))}</span>${esc(name)}</span></h2><div class="spacer"></div>${roleBadge}</div>
+    <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(220px,1fr));margin-bottom:14px">
+      <div class="card"><div class="meta">🪪 Benutzername</div><div style="font-weight:900;margin-top:4px"><code>${esc(prof.username)}</code></div></div>
+      <div class="card"><div class="meta">🕐 Zuletzt eingeloggt</div><div style="font-weight:900;margin-top:4px">${esc(lastLogin)}</div></div>
+      <div class="card"><div class="meta">⚡ Letzte Aktivität</div><div style="font-weight:900;margin-top:4px">${esc(activity)}</div></div>
+    </div>
+    <div class="card">${classesHtml}</div>`;
+  document.getElementById("back").onclick = adminHome;
+  document.querySelectorAll("[data-cls]").forEach(b=> b.onclick=()=>{ viewFromAdmin=true; teacherClassView(b.dataset.cls); });
 }
 
 /* ============================================================================
@@ -977,7 +1022,8 @@ async function teacherClassView(classId){
   document.querySelectorAll("[data-pub]").forEach(b=> b.onclick=async()=>{ try{ await api.updateAssignment(b.dataset.pub, { published: b.dataset.on!=="1" }); teacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } });
   document.querySelectorAll("[data-del]").forEach(b=> b.onclick=async()=>{ if(!confirm("Aufgabe wirklich löschen?")) return; try{ await api.deleteAssignment(b.dataset.del); teacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } });
   const nameOf=(sid)=>{ const stu=roster.find(r=>r.student_id===sid); return (stu&&stu.profiles&&(stu.profiles.display_name||stu.profiles.username))||"?"; };
-  const openProfile=(sid)=> studentProfilePage(classId, sid, nameOf(sid));
+  const userOf=(sid)=>{ const stu=roster.find(r=>r.student_id===sid); return (stu&&stu.profiles&&stu.profiles.username)||""; };
+  const openProfile=(sid)=> studentProfilePage(classId, sid, nameOf(sid), userOf(sid));
   const wireMatrixHost=()=>{ const host=document.getElementById("matrixHost"); if(!host) return;
     host.querySelectorAll(".cell[data-aid]").forEach(c=> c.onclick=()=>{ const aid=c.dataset.aid, sid=c.dataset.sid; const a=assignments.find(x=>x.id===aid); const hist=subs.filter(x=>x.assignment_id===aid && x.student_id===sid); if(!a||!hist.length) return; reviewSubmission(a, hist, nameOf(sid), classId); });
     host.querySelectorAll("[data-prof]").forEach(b=> b.onclick=()=> openProfile(b.dataset.prof));
@@ -1015,7 +1061,7 @@ function buildMatrix(roster, assignments, subs, q){
 function nmeOfSafe(s){ return String(s||"").toLowerCase(); }
 
 /* ---------- Lehrer: Schüler-Profil (Überblick, Aufgaben, Notizen) ---------- */
-async function studentProfilePage(classId, studentId, studentName){
+async function studentProfilePage(classId, studentId, studentName, username){
   shell(`<div class="center-load"><span class="spin"></span>Profil…</div>`);
   let assignments=[], subs=[], overview=null, note=null;
   try{
@@ -1043,6 +1089,7 @@ async function studentProfilePage(classId, studentId, studentName){
     <div class="page-head"><button class="crumb" id="back">← zurück zur Klasse</button></div>
     <div class="page-head" style="margin-top:0"><h2><span class="chip" style="font-size:16px"><span class="av">${esc(initials(studentName))}</span>${esc(studentName)}</span></h2></div>
     <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(220px,1fr));margin-bottom:14px">
+      <div class="card"><div class="meta">🪪 Benutzername</div><div style="font-weight:900;margin-top:4px"><code>${esc(username||"—")}</code></div></div>
       <div class="card"><div class="meta">🕐 Zuletzt eingeloggt</div><div style="font-weight:900;margin-top:4px">${esc(lastLogin)}</div></div>
       <div class="card"><div class="meta">⚡ Letzte Aktivität</div><div style="font-weight:900;margin-top:4px">${esc(activity)}</div></div>
       <div class="card"><div class="meta">✅ Fortschritt</div><div style="font-weight:900;margin-top:4px">${passCount} bestanden · ${doneCount}/${assignments.length} bearbeitet</div></div>
@@ -1347,6 +1394,10 @@ function fmtDate(s){ try{ const d=new Date(s); return d.toLocaleDateString("de-D
    Neueste Version zuerst. Bei jedem Deploy oben einen Eintrag ergänzen.
    ============================================================================ */
 const PATCH_NOTES = [
+  { v:"2.2", date:"7. Juni 2026", title:"Benutzernamen & Admin-Profile", items:[
+    `Im Schüler-Profil steht jetzt auch der <b>Benutzername</b> – praktisch, falls jemand ihn vergisst.`,
+    `Im <b>Admin-Bereich</b> öffnet ein Klick auf eine:n Nutzer:in ein <b>Info-Profil</b>: für <b>Schüler:innen</b> mit ihren Klassen-Mitgliedschaften, für <b>Lehrkräfte</b> mit ihren eigenen und Co-Klassen – jeweils mit Benutzername und letztem Login.`,
+  ]},
   { v:"2.1", date:"7. Juni 2026", title:"Schüler-Profile, Matrix-Suche & Konto-Menü", items:[
     `In der <b>Abgabe-Matrix</b> kannst du jetzt nach <b>Schülernamen suchen</b> – praktisch bei großen Klassen.`,
     `<b>Klick auf eine:n Schüler:in</b> (in der Liste oder Matrix) öffnet ein <b>Profil</b>: zuletzt eingeloggt, letzte Aktivität, Aufgaben-Übersicht und private <b>Notizen</b> (nur für Lehrkräfte).`,
@@ -1424,7 +1475,7 @@ function patchNotesDialog(){
 }
 
 /* ---------- Footer: Version (letztes Update) + Copyright ---------- */
-const APP_BUILD = "2026-06-07 14:09";
+const APP_BUILD = "2026-06-07 14:28";
 (function(){ const f=document.getElementById("appfoot"); if(f) f.innerHTML='© 2026 <b>Laurens Offinger</b> &middot; Version '+APP_BUILD+' Uhr'; })();
 
 boot();
