@@ -1546,6 +1546,11 @@ function fmtDate(s){ try{ const d=new Date(s); return d.toLocaleDateString("de-D
    Neueste Version zuerst. Bei jedem Deploy oben einen Eintrag ergänzen.
    ============================================================================ */
 const PATCH_NOTES = [
+  { v:"2.6", date:"8. Juni 2026", title:"Java-Korrektheit: char, Typprüfung & main-Pflicht", items:[
+    `<b>char</b> ist jetzt ein vollwertiger Zahlentyp (ASCII): <code>int c = 'A';</code> ergibt <b>65</b>, <code>char s = 65;</code> ergibt <b>'A'</b> – inkl. <b>(char)/(int)-Umwandlungen</b> und Rechnen mit char, z. B. <code>char b = (char)(a + 5);</code>.`,
+    `<b>Strengere Typprüfung</b> bei Zuweisungen nach Java-Regeln: int→double und char→int/double sind erlaubt, aber z. B. <code>int x = true;</code> oder <code>String s = 123;</code> nicht. double-Werte werden mit Nachkommastelle ausgegeben (z. B. <code>double i = 123;</code> → <b>123.0</b>).`,
+    `Eine <b>void main()-Methode ist jetzt Pflicht</b> (wie in echtem Java). Reiner loser Befehls-Code (ohne main) wird mit einer klaren Meldung abgelehnt – packe dein Programm in <code>void main() { … }</code>.`,
+  ]},
   { v:"2.5", date:"8. Juni 2026", title:"Aufgaben-Statistik & Klassen-Dashboard", items:[
     `Jede Aufgabe hat jetzt einen <b>📊-Knopf</b> (in der Aufgabenliste der Klasse) → öffnet ein <b>Dashboard</b>, das auf einen Blick zeigt, wo die Klasse steht und woran sie hängt.`,
     `<b>Kennzahlen oben:</b> Bestanden-Quote (z. B. „14 / 22"), wie viele die Aufgabe überhaupt bearbeitet haben, die <b>durchschnittliche Anzahl Versuche</b> und eine Verteilung (1× / 2–3× / 4+×). Ein <b>Fortschrittsbalken</b> zeigt farbig: 🟩 bestanden · 🟨 abgegeben, aber nicht bestanden · ⬜ noch nicht bearbeitet.`,
@@ -1647,7 +1652,7 @@ function patchNotesDialog(){
 }
 
 /* ---------- Footer: Versionsnummer (aus den Patch-Notes) + Copyright ---------- */
-const APP_BUILD = "2026-06-08 22:48";   // letztes Update (im Patch-Notes-Dialog angezeigt)
+const APP_BUILD = "2026-06-08 23:44";   // letztes Update (im Patch-Notes-Dialog angezeigt)
 (function(){ const f=document.getElementById("appfoot"); if(f){ const v=(typeof PATCH_NOTES!=="undefined"&&PATCH_NOTES[0])?PATCH_NOTES[0].v:""; f.textContent='© 2026 Laurens Offinger · Version '+v; } })();
 
 boot();

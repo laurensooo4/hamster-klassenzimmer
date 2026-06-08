@@ -86,7 +86,7 @@ function lex(src){
     if(/[0-9]/.test(c)){ let n=""; while(i<src.length&&/[0-9]/.test(src[i])){n+=src[i];i++;}
       if(src[i]==="."&&/[0-9]/.test(src[i+1])){ n+="."; i++; while(i<src.length&&/[0-9]/.test(src[i])){n+=src[i];i++;} push("num",parseFloat(n)); }
       else push("int",parseInt(n,10)); continue; }
-    if(c==="'"){ let st=line; i++; let ch; if(src[i]==="\\"){ const e=src[i+1]; ch = e==="n"?"\n":e==="t"?"\t":e==="0"?"\0":e; i+=2; } else { if(src[i]==="\n")line++; ch=src[i]; i++; } if(src[i]!=="'") throw {hamsterError:true, message:"Zeichen (') wurde nicht korrekt geschlossen – ein char enthält genau ein Zeichen, z. B. 'a'", line:st}; i++; toks.push({type:"char",value:ch==null?"":ch,line:st}); continue; }
+    if(c==="'"){ let st=line; i++; let ch; if(src[i]==="\\"){ const e=src[i+1]; ch = e==="n"?"\n":e==="t"?"\t":e==="0"?"\0":e; i+=2; } else { if(src[i]==="\n")line++; ch=src[i]; i++; } if(src[i]!=="'") throw {hamsterError:true, message:"Zeichen (') wurde nicht korrekt geschlossen – ein char enthält genau ein Zeichen, z. B. 'a'", line:st}; i++; toks.push({type:"char",value:(ch==null||ch==="")?0:ch.charCodeAt(0),line:st}); continue; }
     if(isIdStart(c)){ let id=""; while(i<src.length&&isId(src[i])){id+=src[i];i++;} push(KW.includes(id)?id:"ident",id); continue; }
     const two=src.substr(i,2);
     if(["&&","||","==","!=","<=",">=","++","--","+=","-="].includes(two)){ push("op",two); i+=2; continue; }
@@ -113,14 +113,12 @@ function parse(src){
     skipMods();
     if(tk().type==="ident"&&["class","import","package","interface","enum"].includes(tk().value))
       perr("Klassen-/import-Syntax wird hier nicht unterstützt – bitte nur Methoden und 'void main()' verwenden");
+    if(!looksLikeMethod())
+      perr(tk().type==="eof" ? "Es fehlt 'void main() { … }'." : "Dein Programm muss in einer Methode stehen – beginne mit 'void main() { … }'.");
     const methods={};
-    if(looksLikeMethod()){
-      while(tk().type!=="eof"){ skipMods(); if(tk().type==="eof")break; const m=method(); methods[m.name]=m; }
-      if(!methods.main) perr("Es fehlt 'void main() { … }'");
-      return {methods, main:methods.main.body};
-    }
-    const body=[]; while(tk().type!=="eof") body.push(statement());
-    return {methods, main:body};
+    while(tk().type!=="eof"){ skipMods(); if(tk().type==="eof")break; const m=method(); methods[m.name]=m; }
+    if(!methods.main) perr("Es fehlt 'void main() { … }'.");
+    return {methods, main:methods.main.body};
   }
   function startsType(){ const t=tk(); return t.type==="int"||t.type==="boolean"||t.type==="double"||t.type==="char"||(t.type==="ident"&&t.value==="String"); }
   function parseType(allowVoid){
@@ -201,7 +199,11 @@ function parse(src){
   function relE(){ let l=addE(); while(isOp("<")||isOp(">")||isOp("<=")||isOp(">=")){const op=toks[p++].value; l={kind:"bin",op,l,r:addE()};} return l; }
   function addE(){ let l=mulE(); while(isOp("+")||isOp("-")){const op=toks[p++].value; l={kind:"bin",op,l,r:mulE()};} return l; }
   function mulE(){ let l=unary(); while(isOp("*")||isOp("/")||isOp("%")){const op=toks[p++].value; l={kind:"bin",op,l,r:unary()};} return l; }
-  function unary(){ if(isOp("!")){p++; return {kind:"not",e:unary()};} if(isOp("-")){p++; return {kind:"neg",e:unary()};} if(isOp("+")){p++; return unary();} return postfix(); }
+  function unary(){
+    if(isOp("(") && toks[p+1] && (toks[p+1].type==="int"||toks[p+1].type==="double"||toks[p+1].type==="char") && toks[p+2] && toks[p+2].type==="op" && toks[p+2].value===")"){
+      const line=tk().line; p++; const to=tk().value; p++; eatOp(")"); return {kind:"cast", to, e:unary(), line};
+    }
+    if(isOp("!")){p++; return {kind:"not",e:unary()};} if(isOp("-")){p++; return {kind:"neg",e:unary()};} if(isOp("+")){p++; return unary();} return postfix(); }
   function postfix(){
     let node=primary();
     while(true){
@@ -253,6 +255,8 @@ function compileCheck(ast){
       case "newarray": return e.base+"[]";
       case "arraylit": return "arraylit";
       case "member": return e.name==="length"?"int":"unknown";
+      case "cast": return e.to;
+      case "toStr": return "String";
       case "call": { const b=BRET[e.name]; if(b!==undefined) return b; const m=methods[e.name]; return m?((m.retType||"void")+(m.retArr?"[]":"")):"unknown"; }
       case "mcall": {
         if(e.obj&&e.obj.kind==="ref"&&e.obj.name==="Territorium") return e.name==="mauerDa"?"boolean":"int";
@@ -263,7 +267,7 @@ function compileCheck(ast){
         const op=e.op;
         if(op==="&&"||op==="||"||op==="=="||op==="!="||op==="<"||op===">"||op==="<="||op===">=") return "boolean";
         const lt=tOf(e.l,scopes), rt=tOf(e.r,scopes);
-        if(op==="+"){ if(lt==="String"||rt==="String"||lt==="char"||rt==="char") return "String"; if(lt==="unknown"||rt==="unknown") return "unknown"; if(lt==="double"||rt==="double") return "double"; return "int"; }
+        if(op==="+"){ if(lt==="String"||rt==="String") return "String"; if(lt==="unknown"||rt==="unknown") return "unknown"; if(lt==="double"||rt==="double") return "double"; return "int"; }
         if(lt==="unknown"||rt==="unknown") return "unknown";
         if(lt==="double"||rt==="double") return "double";
         return "int";
@@ -271,7 +275,14 @@ function compileCheck(ast){
     }
     return "unknown";
   }
-  const assignableTo=(T,S)=>{ if(T===S) return true; if(T==="double"&&S==="int") return true; return false; };
+  // Java-Zuweisungsregeln: int->double, char->int/double (Widening), int-Literal->char (Konstante).
+  const canAssign=(T,S,src)=>{
+    if(T===S) return true;
+    if(T==="double" && (S==="int"||S==="char")) return true;
+    if(T==="int" && S==="char") return true;
+    if(T==="char" && S==="int") return !!(src && src.kind==="int");
+    return false;
+  };
   function checkAssign(T,src,scopes,line){
     if(src&&src.kind==="arraylit"){
       if(T.slice(-2)!=="[]") cerr("Eine Werteliste { … } kann nur einem Array-Typ (z. B. int[]) zugewiesen werden.", line);
@@ -279,16 +290,24 @@ function compileCheck(ast){
     }
     const S=tOf(src,scopes);
     if(S==="unknown"||T==="unknown"||T==="object"||S==="arraylit") return;
-    if(!assignableTo(T,S)) cerr("Einer Variablen vom Typ "+T+" kann kein Wert vom Typ "+S+" zugewiesen werden.", line);
+    if(!canAssign(T,S,src)){
+      if(T==="char"&&S==="int") cerr("Einer char-Variablen kann eine int-Zahl nur als Literal (z. B. char c = 65;) oder mit (char)-Umwandlung zugewiesen werden.", line);
+      else cerr("Einer Variablen vom Typ "+T+" kann kein Wert vom Typ "+S+" zugewiesen werden.", line);
+    }
   }
+  // Wandelt char/double-Ausdrücke in String-Kontexten (schreib, '+'-Verkettung) typgerecht um.
+  const strWrap=(node,scopes)=>{ const t=tOf(node,scopes); if(t==="char") return {kind:"toStr", how:"char", e:node}; if(t==="double") return {kind:"toStr", how:"double", e:node}; return node; };
   function chkExpr(e,scopes){
     if(!e||typeof e!=="object") return;
     switch(e.kind){
       case "int": case "num": case "char": case "bool": case "str": break;
       case "ref": if(lookup(e.name,scopes)===undefined) cerr("Die Variable '"+e.name+"' wurde nicht deklariert. Deklariere sie zuerst mit einem Datentyp, z. B. \"int "+e.name+";\".", e.line); break;
       case "call": for(const a of e.args) chkExpr(a,scopes); break;
-      case "bin": chkExpr(e.l,scopes); chkExpr(e.r,scopes); if(e.op==="/"){ const lt=tOf(e.l,scopes), rt=tOf(e.r,scopes); e.intDiv = !(lt==="double"||rt==="double"); } break;
-      case "not": case "neg": chkExpr(e.e,scopes); break;
+      case "bin": chkExpr(e.l,scopes); chkExpr(e.r,scopes);
+        if(e.op==="/"){ const lt=tOf(e.l,scopes), rt=tOf(e.r,scopes); e.intDiv = !(lt==="double"||rt==="double"); }
+        else if(e.op==="+" && tOf(e,scopes)==="String"){ e.l=strWrap(e.l,scopes); e.r=strWrap(e.r,scopes); }
+        break;
+      case "not": case "neg": case "cast": case "toStr": chkExpr(e.e,scopes); break;
       case "index": chkExpr(e.arr,scopes); chkExpr(e.idx,scopes); break;
       case "newarray": chkExpr(e.size,scopes); break;
       case "arraylit": for(const x of e.elems) chkExpr(x,scopes); break;
@@ -315,7 +334,10 @@ function compileCheck(ast){
       case "arrset":
         if(lookup(s.name,scopes)===undefined) cerr("Die Variable '"+s.name+"' wurde nicht deklariert (z. B. \"int[] "+s.name+";\").", s.line);
         chkExpr(s.idx,scopes); chkExpr(s.value,scopes); break;
-      case "callstmt": for(const a of s.call.args) chkExpr(a,scopes); break;
+      case "callstmt":
+        for(const a of s.call.args) chkExpr(a,scopes);
+        if(s.call.name==="schreib") s.call.args = s.call.args.map(a=>strWrap(a,scopes));
+        break;
       case "block": chkBlock(s.body,scopes,inLoop); break;
       case "if": chkExpr(s.cond,scopes); chkBlock(s.then,scopes,inLoop); if(s.els) chkBlock(s.els,scopes,inLoop); break;
       case "while": chkExpr(s.cond,scopes); chkBlock(s.body,scopes,true); break;
@@ -381,6 +403,7 @@ function makeInterpreter(ast, model){
     *liesZeichenkette(a){ return prompt(a[0]!=null?fmt(a[0]):"Eingabe:")||""; },
   };
   const fmt=x=> typeof x==="boolean"?(x?"true":"false"): Array.isArray(x)?("["+x.map(fmt).join(", ")+"]"): (x==null?"null":String(x));
+  const dstr=v=>{ const n=Number(v); return (isFinite(n)&&Number.isInteger(n))? n.toFixed(1) : String(n); };   // double-Ausgabe: 123 -> "123.0"
   function* evalCall(node, env){
     if(node.line) curLine=node.line;
     const args=[]; for(const a of node.args) args.push(yield* evalE(a, env));
@@ -401,20 +424,22 @@ function makeInterpreter(ast, model){
       case "ref": return env.get(n.name);
       case "call": return yield* evalCall(n, env);
       case "index":{ const a=yield* evalE(n.arr,env); const i=yield* evalE(n.idx,env); if(!Array.isArray(a)) throw rerr("Kein Array – Zugriff mit [] nicht möglich"); if(i<0||i>=a.length) throw rerr("Array-Index "+i+" außerhalb der Grenzen (Länge "+a.length+")"); return a[i]; }
-      case "newarray":{ let sz=yield* evalE(n.size,env); sz=Math.max(0,sz|0); const def=n.base==="boolean"?false:(n.base==="String"||n.base==="char")?"":0; const a=[]; for(let i=0;i<sz;i++)a.push(def); return a; }
+      case "newarray":{ let sz=yield* evalE(n.size,env); sz=Math.max(0,sz|0); const def=n.base==="boolean"?false:n.base==="String"?"":0; const a=[]; for(let i=0;i<sz;i++)a.push(def); return a; }
       case "arraylit":{ const a=[]; for(const e of n.elems) a.push(yield* evalE(e,env)); return a; }
       case "member":{ const o=yield* evalE(n.obj,env); if((Array.isArray(o)||typeof o==="string")&&n.name==="length") return o.length; throw rerr("Unbekanntes Attribut ."+n.name); }
       case "mcall":{
         if(n.obj.kind==="ref"&&n.obj.name==="Territorium"){ const args=[]; for(const a of n.args) args.push(yield* evalE(a,env)); return territorium(n.name,args); }
         const o=yield* evalE(n.obj,env); const args=[]; for(const a of n.args) args.push(yield* evalE(a,env));
         if(typeof o==="string"){
-          switch(n.name){ case "length":return o.length; case "equals":return o===String(args[0]); case "charAt":return o.charAt(args[0])||""; case "substring":return args.length>1?o.substring(args[0],args[1]):o.substring(args[0]); case "indexOf":return o.indexOf(String(args[0])); case "toUpperCase":return o.toUpperCase(); case "toLowerCase":return o.toLowerCase(); default: throw rerr("Unbekannte String-Methode ."+n.name+"()"); }
+          switch(n.name){ case "length":return o.length; case "equals":return o===String(args[0]); case "charAt":{ const ch=o.charAt(args[0]); return ch?ch.charCodeAt(0):0; } case "substring":return args.length>1?o.substring(args[0],args[1]):o.substring(args[0]); case "indexOf":return o.indexOf(String(args[0])); case "toUpperCase":return o.toUpperCase(); case "toLowerCase":return o.toLowerCase(); default: throw rerr("Unbekannte String-Methode ."+n.name+"()"); }
         }
         if(Array.isArray(o)&&n.name==="length") return o.length;
         throw rerr("Unbekannte Methode ."+n.name+"()");
       }
       case "not": return !(yield* evalE(n.e, env));
       case "neg": return -(yield* evalE(n.e, env));
+      case "cast":{ const v=Number(yield* evalE(n.e, env)); if(n.to==="int") return Math.trunc(v); if(n.to==="char") return ((Math.trunc(v)%65536)+65536)%65536; return v; }
+      case "toStr":{ const v=yield* evalE(n.e, env); return n.how==="char" ? String.fromCharCode(((Math.trunc(Number(v))%65536)+65536)%65536) : dstr(v); }
       case "bin":{
         if(n.op==="&&"){ return (yield* evalE(n.l,env)) ? !!(yield* evalE(n.r,env)) : false; }
         if(n.op==="||"){ return (yield* evalE(n.l,env)) ? true : !!(yield* evalE(n.r,env)); }
@@ -435,7 +460,7 @@ function makeInterpreter(ast, model){
     switch(s.kind){
       case "block": yield* execList(s.body, new Env(env)); break;
       case "empty": break;
-      case "vardecl":{ let v; if(s.init) v=yield* evalE(s.init,env); else if(s.isArr) v=null; else v=(s.varType==="boolean"?false:(s.varType==="String"||s.varType==="char")?"":0); env.declare(s.name,v); yield {line:s.line}; break; }
+      case "vardecl":{ let v; if(s.init) v=yield* evalE(s.init,env); else if(s.isArr) v=null; else v=(s.varType==="boolean"?false:s.varType==="String"?"":0); env.declare(s.name,v); yield {line:s.line}; break; }
       case "arrset":{ const a=env.get(s.name); if(!Array.isArray(a)) throw {hamsterError:true,message:s.name+" ist kein Array",line:s.line}; const i=yield* evalE(s.idx,env); let v=yield* evalE(s.value,env); if(i<0||i>=a.length) throw {hamsterError:true,message:"Array-Index "+i+" außerhalb der Grenzen (Länge "+a.length+")",line:s.line}; if(s.op==="+=")v=a[i]+v; else if(s.op==="-=")v=a[i]-v; a[i]=v; yield {line:s.line}; break; }
       case "assign":{ let v=yield* evalE(s.value,env); if(s.op==="+=")v=env.get(s.name)+v; else if(s.op==="-=")v=env.get(s.name)-v; env.set(s.name,v); yield {line:s.line}; break; }
       case "incdec":{ env.set(s.name, env.get(s.name)+(s.op==="++"?1:-1)); yield {line:s.line}; break; }
