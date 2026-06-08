@@ -312,6 +312,39 @@ function gradeSubmission(code, territory, goal){
   try{ return HamsterEngine.checkGoal(goal, runHeadless(code, territory))===true; }
   catch(e){ return false; }
 }
+/* Für das Aufgaben-Dashboard: einen Code (re-)ausführen und das Ergebnis kategorisieren. */
+function classifySubmission(code, territory, goal){
+  // Phase 1: Übersetzen (Lexer/Parser/Typprüfung) -> alles hier ist ein Compilerfehler
+  try{ const ast=HamsterEngine.parse(code); HamsterEngine.compileCheck(ast); }
+  catch(e){ return {status:"compile", msg:(e&&e.message)||String(e), line:(e&&e.line)||null}; }
+  // Phase 2: Ausführen — prompt() headless stummschalten (sonst Dialog je Abgabe mit liesZahl/…)
+  let m; const _prompt=window.prompt; window.prompt=function(){ return null; };
+  try{ m = runHeadless(code, territory); }
+  catch(e){
+    const msg=(e&&e.message)||String(e), line=(e&&e.line)||null;
+    if(e&&e.type) return {status:"runtime", type:e.type, msg, line};
+    if(/Zu viele Schritte|Endlosschleife/.test(msg)) return {status:"loop", msg, line};
+    if(/Unbekannte[rs]? (Befehl|Methode|Variable)/.test(msg)) return {status:"unknown", msg, line};
+    return {status:"runtime", type:null, msg, line};
+  }finally{ window.prompt=_prompt; }
+  if(!goal||!goal.type) return {status:"ok"};   // läuft fehlerfrei, kein Auto-Check
+  try{ return HamsterEngine.checkGoal(goal, m)===true ? {status:"passed"} : {status:"goalMissed"}; }
+  catch(_){ return {status:"goalMissed"}; }
+}
+function errorCategory(c){
+  if(!c || c.status==="passed" || c.status==="ok") return null;
+  if(c.status==="goalMissed") return {key:"goal", icon:"🎯", label:"Läuft, aber Ziel nicht erreicht"};
+  if(c.status==="compile") return {key:"compile", icon:"⌨️", label:"Compilerfehler"};
+  if(c.status==="loop") return {key:"loop", icon:"🔁", label:"Endlosschleife"};
+  if(c.status==="unknown") return {key:"unknown", icon:"❓", label:"Unbekannter Befehl / Variable (Tippfehler?)"};
+  const t=c.type||"", msg=c.msg||"";
+  if(t==="MauerDaException") return {key:"mauer", icon:"🧱", label:"Gegen die Mauer gelaufen"};
+  if(t==="KachelLeerException") return {key:"kachel", icon:"🌾", label:"Kein Korn zum Fressen"};
+  if(t==="MaulLeerException") return {key:"maul", icon:"👄", label:"Kein Korn im Maul"};
+  if(/Division/.test(msg)) return {key:"div", icon:"➗", label:"Division durch 0"};
+  if(/außerhalb|Grenzen|Index/.test(msg)) return {key:"array", icon:"🔢", label:"Array-Index-Fehler"};
+  return {key:"runtime", icon:"⚠️", label:"Laufzeitfehler"};
+}
 /* Aus Lösungscode + Territorium den Soll-Zustand (Körner-Endlage, Hamster-Endpos) berechnen */
 function computeSolutionGoal(code, territory, matchHamster){
   const m=runHeadless(code, territory);
@@ -999,6 +1032,7 @@ async function teacherClassView(classId){
           <button class="abtn" data-up="${a.id}" title="nach oben">↑</button>
           <button class="abtn" data-down="${a.id}" title="nach unten">↓</button>
           <button class="abtn" data-pub="${a.id}" data-on="${a.published?1:0}" title="${a.published?'verbergen (Entwurf)':'veröffentlichen'}">${a.published?'👁️':'🚀'}</button>
+          <button class="abtn" data-stats="${a.id}" title="Statistik / Dashboard">📊</button>
           <button class="abtn" data-sample="${a.id}" title="Musterlösungen verwalten">★</button>
           <button class="abtn" data-edit="${a.id}" title="bearbeiten">✏️</button>
           <button class="abtn" data-del="${a.id}" title="löschen">🗑️</button>
@@ -1037,6 +1071,7 @@ async function teacherClassView(classId){
   document.getElementById("btnNewAssign").onclick = ()=> assignmentEditorPage(classId, ()=>teacherClassView(classId));
   document.querySelectorAll("[data-edit]").forEach(b=> b.onclick=()=>{ const a=assignments.find(x=>x.id===b.dataset.edit); assignmentEditorPage(classId, ()=>teacherClassView(classId), a); });
   document.querySelectorAll("[data-sample]").forEach(b=> b.onclick=()=>{ const a=assignments.find(x=>x.id===b.dataset.sample); sampleManager(a, classId); });
+  document.querySelectorAll("[data-stats]").forEach(b=> b.onclick=()=>{ const a=assignments.find(x=>x.id===b.dataset.stats); assignmentStats(a, classId); });
   document.querySelectorAll("[data-up]").forEach(b=> b.onclick=async()=>{ await moveAssignment(assignments, b.dataset.up, -1); teacherClassView(classId); });
   document.querySelectorAll("[data-down]").forEach(b=> b.onclick=async()=>{ await moveAssignment(assignments, b.dataset.down, 1); teacherClassView(classId); });
   document.querySelectorAll("[data-pub]").forEach(b=> b.onclick=async()=>{ try{ await api.updateAssignment(b.dataset.pub, { published: b.dataset.on!=="1" }); teacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } });
@@ -1079,6 +1114,97 @@ function buildMatrix(roster, assignments, subs, q){
   return `<div class="matrix-wrap"><table class="matrix"><thead><tr><th class="stu">Schüler:in</th>${head}</tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 function nmeOfSafe(s){ return String(s||"").toLowerCase(); }
+
+/* ---------- Lehrer: Aufgaben-Statistik / Dashboard ---------- */
+async function assignmentStats(assignment, classId){
+  shell(`<div class="center-load"><span class="spin"></span>Statistik…</div>`);
+  let roster=[], subs=[];
+  try{ roster = await api.classRoster(classId); subs = await api.classSubmissions([assignment.id]); }
+  catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
+  const goal = assignment.goal;
+  const byStu = new Map();   // student_id -> Abgaben (neueste zuerst, wie classSubmissions liefert)
+  for(const s of subs){ if(!byStu.has(s.student_id)) byStu.set(s.student_id, []); byStu.get(s.student_id).push(s); }
+  const nameOf = sid=>{ const r=roster.find(x=>x.student_id===sid); return (r&&r.profiles&&(r.profiles.display_name||r.profiles.username))||"?"; };
+  const N = roster.length;
+  let bearbeitet=0, bestanden=0, totalAtt=0; const dist={a:0,b:0,c:0}; const perStu=[];
+  for(const r of roster){
+    const list = byStu.get(r.student_id)||[];
+    const current = list.find(x=>x.is_current) || list[0] || null;
+    const passed = current ? current.passed===true : false;
+    if(list.length>0){ bearbeitet++; totalAtt+=list.length; if(passed) bestanden++; if(list.length===1)dist.a++; else if(list.length<=3)dist.b++; else dist.c++; }
+    perStu.push({sid:r.student_id, name:nameOf(r.student_id), current, passed, attempts:list.length});
+  }
+  const offen = N - bearbeitet, nichtBestanden = bearbeitet - bestanden;
+  const quote = N? Math.round(bestanden/N*100) : 0;
+  const avg = bearbeitet? (totalAtt/bearbeitet) : 0;
+  const hasGoal = !!(goal && goal.type);
+  const seg=(n,color,title)=> n>0?`<div title="${title}: ${n}" style="flex:${n};background:${color}"></div>`:"";
+  const barInner = hasGoal
+    ? seg(bestanden,"var(--green)","bestanden")+seg(nichtBestanden,"var(--gold)","abgegeben, nicht bestanden")+seg(offen,"var(--line2)","nicht bearbeitet")
+    : seg(bearbeitet,"var(--green)","abgegeben")+seg(offen,"var(--line2)","nicht bearbeitet");
+  const barLegend = hasGoal
+    ? `🟩 bestanden ${bestanden} · 🟨 nicht bestanden ${nichtBestanden} · ⬜ offen ${offen}`
+    : `🟩 abgegeben ${bearbeitet} · ⬜ offen ${offen} · <span style="font-style:italic">kein Auto-Check für diese Aufgabe</span>`;
+  const statBest = hasGoal ? `<div class="card"><div class="meta">✅ Bestanden</div><div style="font-weight:900;font-size:20px;margin-top:2px">${bestanden} / ${N} <span class="muted" style="font-size:13px">(${quote} %)</span></div></div>` : "";
+  document.getElementById("view").innerHTML = `
+    <div class="page-head"><button class="crumb" id="back">← zurück zur Klasse</button></div>
+    <div class="page-head" style="margin-top:0"><h2>📊 ${esc(assignment.title)}</h2></div>
+    <div class="card" style="margin-bottom:14px;padding:11px 16px"><span class="muted" style="font-size:13px">🎯 Ziel: ${esc(goalLabel(goal))} · ${N} Schüler:in${N!==1?"nen":""}</span></div>
+    <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(175px,1fr));margin-bottom:14px">
+      ${statBest}
+      <div class="card"><div class="meta">📝 Bearbeitet</div><div style="font-weight:900;font-size:20px;margin-top:2px">${bearbeitet} / ${N}</div></div>
+      <div class="card"><div class="meta">🔁 Ø Versuche</div><div style="font-weight:900;font-size:20px;margin-top:2px">${bearbeitet? avg.toFixed(1):"–"}</div></div>
+      <div class="card"><div class="meta">📊 Versuche</div><div style="font-weight:800;margin-top:6px;font-size:13px">1×: ${dist.a} · 2–3×: ${dist.b} · 4+×: ${dist.c}</div></div>
+    </div>
+    <div class="card" style="margin-bottom:14px">
+      <div style="display:flex;height:22px;border-radius:8px;overflow:hidden;box-shadow:0 0 0 1px var(--line) inset">${barInner}</div>
+      <div class="muted" style="font-size:12px;margin-top:7px">${barLegend}</div>
+    </div>
+    <div class="page-head" style="margin:0 0 8px"><h3 style="margin:0">🔎 Häufigste Fehler</h3><div class="spacer"></div>
+      <span class="acts"><button class="abtn on" id="stCur" title="jede letzte Abgabe – wo steht die Klasse jetzt">Aktueller Stand</button><button class="abtn" id="stAll" title="alle Abgaben – häufigste Stolpersteine insgesamt">Alle Versuche</button></span></div>
+    <div class="card" style="margin-bottom:10px;padding:9px 14px"><span class="muted" style="font-size:12.5px">Die Engine spielt die Abgaben hier noch einmal durch und gruppiert, woran es scheitert. Klick auf einen Namen öffnet die Live-Korrektur.</span></div>
+    <div id="statsErrors"></div>`;
+  document.getElementById("back").onclick = ()=> teacherClassView(classId);
+  let mode="current", runSeq=0;
+  const renderErrors = async ()=>{
+    const host=document.getElementById("statsErrors"); if(!host) return;
+    const my=++runSeq;
+    host.innerHTML=`<div class="center-load"><span class="spin"></span>analysiere Abgaben…</div>`;
+    let items=[];
+    if(mode==="current"){ for(const p of perStu){ if(p.current && p.passed!==true) items.push({sid:p.sid, sub:p.current}); } }
+    else { for(const r of roster){ for(const s of (byStu.get(r.student_id)||[])) items.push({sid:r.student_id, sub:s}); } }
+    const buckets=new Map();
+    for(let i=0;i<items.length;i++){
+      const it=items[i];
+      const c=classifySubmission(it.sub.code, assignment.territory, goal);
+      const cat=errorCategory(c);
+      if(cat){
+        if(!buckets.has(cat.key)) buckets.set(cat.key,{cat,count:0,students:new Map(),lines:new Map()});
+        const b=buckets.get(cat.key); b.count++;
+        if(!b.students.has(it.sid)) b.students.set(it.sid,nameOf(it.sid));
+        if(c.line) b.lines.set(c.line,(b.lines.get(c.line)||0)+1);
+      }
+      if(i%6===5){ await new Promise(r=>setTimeout(r,0)); if(my!==runSeq) return; }
+    }
+    if(my!==runSeq) return;   // ein neuerer Lauf hat begonnen (Modus gewechselt)
+    const sorted=[...buckets.values()].sort((a,b)=>b.count-a.count);
+    if(!items.length){ host.innerHTML=`<div class="empty" style="padding:20px"><span class="ic">📭</span>${mode==="current"?"Alle bearbeiteten Abgaben sind bestanden – keine offenen Fehler. 🎉":"Noch keine Abgaben."}</div>`; return; }
+    if(!sorted.length){ host.innerHTML=`<div class="empty" style="padding:20px"><span class="ic">🎉</span>Keine Fehler – alle analysierten Abgaben laufen ${goal&&goal.type?"und erreichen das Ziel":"fehlerfrei"}.</div>`; return; }
+    host.innerHTML=`<div class="list">${sorted.map(b=>{
+      const names=[...b.students.entries()];
+      const topLine=[...b.lines.entries()].sort((x,y)=>y[1]-x[1])[0];
+      const lineHint = topLine && topLine[1]>=2 ? ` <span class="badge gold">oft in Zeile ${topLine[0]}</span>` : "";
+      return `<div class="row" style="align-items:flex-start"><span class="grow">
+        <span class="t">${b.cat.icon} ${esc(b.cat.label)} <span class="badge gray">${b.count}×</span>${lineHint}</span>
+        <span class="s" style="margin-top:5px;display:block">${names.map(([sid,nm])=>`<button class="btn btn-sm btn-ghost stOpen" data-sid="${sid}" style="margin:2px 5px 2px 0">${esc(nm)}</button>`).join("")}</span>
+      </span></div>`;
+    }).join("")}</div>`;
+    host.querySelectorAll(".stOpen").forEach(btn=> btn.onclick=()=>{ const sid=btn.dataset.sid; const hist=byStu.get(sid)||[]; if(hist.length) reviewSubmission(assignment, hist, nameOf(sid), classId); });
+  };
+  document.getElementById("stCur").onclick=()=>{ if(mode==="current")return; mode="current"; document.getElementById("stCur").classList.add("on"); document.getElementById("stAll").classList.remove("on"); renderErrors(); };
+  document.getElementById("stAll").onclick=()=>{ if(mode==="all")return; mode="all"; document.getElementById("stAll").classList.add("on"); document.getElementById("stCur").classList.remove("on"); renderErrors(); };
+  renderErrors();
+}
 
 /* ---------- Lehrer: Schüler-Profil (Überblick, Aufgaben, Notizen) ---------- */
 async function studentProfilePage(classId, studentId, studentName, username){
@@ -1420,6 +1546,13 @@ function fmtDate(s){ try{ const d=new Date(s); return d.toLocaleDateString("de-D
    Neueste Version zuerst. Bei jedem Deploy oben einen Eintrag ergänzen.
    ============================================================================ */
 const PATCH_NOTES = [
+  { v:"2.5", date:"8. Juni 2026", title:"Aufgaben-Statistik & Klassen-Dashboard", items:[
+    `Jede Aufgabe hat jetzt einen <b>📊-Knopf</b> (in der Aufgabenliste der Klasse) → öffnet ein <b>Dashboard</b>, das auf einen Blick zeigt, wo die Klasse steht und woran sie hängt.`,
+    `<b>Kennzahlen oben:</b> Bestanden-Quote (z. B. „14 / 22"), wie viele die Aufgabe überhaupt bearbeitet haben, die <b>durchschnittliche Anzahl Versuche</b> und eine Verteilung (1× / 2–3× / 4+×). Ein <b>Fortschrittsbalken</b> zeigt farbig: 🟩 bestanden · 🟨 abgegeben, aber nicht bestanden · ⬜ noch nicht bearbeitet.`,
+    `<b>🔎 Häufigste Fehler</b> – das Herzstück: Die App spielt die Abgaben automatisch noch einmal durch und <b>gruppiert, woran es scheitert</b> – z. B. „🧱 gegen die Mauer gelaufen", „🌾 kein Korn zum Fressen", „⌨️ Compilerfehler", „🔁 Endlosschleife" oder „🎯 läuft, aber Ziel nicht erreicht". Jede Gruppe zeigt die <b>Anzahl</b> und die betroffenen <b>Namen</b>; wenn viele in derselben Zeile scheitern, erscheint ein Hinweis „oft in Zeile X".`,
+    `<b>Direkt zur Korrektur:</b> Ein Klick auf einen Namen öffnet sofort die Live-Korrektur dieser Abgabe.`,
+    `<b>Umschalter</b> „Aktueller Stand" (jede letzte Abgabe – wo steht die Klasse jetzt) ↔ „Alle Versuche" (häufigste Stolpersteine insgesamt).`,
+  ]},
   { v:"2.4", date:"8. Juni 2026", title:"Java-Datentypen, Typprüfung & Editor-Komfort", items:[
     `Editor: <b>Rückgängig/Wiederholen</b> mit <b>Strg+Z</b> und <b>Strg+Y</b>.`,
     `Neue Datentypen <b>double</b> (Kommazahlen, z. B. <code>1.5</code>) und <b>char</b> (einzelnes Zeichen, z. B. <code>'A'</code>).`,
@@ -1514,7 +1647,7 @@ function patchNotesDialog(){
 }
 
 /* ---------- Footer: Versionsnummer (aus den Patch-Notes) + Copyright ---------- */
-const APP_BUILD = "2026-06-08 22:06";   // letztes Update (im Patch-Notes-Dialog angezeigt)
+const APP_BUILD = "2026-06-08 22:48";   // letztes Update (im Patch-Notes-Dialog angezeigt)
 (function(){ const f=document.getElementById("appfoot"); if(f){ const v=(typeof PATCH_NOTES!=="undefined"&&PATCH_NOTES[0])?PATCH_NOTES[0].v:""; f.textContent='© 2026 Laurens Offinger · Version '+v; } })();
 
 boot();
