@@ -57,7 +57,9 @@ const CHEAT_HTML = `
   <div class="crow"><code>int wert() { … }</code><span>eigene Funktion mit Zahl</span></div>
   <h4>Datentypen &amp; Variablen</h4>
   <div class="crow"><code>int i = 0;</code><span>Ganzzahl (immer mit Typ!)</span></div>
+  <div class="crow"><code>double x = 1.5;</code><span>Kommazahl</span></div>
   <div class="crow"><code>boolean b = true;</code><span>Wahrheitswert</span></div>
+  <div class="crow"><code>char c = 'A';</code><span>einzelnes Zeichen</span></div>
   <div class="crow"><code>String s = "Hallo";</code><span>Text-Variable</span></div>
   <div class="crow"><code>int[] a = new int[5];</code><span>Array anlegen</span></div>
   <h4>Territorium</h4>
@@ -70,7 +72,7 @@ const CHEAT_HTML = `
 /* ---------- LEXER ---------- */
 function lex(src){
   const toks=[]; let i=0, line=1;
-  const KW=["void","boolean","int","if","else","while","do","for","return","break","continue","true","false","new"];
+  const KW=["void","boolean","int","double","char","if","else","while","do","for","return","break","continue","true","false","new"];
   const push=(type,value)=>toks.push({type,value,line});
   const isIdStart=c=>/[A-Za-z_À-ſ]/.test(c);
   const isId=c=>/[A-Za-z0-9_À-ſ]/.test(c);
@@ -81,7 +83,10 @@ function lex(src){
     if(c==="/"&&src[i+1]==="/"){ while(i<src.length&&src[i]!=="\n")i++; continue; }
     if(c==="/"&&src[i+1]==="*"){ i+=2; while(i<src.length&&!(src[i]==="*"&&src[i+1]==="/")){ if(src[i]==="\n")line++; i++; } i+=2; continue; }
     if(c==='"'){ let s="",st=line; i++; while(i<src.length&&src[i]!=='"'){ if(src[i]==="\\"){ const n=src[i+1]; s+= n==="n"?"\n":n==="t"?"\t":n; i+=2; } else { if(src[i]==="\n")line++; s+=src[i]; i++; } } if(i>=src.length) throw {hamsterError:true, message:"Text wurde nicht geschlossen – es fehlt ein abschließendes \"", line:st}; i++; toks.push({type:"string",value:s,line:st}); continue; }
-    if(/[0-9]/.test(c)){ let n=""; while(i<src.length&&/[0-9]/.test(src[i])){n+=src[i];i++;} push("int",parseInt(n,10)); continue; }
+    if(/[0-9]/.test(c)){ let n=""; while(i<src.length&&/[0-9]/.test(src[i])){n+=src[i];i++;}
+      if(src[i]==="."&&/[0-9]/.test(src[i+1])){ n+="."; i++; while(i<src.length&&/[0-9]/.test(src[i])){n+=src[i];i++;} push("num",parseFloat(n)); }
+      else push("int",parseInt(n,10)); continue; }
+    if(c==="'"){ let st=line; i++; let ch; if(src[i]==="\\"){ const e=src[i+1]; ch = e==="n"?"\n":e==="t"?"\t":e==="0"?"\0":e; i+=2; } else { if(src[i]==="\n")line++; ch=src[i]; i++; } if(src[i]!=="'") throw {hamsterError:true, message:"Zeichen (') wurde nicht korrekt geschlossen – ein char enthält genau ein Zeichen, z. B. 'a'", line:st}; i++; toks.push({type:"char",value:ch==null?"":ch,line:st}); continue; }
     if(isIdStart(c)){ let id=""; while(i<src.length&&isId(src[i])){id+=src[i];i++;} push(KW.includes(id)?id:"ident",id); continue; }
     const two=src.substr(i,2);
     if(["&&","||","==","!=","<=",">=","++","--","+=","-="].includes(two)){ push("op",two); i+=2; continue; }
@@ -117,10 +122,10 @@ function parse(src){
     const body=[]; while(tk().type!=="eof") body.push(statement());
     return {methods, main:body};
   }
-  function startsType(){ const t=tk(); return t.type==="int"||t.type==="boolean"||(t.type==="ident"&&t.value==="String"); }
+  function startsType(){ const t=tk(); return t.type==="int"||t.type==="boolean"||t.type==="double"||t.type==="char"||(t.type==="ident"&&t.value==="String"); }
   function parseType(allowVoid){
     const t=tk(); let base;
-    if(t.type==="int"||t.type==="boolean"){ base=t.value; p++; }
+    if(t.type==="int"||t.type==="boolean"||t.type==="double"||t.type==="char"){ base=t.value; p++; }
     else if(allowVoid&&t.type==="void"){ p++; return {base:"void",arr:false}; }
     else if(t.type==="ident"&&t.value==="String"){ base="String"; p++; }
     else perr("Typ erwartet");
@@ -129,13 +134,13 @@ function parse(src){
   }
   function declAhead(){
     const t=tk();
-    if(t.type==="int"||t.type==="boolean") return true;
+    if(t.type==="int"||t.type==="boolean"||t.type==="double"||t.type==="char") return true;
     if(toks[p+1]&&toks[p+1].type==="op"&&toks[p+1].value==="[") return !!(toks[p+2]&&toks[p+2].value==="]");
     return !!(toks[p+1]&&toks[p+1].type==="ident");
   }
   function looksLikeMethod(){
     const t=tk();
-    if(!(t.type==="void"||t.type==="int"||t.type==="boolean"||(t.type==="ident"&&t.value==="String"))) return false;
+    if(!(t.type==="void"||t.type==="int"||t.type==="boolean"||t.type==="double"||t.type==="char"||(t.type==="ident"&&t.value==="String"))) return false;
     let q=p+1;
     if(toks[q]&&toks[q].type==="op"&&toks[q].value==="["){ if(!(toks[q+1]&&toks[q+1].value==="]")) return false; q+=2; }
     return toks[q]&&toks[q].type==="ident"&&toks[q+1]&&toks[q+1].type==="op"&&toks[q+1].value==="(";
@@ -144,7 +149,7 @@ function parse(src){
     const line=tk().line; const ret=parseType(true); const name=eatId().value;
     eatOp("("); const params=[];
     if(!isOp(")")){ do{ const pty=parseType(false); params.push({type:pty.base,isArr:pty.arr,name:eatId().value}); }while(commaIf()); }
-    eatOp(")"); return {retType:ret.base,name,params,body:block(),line};
+    eatOp(")"); return {retType:ret.base,retArr:ret.arr,name,params,body:block(),line};
   }
   const commaIf=()=>{ if(isOp(",")){p++;return true;} return false; };
   function block(){ eatOp("{"); const b=[]; while(!isOp("}")){ if(tk().type==="eof")perr("'}' erwartet"); b.push(statement()); } eatOp("}"); return b; }
@@ -211,30 +216,78 @@ function parse(src){
   function primary(){
     const t=tk();
     if(t.type==="int"){p++; return {kind:"int",v:t.value};}
+    if(t.type==="num"){p++; return {kind:"num",v:t.value};}
+    if(t.type==="char"){p++; return {kind:"char",v:t.value};}
     if(t.type==="true"){p++; return {kind:"bool",v:true};}
     if(t.type==="false"){p++; return {kind:"bool",v:false};}
     if(t.type==="string"){p++; return {kind:"str",v:t.value};}
     if(isOp("(")){p++; const e=expr(); eatOp(")"); return e;}
     if(isOp("{")){ p++; const elems=[]; if(!isOp("}")){do{elems.push(expr());}while(commaIf());} eatOp("}"); return {kind:"arraylit",elems}; }
-    if(t.type==="new"){ p++; const bt=tk(); let base; if(bt.type==="int"||bt.type==="boolean"){base=bt.value;p++;} else if(bt.type==="ident"&&bt.value==="String"){base="String";p++;} else perr("nach 'new' wird ein Array-Typ erwartet (z. B. new int[5])"); eatOp("["); const size=expr(); eatOp("]"); return {kind:"newarray",base,size}; }
+    if(t.type==="new"){ p++; const bt=tk(); let base; if(bt.type==="int"||bt.type==="boolean"||bt.type==="double"||bt.type==="char"){base=bt.value;p++;} else if(bt.type==="ident"&&bt.value==="String"){base="String";p++;} else perr("nach 'new' wird ein Array-Typ erwartet (z. B. new int[5])"); eatOp("["); const size=expr(); eatOp("]"); return {kind:"newarray",base,size}; }
     if(t.type==="ident"){ const n=toks[p+1]; if(n.type==="op"&&n.value==="(") return call(); p++; return {kind:"ref",name:t.value,line:t.line}; }
     perr("Ausdruck erwartet");
   }
   return program();
 }
 
-/* ---------- COMPILE-CHECK (Semantik: Variablen müssen mit Datentyp deklariert sein) ---------- */
+/* ---------- COMPILE-CHECK (Semantik: Deklaration, TYPEN, Gültigkeitsbereiche) ----------
+   Prüft: Variablen mit Datentyp deklariert (vor Gebrauch); Zuweisungen passen zum Typ
+   (int/double/boolean/String/char + 1D-Arrays); keine doppelten lokalen Namen/Parameter;
+   break/continue nur in Schleifen. Annotiert '/' mit intDiv (Ganzzahl- vs. Kommadivision). */
 function compileCheck(ast){
-  const GLOBALS=new Set(["NORD","OST","SUED","WEST","BLAU","BLUE","ROT","RED","GRUEN","GREEN","GELB","YELLOW","CYAN","MAGENTA","ORANGE","PINK","GRAU","GRAY","WEISS","WHITE","Territorium"]);
+  const GLOBT={Territorium:"object"};
+  ["NORD","OST","SUED","WEST","BLAU","BLUE","ROT","RED","GRUEN","GREEN","GELB","YELLOW","CYAN","MAGENTA","ORANGE","PINK","GRAU","GRAY","WEISS","WHITE"].forEach(k=>GLOBT[k]="int");
+  const methods=ast.methods||{};
+  const BRET={vor:"void",linksUm:"void",gib:"void",nimm:"void",schreib:"void",vornFrei:"boolean",kornDa:"boolean",maulLeer:"boolean",getAnzahlKoerner:"int",getReihe:"int",getSpalte:"int",getBlickrichtung:"int",liesZahl:"int",liesZeichenkette:"String"};
   const cerr=(msg,line)=>{ throw {hamsterError:true, message:"Compilerfehler: "+msg, line}; };
-  const known=(name,scopes)=>{ if(GLOBALS.has(name)) return true; for(let i=scopes.length-1;i>=0;i--) if(scopes[i].has(name)) return true; return false; };
+  const lookup=(name,scopes)=>{ for(let i=scopes.length-1;i>=0;i--) if(scopes[i].has(name)) return scopes[i].get(name); if(name in GLOBT) return GLOBT[name]; return undefined; };
+  const inChain=(name,scopes)=>{ for(const sc of scopes) if(sc.has(name)) return true; return false; };
+  function tOf(e,scopes){
+    if(!e||typeof e!=="object") return "unknown";
+    switch(e.kind){
+      case "int": return "int"; case "num": return "double"; case "char": return "char"; case "str": return "String"; case "bool": return "boolean";
+      case "ref": { const t=lookup(e.name,scopes); return t||"unknown"; }
+      case "neg": return tOf(e.e,scopes)==="double"?"double":"int";
+      case "not": return "boolean";
+      case "index": { const at=tOf(e.arr,scopes); return at.slice(-2)==="[]"?at.slice(0,-2):"unknown"; }
+      case "newarray": return e.base+"[]";
+      case "arraylit": return "arraylit";
+      case "member": return e.name==="length"?"int":"unknown";
+      case "call": { const b=BRET[e.name]; if(b!==undefined) return b; const m=methods[e.name]; return m?((m.retType||"void")+(m.retArr?"[]":"")):"unknown"; }
+      case "mcall": {
+        if(e.obj&&e.obj.kind==="ref"&&e.obj.name==="Territorium") return e.name==="mauerDa"?"boolean":"int";
+        switch(e.name){ case "length":return "int"; case "charAt":return "char"; case "substring":return "String"; case "indexOf":return "int"; case "equals":return "boolean"; case "toUpperCase":case "toLowerCase":return "String"; }
+        return "unknown";
+      }
+      case "bin": {
+        const op=e.op;
+        if(op==="&&"||op==="||"||op==="=="||op==="!="||op==="<"||op===">"||op==="<="||op===">=") return "boolean";
+        const lt=tOf(e.l,scopes), rt=tOf(e.r,scopes);
+        if(op==="+"){ if(lt==="String"||rt==="String"||lt==="char"||rt==="char") return "String"; if(lt==="unknown"||rt==="unknown") return "unknown"; if(lt==="double"||rt==="double") return "double"; return "int"; }
+        if(lt==="unknown"||rt==="unknown") return "unknown";
+        if(lt==="double"||rt==="double") return "double";
+        return "int";
+      }
+    }
+    return "unknown";
+  }
+  const assignableTo=(T,S)=>{ if(T===S) return true; if(T==="double"&&S==="int") return true; return false; };
+  function checkAssign(T,src,scopes,line){
+    if(src&&src.kind==="arraylit"){
+      if(T.slice(-2)!=="[]") cerr("Eine Werteliste { … } kann nur einem Array-Typ (z. B. int[]) zugewiesen werden.", line);
+      const et=T.slice(0,-2); for(const el of src.elems) checkAssign(et,el,scopes,line); return;
+    }
+    const S=tOf(src,scopes);
+    if(S==="unknown"||T==="unknown"||T==="object"||S==="arraylit") return;
+    if(!assignableTo(T,S)) cerr("Einer Variablen vom Typ "+T+" kann kein Wert vom Typ "+S+" zugewiesen werden.", line);
+  }
   function chkExpr(e,scopes){
     if(!e||typeof e!=="object") return;
     switch(e.kind){
-      case "int": case "bool": case "str": break;
-      case "ref": if(!known(e.name,scopes)) cerr("Die Variable '"+e.name+"' wurde nicht deklariert. Deklariere sie zuerst mit einem Datentyp, z. B. \"int "+e.name+";\".", e.line); break;
+      case "int": case "num": case "char": case "bool": case "str": break;
+      case "ref": if(lookup(e.name,scopes)===undefined) cerr("Die Variable '"+e.name+"' wurde nicht deklariert. Deklariere sie zuerst mit einem Datentyp, z. B. \"int "+e.name+";\".", e.line); break;
       case "call": for(const a of e.args) chkExpr(a,scopes); break;
-      case "bin": chkExpr(e.l,scopes); chkExpr(e.r,scopes); break;
+      case "bin": chkExpr(e.l,scopes); chkExpr(e.r,scopes); if(e.op==="/"){ const lt=tOf(e.l,scopes), rt=tOf(e.r,scopes); e.intDiv = !(lt==="double"||rt==="double"); } break;
       case "not": case "neg": chkExpr(e.e,scopes); break;
       case "index": chkExpr(e.arr,scopes); chkExpr(e.idx,scopes); break;
       case "newarray": chkExpr(e.size,scopes); break;
@@ -243,28 +296,36 @@ function compileCheck(ast){
       case "mcall": if(!(e.obj&&e.obj.kind==="ref"&&e.obj.name==="Territorium")) chkExpr(e.obj,scopes); for(const a of e.args) chkExpr(a,scopes); break;
     }
   }
-  function chkBlock(list,scopes,inLoop){ const sc=new Set(); const s2=scopes.concat([sc]); for(const st of (list||[])) chkStmt(st,s2,sc,inLoop); }
+  const declType=s=> s.varType+(s.isArr?"[]":"");
+  function chkBlock(list,scopes,inLoop){ const sc=new Map(); const s2=scopes.concat([sc]); for(const st of (list||[])) chkStmt(st,s2,sc,inLoop); }
   function chkStmt(s,scopes,cur,inLoop){
     switch(s.kind){
-      case "vardecl": if(s.init) chkExpr(s.init,scopes); cur.add(s.name); break;
-      case "assign": case "incdec":
-        if(!known(s.name,scopes)) cerr("Die Variable '"+s.name+"' wurde nicht deklariert. Deklariere sie zuerst mit einem Datentyp, z. B. \"int "+s.name+";\".", s.line);
-        if(s.value) chkExpr(s.value,scopes); break;
+      case "vardecl":
+        if(inChain(s.name,scopes)) cerr("In diesem Gültigkeitsbereich gibt es bereits eine Variable oder einen Parameter namens '"+s.name+"'.", s.line);
+        if(s.init){ chkExpr(s.init,scopes); checkAssign(declType(s), s.init, scopes, s.line); }
+        cur.set(s.name, declType(s)); break;
+      case "assign": {
+        const vt=lookup(s.name,scopes);
+        if(vt===undefined) cerr("Die Variable '"+s.name+"' wurde nicht deklariert. Deklariere sie zuerst mit einem Datentyp, z. B. \"int "+s.name+";\".", s.line);
+        if(s.value) chkExpr(s.value,scopes);
+        if(s.op==="=" && vt!==undefined && s.value) checkAssign(vt, s.value, scopes, s.line);
+        break; }
+      case "incdec":
+        if(lookup(s.name,scopes)===undefined) cerr("Die Variable '"+s.name+"' wurde nicht deklariert. Deklariere sie zuerst mit einem Datentyp, z. B. \"int "+s.name+";\".", s.line); break;
       case "arrset":
-        if(!known(s.name,scopes)) cerr("Die Variable '"+s.name+"' wurde nicht deklariert (z. B. \"int[] "+s.name+";\").", s.line);
+        if(lookup(s.name,scopes)===undefined) cerr("Die Variable '"+s.name+"' wurde nicht deklariert (z. B. \"int[] "+s.name+";\").", s.line);
         chkExpr(s.idx,scopes); chkExpr(s.value,scopes); break;
       case "callstmt": for(const a of s.call.args) chkExpr(a,scopes); break;
       case "block": chkBlock(s.body,scopes,inLoop); break;
       case "if": chkExpr(s.cond,scopes); chkBlock(s.then,scopes,inLoop); if(s.els) chkBlock(s.els,scopes,inLoop); break;
       case "while": chkExpr(s.cond,scopes); chkBlock(s.body,scopes,true); break;
       case "dowhile": chkBlock(s.body,scopes,true); chkExpr(s.cond,scopes); break;
-      case "for":{ const fs=new Set(); const sc=scopes.concat([fs]); if(s.init) chkStmt(s.init,sc,fs,inLoop); if(s.cond) chkExpr(s.cond,sc); if(s.update) chkStmt(s.update,sc,fs,inLoop); chkBlock(s.body,sc,true); break; }
+      case "for":{ const fs=new Map(); const sc=scopes.concat([fs]); if(s.init) chkStmt(s.init,sc,fs,inLoop); if(s.cond) chkExpr(s.cond,sc); if(s.update) chkStmt(s.update,sc,fs,inLoop); chkBlock(s.body,sc,true); break; }
       case "break": case "continue": if(!inLoop) cerr("'"+s.kind+"' ist nur innerhalb einer Schleife (while, for, do) erlaubt.", s.line); break;
       case "return": if(s.value) chkExpr(s.value,scopes); break;
     }
   }
-  const methods=ast.methods||{};
-  for(const name in methods){ const m=methods[name]; const ps=new Set(); (m.params||[]).forEach(p=>ps.add(p.name)); chkBlock(m.body,[ps],false); }
+  for(const name in methods){ const m=methods[name]; const ps=new Map(); (m.params||[]).forEach(p=>ps.set(p.name, p.type+(p.isArr?"[]":""))); chkBlock(m.body,[ps],false); }
   if(ast.main && !methods.main) chkBlock(ast.main, [], false);
 }
 
@@ -336,11 +397,11 @@ function makeInterpreter(ast, model){
   }
   function* evalE(n, env){
     switch(n.kind){
-      case "int": case "bool": case "str": return n.v;
+      case "int": case "num": case "char": case "bool": case "str": return n.v;
       case "ref": return env.get(n.name);
       case "call": return yield* evalCall(n, env);
       case "index":{ const a=yield* evalE(n.arr,env); const i=yield* evalE(n.idx,env); if(!Array.isArray(a)) throw rerr("Kein Array – Zugriff mit [] nicht möglich"); if(i<0||i>=a.length) throw rerr("Array-Index "+i+" außerhalb der Grenzen (Länge "+a.length+")"); return a[i]; }
-      case "newarray":{ let sz=yield* evalE(n.size,env); sz=Math.max(0,sz|0); const def=n.base==="boolean"?false:n.base==="String"?"":0; const a=[]; for(let i=0;i<sz;i++)a.push(def); return a; }
+      case "newarray":{ let sz=yield* evalE(n.size,env); sz=Math.max(0,sz|0); const def=n.base==="boolean"?false:(n.base==="String"||n.base==="char")?"":0; const a=[]; for(let i=0;i<sz;i++)a.push(def); return a; }
       case "arraylit":{ const a=[]; for(const e of n.elems) a.push(yield* evalE(e,env)); return a; }
       case "member":{ const o=yield* evalE(n.obj,env); if((Array.isArray(o)||typeof o==="string")&&n.name==="length") return o.length; throw rerr("Unbekanntes Attribut ."+n.name); }
       case "mcall":{
@@ -360,7 +421,7 @@ function makeInterpreter(ast, model){
         const a=yield* evalE(n.l,env), b=yield* evalE(n.r,env);
         switch(n.op){
           case "+":return a+b; case "-":return a-b; case "*":return a*b;
-          case "/": if(b===0) throw rerr("Division durch 0"); return Math.trunc(a/b);
+          case "/": if(b===0) throw rerr("Division durch 0"); return (n.intDiv===false) ? (a/b) : Math.trunc(a/b);
           case "%": if(b===0) throw rerr("Division durch 0"); return a%b;
           case "<":return a<b; case ">":return a>b; case "<=":return a<=b; case ">=":return a>=b;
           case "==":return a===b; case "!=":return a!==b;
@@ -374,7 +435,7 @@ function makeInterpreter(ast, model){
     switch(s.kind){
       case "block": yield* execList(s.body, new Env(env)); break;
       case "empty": break;
-      case "vardecl":{ let v; if(s.init) v=yield* evalE(s.init,env); else if(s.isArr) v=null; else v=(s.varType==="boolean"?false:s.varType==="String"?"":0); env.declare(s.name,v); yield {line:s.line}; break; }
+      case "vardecl":{ let v; if(s.init) v=yield* evalE(s.init,env); else if(s.isArr) v=null; else v=(s.varType==="boolean"?false:(s.varType==="String"||s.varType==="char")?"":0); env.declare(s.name,v); yield {line:s.line}; break; }
       case "arrset":{ const a=env.get(s.name); if(!Array.isArray(a)) throw {hamsterError:true,message:s.name+" ist kein Array",line:s.line}; const i=yield* evalE(s.idx,env); let v=yield* evalE(s.value,env); if(i<0||i>=a.length) throw {hamsterError:true,message:"Array-Index "+i+" außerhalb der Grenzen (Länge "+a.length+")",line:s.line}; if(s.op==="+=")v=a[i]+v; else if(s.op==="-=")v=a[i]-v; a[i]=v; yield {line:s.line}; break; }
       case "assign":{ let v=yield* evalE(s.value,env); if(s.op==="+=")v=env.get(s.name)+v; else if(s.op==="-=")v=env.get(s.name)-v; env.set(s.name,v); yield {line:s.line}; break; }
       case "incdec":{ env.set(s.name, env.get(s.name)+(s.op==="++"?1:-1)); yield {line:s.line}; break; }
@@ -434,7 +495,7 @@ function toJSON(m){ return {rows:m.rows, cols:m.cols, walls:[...m.walls], grains
 /* ---------- Syntax-Highlight ---------- */
 const SETS={
   kw:new Set(["if","else","while","do","for","return","break","continue","new","public","private","static","final","class","import"]),
-  type:new Set(["int","boolean","void","String"]),
+  type:new Set(["int","double","char","boolean","void","String"]),
   lit:new Set(["true","false"]),
   cmd:new Set(["vor","linksUm","gib","nimm","schreib","init","main","liesZahl","liesZeichenkette"]),
   test:new Set(["vornFrei","kornDa","maulLeer","getReihe","getSpalte","getBlickrichtung","getAnzahlKoerner"]),
@@ -542,6 +603,7 @@ class HamsterView{
     this.showCommands = !!opts.commands;       // Befehls-Übersicht (Spickzettel) im Editor einblendbar
     this.initial = toModel(opts.model);
     this.model = cloneModel(this.initial);
+    this.hamDeg = DIRS[this.model.hamster.dir].deg;   // fortlaufender Drehwinkel (für korrekte Drehrichtung)
     this.code = opts.code!=null ? opts.code : "";
     this.onCode = opts.onCode || null;
     this.id = "hv"+(++_seq);
@@ -610,16 +672,20 @@ class HamsterView{
     if(hasEditor){
       this.code_=this.$(".code"); this.codeHL=this.$(".codeHL"); this.gutInner=this.$(".gutInner"); this.actLine=this.$(".actLine");
       this.code_.value=this.code; this._refreshEditor();
-      this.code_.addEventListener("input",()=>{ this.code=this.code_.value; this._refreshEditor(); if(this.onCode)this.onCode(this.code); });
+      this._undo=[this._snap()]; this._redo=[]; this._recT=null;   // Undo/Redo-Verlauf
+      this.code_.addEventListener("input",()=>{ this.code=this.code_.value; this._refreshEditor(); if(this.onCode)this.onCode(this.code); clearTimeout(this._recT); this._recT=setTimeout(()=>this._commit(),350); });
       this.code_.addEventListener("scroll",()=>this._syncScroll());
       this.code_.addEventListener("keydown",e=>{
         const ta=this.code_; if(ta.readOnly) return;
+        const ctrl=e.ctrlKey||e.metaKey;
+        if(ctrl && (e.key==="z"||e.key==="Z")){ e.preventDefault(); if(e.shiftKey) this._redoEdit(); else this._undoEdit(); return; }
+        if(ctrl && (e.key==="y"||e.key==="Y")){ e.preventDefault(); this._redoEdit(); return; }
         if(e.key==="Tab"){
           e.preventDefault();
           const s=ta.selectionStart, en=ta.selectionEnd;
           ta.value=ta.value.slice(0,s)+"\t"+ta.value.slice(en);
           ta.selectionStart=ta.selectionEnd=s+1;
-          this.code=ta.value; this._refreshEditor();
+          this.code=ta.value; this._refreshEditor(); this._commit();
         } else if(e.key==="Enter"){
           e.preventDefault();
           const s=ta.selectionStart, en=ta.selectionEnd, v=ta.value;
@@ -628,7 +694,7 @@ class HamsterView{
           const ins="\n"+indent;
           ta.value=v.slice(0,s)+ins+v.slice(en);
           ta.selectionStart=ta.selectionEnd=s+ins.length;
-          this.code=ta.value; this._refreshEditor();
+          this.code=ta.value; this._refreshEditor(); this._commit();
         }
       });
       this.$(".run").onclick=()=>this.run();
@@ -689,7 +755,10 @@ class HamsterView{
     this.ham.style.transitionDuration=animate?d+"ms":"0ms";
     const rot=this.ham.querySelector(".rot"); rot.style.transitionDuration=animate?d+"ms":"0ms";
     this.ham.style.transform=`translate(${hm.col*this.cell}px, ${hm.row*this.cell}px)`;
-    rot.style.setProperty("--deg",DIRS[hm.dir].deg+"deg"); rot.style.transform=`rotate(${DIRS[hm.dir].deg}deg)`;
+    const target=DIRS[hm.dir].deg;
+    if(animate){ let cur=((this.hamDeg%360)+360)%360; let delta=target-cur; if(delta>180)delta-=360; else if(delta<-180)delta+=360; this.hamDeg+=delta; }
+    else { this.hamDeg=target; }
+    rot.style.setProperty("--deg",this.hamDeg+"deg"); rot.style.transform=`rotate(${this.hamDeg}deg)`;
   }
 
   /* ----- Editor ----- */
@@ -772,7 +841,7 @@ class HamsterView{
       if(this.tool==="wall"){ if(h.row===r&&h.col===c)return; this.model.walls.add(key); this.model.grains.delete(key); }
       else if(this.tool==="eraser"){ this.model.walls.delete(key); this.model.grains.delete(key); }
       else if(this.tool==="korn"){ if(this.model.walls.has(key))return; const kn=this.$(".kornN")?Math.max(1,+this.$(".kornN").value||1):1; this.model.grains.set(key,(this.model.grains.get(key)||0)+kn); }
-      else if(this.tool==="hamster"){ if(this.model.walls.has(key))this.model.walls.delete(key); if(h.row===r&&h.col===c)h.dir=(h.dir+1)%4; else { h.row=r; h.col=c; } }
+      else if(this.tool==="hamster"){ if(this.model.walls.has(key))this.model.walls.delete(key); if(h.row===r&&h.col===c)h.dir=(h.dir+3)%4; else { h.row=r; h.col=c; } }
       this.initial=cloneModel(this.model); this._render();
     };
     const down=e=>{ const t=tileAt(e); if(!t)return; this.paint=true; apply(t.r,t.c); this.lastPaint=t.r+","+t.c; e.preventDefault(); };
@@ -791,9 +860,16 @@ class HamsterView{
     this._buildBoard(); this._render();
   }
 
+  /* ----- Undo / Redo ----- */
+  _snap(){ const t=this.code_; return {v:t.value, s:t.selectionStart, e:t.selectionEnd}; }
+  _commit(){ if(!this.code_) return; clearTimeout(this._recT); if(!this._undo) this._undo=[]; if(!this._redo) this._redo=[]; const top=this._undo[this._undo.length-1]; if(!top || top.v!==this.code_.value){ this._undo.push(this._snap()); if(this._undo.length>400) this._undo.shift(); this._redo=[]; } }
+  _restore(st){ const t=this.code_; t.value=st.v; t.selectionStart=st.s; t.selectionEnd=st.e; this.code=t.value; this._refreshEditor(); if(this.onCode)this.onCode(this.code); }
+  _undoEdit(){ if(!this.code_) return; this._commit(); if(this._undo.length>1){ this._redo.push(this._undo.pop()); this._restore(this._undo[this._undo.length-1]); } }
+  _redoEdit(){ if(!this.code_) return; if(this._redo&&this._redo.length){ const st=this._redo.pop(); this._undo.push(st); this._restore(st); } }
+
   /* ----- Öffentliche API ----- */
   getCode(){ return this.code_?this.code_.value:this.code; }
-  setCode(s){ this.code=s; if(this.code_){ this.code_.value=s; this._refreshEditor(); } }
+  setCode(s){ this.code=s; if(this.code_){ this.code_.value=s; this._refreshEditor(); this._undo=[this._snap()]; this._redo=[]; clearTimeout(this._recT); } }
   getTerritory(){ return toJSON(this.initial); }
   getModel(){ return cloneModel(this.model); }
   onFinish(fn){ this._onFinish=fn; }

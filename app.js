@@ -295,6 +295,7 @@ api.transferClass = async (classId, newOwnerId)=>{ const {error}=await sb.rpc("t
 api.removeMembership = async (classId, studentId)=>{ const {error}=await sb.from("memberships").delete().eq("class_id",classId).eq("student_id",studentId); if(error) throw error; };
 api.adminDeleteUser = async (userId)=>{ const {error}=await sb.rpc("admin_delete_user",{p_user:userId}); if(error) throw error; };
 api.setAdmin = async (userId, makeAdmin)=>{ const {error}=await sb.rpc("set_admin",{p_user:userId, p_make:!!makeAdmin}); if(error) throw error; };
+api.adminRenameUser = async (userId, newName)=>{ const {error}=await sb.rpc("admin_rename_user",{p_user:userId, p_new:newName}); if(error) throw error; };
 
 /* Headless: Code auf frischer Kopie des Territoriums laufen lassen -> Endmodell (wirft bei Fehler) */
 function runHeadless(code, territory){
@@ -854,15 +855,35 @@ function renderAdminUsers(q){
       acts += `<button class="btn btn-sm btn-ghost" data-pw="${u.id}" data-nm="${nm}" title="Passwort neu generieren">🔑</button> `;
       acts += `<button class="btn btn-sm btn-ghost" data-deluser="${u.id}" data-nm="${nm}" title="Account löschen">🗑️</button>`;
     }
+    if(u.id!==ME.id) acts = `<button class="btn btn-sm btn-ghost" data-rename="${u.id}" data-nm="${nm}" data-un="${esc(u.username)}" title="Benutzername ändern">✏️ Name</button> ` + acts;
     return `<tr><td class="stu clickable" data-prof="${u.id}" title="Profil ansehen">${nm}</td><td><code>${esc(u.username)}</code></td><td>${badge}</td><td style="white-space:nowrap">${acts}</td></tr>`;
   }).join("");
   el.innerHTML = list.length ? `<div style="overflow:auto"><table class="matrix" style="width:100%"><thead><tr><th class="stu">Name</th><th>Benutzername</th><th>Rolle</th><th>Aktionen</th></tr></thead><tbody>${rows}</tbody></table></div>`
     : `<div class="empty" style="padding:14px"><span class="ic">🔍</span>Niemand gefunden.</div>`;
   el.querySelectorAll("[data-prof]").forEach(b=> b.onclick=()=> adminUserProfile(b.dataset.prof));
+  el.querySelectorAll("[data-rename]").forEach(b=> b.onclick=()=> renameUserDialog(b.dataset.rename, b.dataset.nm, b.dataset.un));
   el.querySelectorAll("[data-pw]").forEach(b=> b.onclick=()=> resetStudentPw(b.dataset.pw, b.dataset.nm));
   el.querySelectorAll("[data-deluser]").forEach(b=> b.onclick=async()=>{ if(!confirm("Account von "+b.dataset.nm+" WIRKLICH löschen? Alle zugehörigen Daten – bei Lehrkräften auch ihre erstellten Klassen – werden entfernt. Nicht umkehrbar.")) return; try{ await api.adminDeleteUser(b.dataset.deluser); toast("Account gelöscht","ok"); adminHome(); }catch(e){ toast(e.message||"Fehler","err"); } });
   el.querySelectorAll("[data-mkadmin]").forEach(b=> b.onclick=async()=>{ if(!confirm(b.dataset.nm+" zum Admin machen? (Behält die Lehrer-Rolle.)")) return; try{ await api.setAdmin(b.dataset.mkadmin, true); toast("Ist jetzt Admin ⭐","ok"); adminHome(); }catch(e){ toast(e.message||"Fehler","err"); } });
   el.querySelectorAll("[data-unadmin]").forEach(b=> b.onclick=async()=>{ if(!confirm(b.dataset.nm+" den Admin-Rang entziehen?")) return; try{ await api.setAdmin(b.dataset.unadmin, false); toast("Admin-Rang entfernt","ok"); adminHome(); }catch(e){ toast(e.message||"Fehler","err"); } });
+}
+
+/* ---------- Admin: Benutzername ändern ---------- */
+function renameUserDialog(userId, name, currentUsername){
+  openModal(`<button class="x" onclick="closeModal()">✕</button>
+    <h3>Benutzername ändern</h3>
+    <p class="muted" style="margin:2px 0 14px">Für <b>${esc(name)}</b> (aktuell: <code>${esc(currentUsername)}</code>). Damit ändert sich auch der Login-Name.</p>
+    <div class="field"><label>Neuer Benutzername</label><input class="input" id="ruName" autocapitalize="none" spellcheck="false" style="font-family:monospace"></div>
+    <button class="btn btn-primary btn-lg" id="ruSave">Speichern</button>`);
+  const inp=document.getElementById("ruName"); inp.value=currentUsername||""; inp.focus(); inp.select();
+  const go=async()=>{ const v=inp.value.trim().toLowerCase();
+    if(!/^[a-z0-9_.\-]{3,20}$/.test(v)){ toast("3–20 Zeichen: a–z, 0–9, Punkt, _ , -","err"); return; }
+    if(v===currentUsername){ closeModal(); return; }
+    const btn=document.getElementById("ruSave"); btn.disabled=true; btn.textContent="Speichere…";
+    try{ await api.adminRenameUser(userId, v); closeModal(); toast("Benutzername geändert ✓","ok"); adminHome(); }
+    catch(e){ btn.disabled=false; btn.textContent="Speichern"; toast(e.message||"Fehler","err"); } };
+  document.getElementById("ruSave").onclick=go;
+  inp.addEventListener("keydown",e=>{ if(e.key==="Enter") go(); });
 }
 
 /* ---------- Admin: Nutzer-Profil (Schüler & Lehrkräfte) ---------- */
@@ -1107,11 +1128,15 @@ async function studentProfilePage(classId, studentId, studentName, username){
 }
 /* ---------- Lehrer: Schüler:innen per Liste importieren (Accounts + Passwörter) ---------- */
 function parseStudents(text){
+  // Pro Zeile: Vorname, Nachname [, Benutzername [, Passwort]]  (Komma oder Tab).
   return String(text||"").split(/\r?\n/).map(s=>s.trim()).filter(Boolean).map(line=>{
-    let parts = line.indexOf(",")>=0 ? line.split(",") : line.split(/\t+|\s{2,}|\s/);
-    parts = parts.map(p=>p.trim()).filter(Boolean);
-    const first=parts[0]||""; const last=parts.slice(1).join(" ");
-    return { first, last, name:(first+" "+last).trim() };
+    const hasDelim = line.indexOf(",")>=0 || /\t/.test(line);
+    const parts = (hasDelim ? line.split(/[,\t]/) : line.split(/\s{2,}|\s/)).map(p=>p.trim());
+    const first=parts[0]||"";
+    const last     = hasDelim ? (parts[1]||"") : parts.slice(1).join(" ");
+    const username = hasDelim ? (parts[2]||"") : "";
+    const password = hasDelim ? (parts[3]||"") : "";
+    return { first, last, name:(first+" "+last).trim(), username, password };
   }).filter(x=>x.first);
 }
 function slugUser(first,last){
@@ -1125,8 +1150,8 @@ function genPass(){ const a="abcdefghijkmnpqrstuvwxyz23456789"; let s=""; const 
 function importStudentsDialog(classId, classCode, onDone){
   openModal(`<button class="x" onclick="closeModal()">✕</button>
     <h3>📥 Schüler:innen importieren</h3>
-    <p class="muted" style="margin:2px 0 12px">Eine Person pro Zeile als <b>Vorname,Nachname</b> (Komma oder Tab, z. B. aus Excel kopiert). Benutzernamen &amp; Passwörter werden automatisch erzeugt – ohne E-Mail-Versand.</p>
-    <div class="field"><textarea class="input" id="impText" style="min-height:150px;font-family:monospace;font-size:13px" placeholder="Max,Mustermann&#10;Erika,Musterfrau"></textarea></div>
+    <p class="muted" style="margin:2px 0 12px">Eine Person pro Zeile (Komma oder Tab, z. B. aus Excel):<br><b>Vorname, Nachname</b> – optional zusätzlich <b>Benutzername</b> und <b>Passwort</b>. Leer gelassene Felder werden automatisch erzeugt. Kein E-Mail-Versand.</p>
+    <div class="field"><textarea class="input" id="impText" style="min-height:150px;font-family:monospace;font-size:13px" placeholder="Max, Mustermann&#10;Erika, Musterfrau, erika.m&#10;Tom, Klein, tom.k, geheim123"></textarea></div>
     <div id="impMsg" class="auth-msg" style="display:none"></div>
     <div style="display:flex;gap:10px"><button class="btn btn-ghost" id="impCancel" style="flex:none">Abbrechen</button><button class="btn btn-primary" id="impParse" style="flex:1">Weiter</button></div>
     <div id="impStage" style="margin-top:14px"></div>`, true);
@@ -1150,9 +1175,11 @@ async function doImport(list, classCode, classId, onDone){
   const used=new Set(), results=[];
   const setCount=n=>{ const c=document.getElementById("impCount"); if(c) c.textContent=String(n); };
   for(let i=0;i<list.length;i++){
-    const stu=list[i]; let base=slugUser(stu.first,stu.last), uname=base, k=1;
+    const stu=list[i];
+    const provided=(stu.username||"").toLowerCase().replace(/[^a-z0-9_.\-]/g,"");
+    let base=(provided.length>=3)?provided.slice(0,18):slugUser(stu.first,stu.last); let uname=base, k=1;
     while(used.has(uname)) uname=base+(++k);
-    const pass=genPass(); let res=null, ok=false, lastErr="";
+    const pass=(stu.password && stu.password.length>=6)?stu.password:genPass(); let res=null, ok=false, lastErr="";
     for(let attempt=0; attempt<6 && !ok; attempt++){
       res = await imp.auth.signUp({ email:userEmail(uname), password:pass });
       if(!res.error){ ok=true; break; }
@@ -1393,6 +1420,14 @@ function fmtDate(s){ try{ const d=new Date(s); return d.toLocaleDateString("de-D
    Neueste Version zuerst. Bei jedem Deploy oben einen Eintrag ergänzen.
    ============================================================================ */
 const PATCH_NOTES = [
+  { v:"2.4", date:"8. Juni 2026", title:"Java-Datentypen, Typprüfung & Editor-Komfort", items:[
+    `Editor: <b>Rückgängig/Wiederholen</b> mit <b>Strg+Z</b> und <b>Strg+Y</b>.`,
+    `Neue Datentypen <b>double</b> (Kommazahlen, z. B. <code>1.5</code>) und <b>char</b> (einzelnes Zeichen, z. B. <code>'A'</code>).`,
+    `<b>Typprüfung</b>: Einer Variablen kann nur ein passender Wert zugewiesen werden (z. B. kein <code>boolean</code> in eine <code>int</code>-Variable).`,
+    `Doppelte lokale Variablennamen oder Parameter werden jetzt als Fehler gemeldet (wie in Java).`,
+    `Der Hamster dreht sichtbar <b>links herum</b> – auch beim Einstellen der Blickrichtung in der Welt-Ansicht.`,
+    `Admin: <b>Benutzernamen ändern</b>; Schüler-Import optional <b>mit eigenem Benutzernamen und/oder Passwort</b>.`,
+  ]},
   { v:"2.3", date:"7. Juni 2026", title:"Editor robuster & Feinschliff", items:[
     `Klarere Fehlermeldungen im Editor: <b>break/continue</b> nur in Schleifen, <b>Endlosschleifen</b> und <b>endlose Rekursion</b> werden erkannt und sauber gestoppt, nicht geschlossene Texte (<code>"…</code>) werden gemeldet.`,
     `Laufzeitfehler markieren jetzt zuverlässiger die <b>betroffene Zeile</b>.`,
@@ -1479,7 +1514,7 @@ function patchNotesDialog(){
 }
 
 /* ---------- Footer: Versionsnummer (aus den Patch-Notes) + Copyright ---------- */
-const APP_BUILD = "2026-06-07 15:54";   // letztes Update (im Patch-Notes-Dialog angezeigt)
+const APP_BUILD = "2026-06-08 22:06";   // letztes Update (im Patch-Notes-Dialog angezeigt)
 (function(){ const f=document.getElementById("appfoot"); if(f){ const v=(typeof PATCH_NOTES!=="undefined"&&PATCH_NOTES[0])?PATCH_NOTES[0].v:""; f.textContent='© 2026 Laurens Offinger · Version '+v; } })();
 
 boot();
