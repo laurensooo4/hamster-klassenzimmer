@@ -232,6 +232,8 @@ const api = {
 /* ===== Aufgaben & Abgaben ===== */
 let modalView=null, pageView=null;
 let solveState=null, reviewState=null, sampleState=null, sandboxState=null, assignEditState=null;
+let classSecOpen={};   // pro Klasse {auf,mat,stu,leh}: Einklapp-Status, überlebt Re-Render, klassenspezifisch
+let _classActivity=null;                                      // Cache {class_id: ms} für die Sortierung "letzte Änderung"
 const DEFAULT_STARTER = "void main() {\n\t\n}";
 api.listAssignments = async (classId)=>{ const {data,error}=await sb.from("assignments").select("*").eq("class_id",classId).order("position").order("created_at"); if(error) throw error; return data||[]; };
 api.getAssignment = async (id)=>{ const {data,error}=await sb.from("assignments").select("*").eq("id",id).single(); if(error) throw error; return data; };
@@ -296,6 +298,10 @@ api.removeMembership = async (classId, studentId)=>{ const {error}=await sb.from
 api.adminDeleteUser = async (userId)=>{ const {error}=await sb.rpc("admin_delete_user",{p_user:userId}); if(error) throw error; };
 api.setAdmin = async (userId, makeAdmin)=>{ const {error}=await sb.rpc("set_admin",{p_user:userId, p_make:!!makeAdmin}); if(error) throw error; };
 api.adminRenameUser = async (userId, newName)=>{ const {error}=await sb.rpc("admin_rename_user",{p_user:userId, p_new:newName}); if(error) throw error; };
+api.setClassJoinOpen = async (classId, open)=>{ const {error}=await sb.from("classes").update({join_open:!!open}).eq("id",classId); if(error) throw error; };
+api.regenerateClassCode = async (classId)=>{ for(let t=0;t<6;t++){ const code=genCode(6); const {error}=await sb.from("classes").update({code}).eq("id",classId); if(!error) return code; if(!/duplicate|unique/i.test(error.message)) throw error; } throw new Error("Konnte keinen eindeutigen Code erzeugen."); };
+api.adminSetRole = async (userId, role)=>{ const {error}=await sb.rpc("admin_set_role",{p_user:userId, p_role:role}); if(error) throw error; };
+api.adminSetDisplayName = async (userId, name)=>{ const {error}=await sb.rpc("admin_set_display_name",{p_user:userId, p_display:name}); if(error) throw error; };
 
 /* Headless: Code auf frischer Kopie des Territoriums laufen lassen -> Endmodell (wirft bei Fehler) */
 function runHeadless(code, territory){
@@ -853,12 +859,13 @@ async function adminHome(){
       <div id="admClasses" style="margin-top:12px"></div></div>
     <div class="card">
       <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px"><h3 style="margin:0">👥 Nutzer:innen <span class="badge gray">${users.length}</span> <span class="muted" style="font-weight:600;font-size:12px">· ${tN} Lehrkräfte · ${sN} Schüler:innen${aN?" · "+aN+" Admin":""}</span></h3><div style="flex:1"></div>
-        <input class="input" id="admUsrSearch" placeholder="🔍 Name · Benutzername" style="max-width:260px"></div>
+        <button class="btn btn-ghost btn-sm" id="admImport" style="margin-right:8px">📥 Importieren</button><input class="input" id="admUsrSearch" placeholder="🔍 Name · Benutzername" style="max-width:260px"></div>
       <div id="admUsers" style="margin-top:12px"></div></div>`;
   document.getElementById("admBack").onclick = teacherHome;
   document.getElementById("btnNewClass").onclick = newClassDialog;
   const cs=document.getElementById("admClsSearch"), us=document.getElementById("admUsrSearch");
   cs.oninput=()=> renderAdminClasses(cs.value); us.oninput=()=> renderAdminUsers(us.value);
+  document.getElementById("admImport").onclick = ()=> adminImportDialog();
   renderAdminClasses(""); renderAdminUsers("");
 }
 function renderAdminClasses(q){
@@ -868,7 +875,7 @@ function renderAdminClasses(q){
   const list=adminState.classes.filter(c=> !q || (c.name||"").toLowerCase().includes(q)||(c.code||"").toLowerCase().includes(q)||tname(c).toLowerCase().includes(q));
   el.innerHTML = list.length ? `<div class="grid">${list.map(c=>`
       <div class="card click" data-id="${c.id}"><h3>${esc(c.name)}</h3>
-        <div class="meta">Code: <b>${esc(c.code)}</b> · 👩‍🏫 ${esc(tname(c)||"–")}${c.sandbox_enabled?" · 🧪":""}</div></div>`).join("")}</div>`
+        <div class="meta">Code: <b>${esc(c.code)}</b> · 👩‍🏫 ${esc(tname(c)||"–")}</div></div>`).join("")}</div>`
     : `<div class="empty" style="padding:14px"><span class="ic">🔍</span>Keine Klasse gefunden.</div>`;
   el.querySelectorAll(".card.click").forEach(c=> c.onclick=()=>{ viewFromAdmin=true; teacherClassView(c.dataset.id); });
 }
@@ -888,7 +895,7 @@ function renderAdminUsers(q){
       acts += `<button class="btn btn-sm btn-ghost" data-pw="${u.id}" data-nm="${nm}" title="Passwort neu generieren">🔑</button> `;
       acts += `<button class="btn btn-sm btn-ghost" data-deluser="${u.id}" data-nm="${nm}" title="Account löschen">🗑️</button>`;
     }
-    if(u.id!==ME.id) acts = `<button class="btn btn-sm btn-ghost" data-rename="${u.id}" data-nm="${nm}" data-un="${esc(u.username)}" title="Benutzername ändern">✏️ Name</button> ` + acts;
+    if(u.id!==ME.id) acts = `<button class="btn btn-sm btn-ghost" data-rename="${u.id}" data-nm="${nm}" data-un="${esc(u.username)}" title="Name & Benutzername ändern">✏️ Bearbeiten</button> ` + acts;
     return `<tr><td class="stu clickable" data-prof="${u.id}" title="Profil ansehen">${nm}</td><td><code>${esc(u.username)}</code></td><td>${badge}</td><td style="white-space:nowrap">${acts}</td></tr>`;
   }).join("");
   el.innerHTML = list.length ? `<div style="overflow:auto"><table class="matrix" style="width:100%"><thead><tr><th class="stu">Name</th><th>Benutzername</th><th>Rolle</th><th>Aktionen</th></tr></thead><tbody>${rows}</tbody></table></div>`
@@ -903,20 +910,33 @@ function renderAdminUsers(q){
 
 /* ---------- Admin: Benutzername ändern ---------- */
 function renameUserDialog(userId, name, currentUsername){
+  const sp=String(name||"").trim().split(/\s+/); const first0=sp.shift()||""; const last0=sp.join(" ");
   openModal(`<button class="x" onclick="closeModal()">✕</button>
-    <h3>Benutzername ändern</h3>
-    <p class="muted" style="margin:2px 0 14px">Für <b>${esc(name)}</b> (aktuell: <code>${esc(currentUsername)}</code>). Damit ändert sich auch der Login-Name.</p>
-    <div class="field"><label>Neuer Benutzername</label><input class="input" id="ruName" autocapitalize="none" spellcheck="false" style="font-family:monospace"></div>
+    <h3>Nutzer:in bearbeiten</h3>
+    <p class="muted" style="margin:2px 0 14px">Vor- und Nachname sowie Benutzername (= Login-Name) ändern.</p>
+    <div class="field"><label>Vorname</label><input class="input" id="ruFirst" maxlength="40"></div>
+    <div class="field"><label>Nachname</label><input class="input" id="ruLast" maxlength="40"></div>
+    <div class="field"><label>Benutzername</label><input class="input" id="ruName" autocapitalize="none" spellcheck="false" style="font-family:monospace"></div>
     <button class="btn btn-primary btn-lg" id="ruSave">Speichern</button>`);
-  const inp=document.getElementById("ruName"); inp.value=currentUsername||""; inp.focus(); inp.select();
-  const go=async()=>{ const v=inp.value.trim().toLowerCase();
-    if(!/^[a-z0-9_.\-]{3,20}$/.test(v)){ toast("3–20 Zeichen: a–z, 0–9, Punkt, _ , -","err"); return; }
-    if(v===currentUsername){ closeModal(); return; }
+  const fi=document.getElementById("ruFirst"), la=document.getElementById("ruLast"), inp=document.getElementById("ruName");
+  fi.value=first0; la.value=last0; inp.value=currentUsername||""; fi.focus(); fi.select();
+  const go=async()=>{
+    const u=inp.value.trim().toLowerCase();
+    const disp=(fi.value.trim()+" "+la.value.trim()).trim();
+    const origDisp=String(name||"").replace(/\s+/g," ").trim();   // gleiche Normalisierung wie disp -> kein Schreib-Write bei reiner Whitespace-Differenz
+    if(!/^[a-z0-9_.\-]{3,20}$/.test(u)){ toast("Benutzername: 3–20 Zeichen: a–z, 0–9, Punkt, _ , -","err"); return; }
+    if(!disp){ toast("Bitte einen Vor- und/oder Nachnamen eingeben.","err"); return; }
+    const unchanged = (u===currentUsername) && (disp===origDisp);
+    if(unchanged){ closeModal(); return; }
     const btn=document.getElementById("ruSave"); btn.disabled=true; btn.textContent="Speichere…";
-    try{ await api.adminRenameUser(userId, v); closeModal(); toast("Benutzername geändert ✓","ok"); adminHome(); }
-    catch(e){ btn.disabled=false; btn.textContent="Speichern"; toast(e.message||"Fehler","err"); } };
+    try{
+      if(u!==currentUsername) await api.adminRenameUser(userId, u);
+      if(disp!==origDisp) await api.adminSetDisplayName(userId, disp);
+      closeModal(); toast("Gespeichert ✓","ok"); adminHome();
+    }catch(e){ btn.disabled=false; btn.textContent="Speichern"; toast(e.message||"Fehler","err"); }
+  };
   document.getElementById("ruSave").onclick=go;
-  inp.addEventListener("keydown",e=>{ if(e.key==="Enter") go(); });
+  [fi,la,inp].forEach(el=> el.addEventListener("keydown",e=>{ if(e.key==="Enter") go(); }));
 }
 
 /* ---------- Admin: Nutzer-Profil (Schüler & Lehrkräfte) ---------- */
@@ -966,26 +986,70 @@ async function adminUserProfile(userId){
 /* ============================================================================
    LEHRER-ANSICHT
    ============================================================================ */
+/* ---------- Klassen-Übersicht: Suche + Sortierung (Lehrer:innen & Schüler:innen) ---------- */
+function classSearchSortControls(){
+  return `<input class="input" id="clsSearch" placeholder="🔍 Klasse suchen" style="max-width:220px">
+    <div class="spacer"></div>
+    <select class="input" id="clsSort" style="max-width:230px">
+      <option value="created-desc">Sortieren: Neueste zuerst</option>
+      <option value="created-asc">Älteste zuerst</option>
+      <option value="name-asc">Name A–Z</option>
+      <option value="name-desc">Name Z–A</option>
+      <option value="activity">Letzte Änderung</option>
+    </select>`;
+}
+async function loadClassActivity(){
+  if(_classActivity) return _classActivity;
+  try{ const { data } = await sb.rpc("class_activity"); const m={}; (data||[]).forEach(r=> m[r.class_id]=new Date(r.last_at).getTime()); _classActivity=m; }
+  catch(e){ _classActivity={}; }
+  return _classActivity;
+}
+function sortClasses(arr, key){
+  const a=arr.slice(); const nm=c=>(c.name||"").toLowerCase(); const created=c=> new Date(c.created_at).getTime();
+  if(key==="name-asc") a.sort((x,y)=> nm(x).localeCompare(nm(y),"de"));
+  else if(key==="name-desc") a.sort((x,y)=> nm(y).localeCompare(nm(x),"de"));
+  else if(key==="created-asc") a.sort((x,y)=> created(x)-created(y));
+  else if(key==="activity"){ const m=_classActivity||{}; a.sort((x,y)=> (m[y.id]||created(y))-(m[x.id]||created(x))); }
+  else a.sort((x,y)=> created(y)-created(x));   // created-desc (Default)
+  return a;
+}
+function wireClassOverview(classes, cardHtml, onOpen, emptyHtml){
+  const host=document.getElementById("clsHost"); if(!host) return;
+  let q="", sortKey="created-desc";
+  const paint=()=>{
+    let list=classes.slice(); const qq=q.trim().toLowerCase();
+    if(qq) list=list.filter(c=> (c.name||"").toLowerCase().includes(qq) || (c.code||"").toLowerCase().includes(qq));
+    list=sortClasses(list, sortKey);
+    host.innerHTML = list.length ? `<div class="grid">${list.map(cardHtml).join("")}</div>`
+      : (qq ? `<div class="empty" style="padding:14px"><span class="ic">🔍</span>Keine Klasse gefunden.</div>` : (emptyHtml||""));
+    host.querySelectorAll(".card.click").forEach(c=> c.onclick=()=> onOpen(c.dataset.id));
+  };
+  const se=document.getElementById("clsSearch"); if(se) se.oninput=()=>{ q=se.value; paint(); };
+  const so=document.getElementById("clsSort"); if(so) so.onchange=async()=>{ sortKey=so.value; if(sortKey==="activity" && !_classActivity){ so.disabled=true; await loadClassActivity(); so.disabled=false; } paint(); };
+  paint();
+}
+
 async function teacherHome(){
   shell(`<div class="center-load"><span class="spin"></span>Klassen werden geladen…</div>`);
+  _classActivity=null;   // bei jedem Übersichts-Aufruf frisch laden (Aktivitäts-Sortierung)
   let classes=[];
   try{ classes = await api.myTeacherClasses(); }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
-  const cards = classes.length ? `<div class="grid">${classes.map(c=>`
-      <div class="card click" data-id="${c.id}">
-        <h3>${esc(c.name)}</h3>
-        <div class="meta">Code: <b>${esc(c.code)}</b></div>
-      </div>`).join("")}</div>`
-    : `<div class="empty"><span class="ic">📚</span>Noch keine Klassen. Erstelle deine erste Klasse!</div>`;
   document.getElementById("view").innerHTML = `
     <div class="page-head"><h2>Meine Klassen</h2><div class="spacer"></div>
       <button class="btn btn-ghost" id="btnSandbox">🧪 Sandbox</button>
       <button class="btn btn-ghost" id="btnTemplates" style="margin-left:8px">📋 Vorlagen</button>
       <button class="btn btn-primary" id="btnNewClass" style="margin-left:8px">+ Neue Klasse</button></div>
-    ${cards}`;
+    ${classes.length>1?`<div class="page-head" style="margin:0 0 12px">${classSearchSortControls()}</div>`:""}
+    <div id="clsHost"></div>`;
   document.getElementById("btnSandbox").onclick = ()=> sandboxHome(null);
   document.getElementById("btnTemplates").onclick = templatesPage;
   document.getElementById("btnNewClass").onclick = newClassDialog;
-  document.querySelectorAll(".card.click").forEach(c=> c.onclick=()=>{ viewFromAdmin=false; teacherClassView(c.dataset.id); });
+  wireClassOverview(classes, c=>`
+      <div class="card click" data-id="${c.id}">
+        <h3>${esc(c.name)}</h3>
+        <div class="meta">Code: <b>${esc(c.code)}</b></div>
+      </div>`, id=>{ viewFromAdmin=false; teacherClassView(id); },
+    `<div class="empty"><span class="ic">📚</span>Noch keine Klassen. Erstelle deine erste Klasse!</div>`);
 }
 function newClassDialog(){
   openModal(`<button class="x" onclick="closeModal()">✕</button>
@@ -1003,10 +1067,12 @@ function newClassDialog(){
 
 async function teacherClassView(classId){
   shell(`<div class="center-load"><span class="spin"></span>Klasse wird geladen…</div>`);
+  const secOpen = classSecOpen[classId] || (classSecOpen[classId]={auf:true, mat:true, stu:true, leh:true});
   let cls, roster=[];
   try{
     const { data } = await sb.from("classes").select("*").eq("id",classId).single();
     cls=data; roster = await api.classRoster(classId);
+    roster.sort((a,b)=>{ const na=((a.profiles&&(a.profiles.display_name||a.profiles.username))||"").toLowerCase(), nb=((b.profiles&&(b.profiles.display_name||b.profiles.username))||"").toLowerCase(); return na.localeCompare(nb,"de"); });
   }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
   if(!cls){ document.getElementById("view").innerHTML=errBox({message:"Klasse nicht gefunden."}); return; }
   let teachers=[]; try{ teachers = await api.classTeachersNamed(classId); }catch(e){ teachers=[]; }
@@ -1043,26 +1109,28 @@ async function teacherClassView(classId){
     <div class="page-head" style="margin-top:0">
       <h2>${esc(cls.name)} <button class="btn btn-ghost btn-sm" id="btnRename" title="Klasse umbenennen" style="vertical-align:middle">✏️</button></h2>
       <div class="spacer"></div>
-      <button class="btn btn-ghost btn-sm" id="btnSandbox" title="Freien Sandbox-Modus für Schüler:innen an/aus">${cls.sandbox_enabled?"🧪 Sandbox: an":"🧪 Sandbox: aus"}</button>
-      <span class="codechip" title="Einlade-Code" style="margin-left:8px">🔑 ${esc(cls.code)} <button class="btn btn-sm btn-ghost" id="copyCode" style="margin-left:4px">Kopieren</button></span>
+      <span class="codechip" title="Einlade-Code" style="${cls.join_open===false?'opacity:.55;':''}">🔑 ${esc(cls.code)}${cls.join_open===false?' <span class="badge gray" title="Beitritt mit diesem Code ist deaktiviert">aus</span>':''} <button class="btn btn-sm btn-ghost" id="copyCode" style="margin-left:4px">Kopieren</button></span>
+      ${canTeam?`<button class="btn btn-ghost btn-sm" id="btnCodeToggle" style="margin-left:8px" title="${cls.join_open===false?'Beitritt mit diesem Code wieder erlauben':'Beitritt mit diesem Code deaktivieren'}">${cls.join_open===false?'🔓 Aktivieren':'🚫 Code deaktivieren'}</button><button class="btn btn-ghost btn-sm" id="btnCodeNew" style="margin-left:6px" title="Neuen Code erzeugen – der alte wird ungültig">🔄 Neuer Code</button>`:''}
       ${canTeam?`<button class="btn btn-ghost btn-sm" id="btnDeleteClass" style="margin-left:8px;color:#e63a3a" title="Klasse löschen">🗑️ Löschen</button>`:(iAmCoTeacher?`<button class="btn btn-ghost btn-sm" id="btnLeaveClass" style="margin-left:8px;color:#e63a3a" title="Klasse verlassen">🚪 Klasse verlassen</button>`:"")}
     </div>
     <div class="card" style="margin-bottom:14px">
-      <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px"><h3 style="margin:0">🎒 Schüler:innen <span class="badge gray">${roster.length}</span></h3><div style="flex:1"></div><button class="btn btn-ghost btn-sm" id="btnImport">📥 Importieren</button></div>
-      <div style="margin-top:12px">${rosterHtml}</div></div>
+      <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px"><span class="sectoggle" data-sec="auf" style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;user-select:none"><span class="secarrow">${secOpen.auf?"▼":"▶"}</span><h3 style="margin:0">📝 Aufgaben <span class="badge gray">${assignments.length}</span></h3></span><div style="flex:1"></div><button class="btn btn-blue btn-sm" id="btnNewAssign">+ Aufgabe stellen</button></div>
+      <div id="sec-auf" style="margin-top:12px${secOpen.auf?"":";display:none"}">${assignHtml}</div></div>
     <div class="card" style="margin-bottom:14px">
-      <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px"><h3 style="margin:0">👩‍🏫 Lehrkräfte <span class="badge gray">${teachers.length}</span></h3><div style="flex:1"></div>${canTeam?'<button class="btn btn-ghost btn-sm" id="btnTeachers">+ verwalten</button>':''}</div>
-      <div class="list" style="margin-top:12px">${teachers.length?teachers.map(t=>`<div class="row"><span class="chip"><span class="av">${esc(initials(t.display_name||t.username))}</span>${esc(t.display_name||t.username)}</span><div class="grow"></div>${t.is_owner?'<span class="badge blue">Ersteller:in</span>':'<span class="badge gray">Co-Lehrkraft</span>'}</div>`).join(""):'<div class="muted" style="font-size:13px">—</div>'}</div></div>
+      <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px"><span class="sectoggle" data-sec="mat" style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;user-select:none"><span class="secarrow">${secOpen.mat?"▼":"▶"}</span><h3 style="margin:0">📊 Abgabe-Matrix</h3></span><div style="flex:1"></div></div>
+      <div id="sec-mat" style="margin-top:12px${secOpen.mat?"":";display:none"}">${(assignments.length&&roster.length)?`<div style="display:flex;margin-bottom:10px"><div style="flex:1"></div><input class="input" id="matrixSearch" placeholder="🔍 Schüler:in suchen" style="max-width:240px"></div>`:""}<div id="matrixHost"></div></div></div>
+    <div class="card" style="margin-bottom:14px">
+      <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px"><span class="sectoggle" data-sec="stu" style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;user-select:none"><span class="secarrow">${secOpen.stu?"▼":"▶"}</span><h3 style="margin:0">🎒 Schüler:innen <span class="badge gray">${roster.length}</span></h3></span><div style="flex:1"></div><button class="btn btn-ghost btn-sm" id="btnImport">📥 Importieren</button></div>
+      <div id="sec-stu" style="margin-top:12px${secOpen.stu?"":";display:none"}">${rosterHtml}</div></div>
     <div class="card" style="margin-bottom:16px">
-      <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px"><h3 style="margin:0">📝 Aufgaben <span class="badge gray">${assignments.length}</span></h3>
-        <div style="flex:1"></div><button class="btn btn-blue btn-sm" id="btnNewAssign">+ Aufgabe stellen</button></div>
-      <div style="margin-top:12px">${assignHtml}</div></div>
-    <div class="page-head" style="margin:0 0 10px"><h3 style="margin:0">📊 Abgabe-Matrix</h3><div class="spacer"></div>${(assignments.length&&roster.length)?`<input class="input" id="matrixSearch" placeholder="🔍 Schüler:in suchen" style="max-width:240px">`:""}</div>
-    <div id="matrixHost"></div>`;
+      <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px"><span class="sectoggle" data-sec="leh" style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;user-select:none"><span class="secarrow">${secOpen.leh?"▼":"▶"}</span><h3 style="margin:0">👩‍🏫 Lehrkräfte <span class="badge gray">${teachers.length}</span></h3></span><div style="flex:1"></div>${canTeam?'<button class="btn btn-ghost btn-sm" id="btnTeachers">+ verwalten</button>':''}</div>
+      <div id="sec-leh" class="list" style="margin-top:12px${secOpen.leh?"":";display:none"}">${teachers.length?teachers.map(t=>`<div class="row"><span class="chip"><span class="av">${esc(initials(t.display_name||t.username))}</span>${esc(t.display_name||t.username)}</span><div class="grow"></div>${t.is_owner?'<span class="badge blue">Ersteller:in</span>':'<span class="badge gray">Co-Lehrkraft</span>'}</div>`).join(""):'<div class="muted" style="font-size:13px">—</div>'}</div></div>`;
   document.getElementById("back").onclick = ()=> (viewFromAdmin?adminHome():teacherHome());
   document.getElementById("copyCode").onclick = ()=>{ if(navigator.clipboard) navigator.clipboard.writeText(cls.code); toast("Code kopiert: "+cls.code,"ok"); };
-  document.getElementById("btnSandbox").onclick = async ()=>{ try{ await api.setSandboxEnabled(classId, !cls.sandbox_enabled); toast(cls.sandbox_enabled?"Sandbox deaktiviert":"Sandbox aktiviert 🧪","ok"); teacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } };
   document.getElementById("btnRename").onclick = ()=> renameClassDialog(classId, cls.name);
+  { const bt=document.getElementById("btnCodeToggle"); if(bt) bt.onclick=async()=>{ const disabling=(cls.join_open!==false); if(disabling){ if(!confirm(`Beitritt für „${cls.name}" deaktivieren?\n\nMit dem Code ${cls.code} kann danach niemand mehr neu beitreten. Bereits beigetretene Schüler:innen bleiben in der Klasse.`)) return; } try{ await api.setClassJoinOpen(classId, !disabling); toast(disabling?"Beitritt deaktiviert 🚫":"Beitritt wieder aktiv 🔓","ok"); teacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } }; }
+  { const bn=document.getElementById("btnCodeNew"); if(bn) bn.onclick=async()=>{ if(!confirm(`Neuen Einlade-Code für „${cls.name}" erzeugen?\n\nDer bisherige Code ${cls.code} wird sofort ungültig – verteile danach den neuen Code. Bereits beigetretene Schüler:innen bleiben in der Klasse.`)) return; try{ const nc=await api.regenerateClassCode(classId); toast("Neuer Code: "+nc,"ok"); teacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } }; }
+  document.querySelectorAll(".sectoggle[data-sec]").forEach(t=> t.onclick=()=>{ const k=t.dataset.sec; secOpen[k]=!secOpen[k]; const body=document.getElementById("sec-"+k); if(body) body.style.display=secOpen[k]?"":"none"; const ar=t.querySelector(".secarrow"); if(ar) ar.textContent=secOpen[k]?"▼":"▶"; });
   { const bd=document.getElementById("btnDeleteClass"); if(bd) bd.onclick=async()=>{ if(!confirm(`Klasse „${cls.name}" wirklich löschen? Alle Aufgaben, Abgaben und Zuordnungen dieser Klasse werden unwiderruflich entfernt.`)) return; try{ await api.deleteClass(classId); toast("Klasse gelöscht","ok"); if(viewFromAdmin) adminHome(); else teacherHome(); }catch(e){ toast(e.message||"Fehler","err"); } }; }
   { const bl=document.getElementById("btnLeaveClass"); if(bl) bl.onclick=async()=>{ if(!confirm(`Klasse „${cls.name}" wirklich verlassen? Du bist danach keine Co-Lehrkraft mehr und siehst die Klasse nicht mehr.`)) return; try{ await api.removeClassTeacher(classId, ME.id); toast("Klasse verlassen","ok"); teacherHome(); }catch(e){ toast(e.message||"Fehler","err"); } }; }
   document.getElementById("btnImport").onclick = ()=> importStudentsDialog(classId, cls.code, ()=>teacherClassView(classId));
@@ -1317,7 +1385,7 @@ async function doImport(list, classCode, classId, onDone){
     const uid=res.data.user.id;
     const pe = await imp.from("profiles").insert({ id:uid, username:uname, role:"student", display_name:stu.name });
     if(pe.error){ results.push({name:stu.name, username:uname, password:pass, status:"✗ Profil: "+pe.error.message}); try{await imp.auth.signOut();}catch(e){} setCount(i+1); continue; }
-    const je = await imp.rpc("join_class",{ p_code:classCode });
+    const je = await imp.from("memberships").insert({ class_id:classId, student_id:uid });   // Lehrer-Import trägt direkt ein (unabhängig von join_open)
     try{ await imp.auth.signOut(); }catch(e){}
     used.add(uname);
     results.push({ name:stu.name, username:uname, password:pass, status: je.error? "⚠ Konto ok, Klasse: "+je.error.message : "✓" });
@@ -1335,6 +1403,69 @@ function renderImportResults(stage, results, onDone){
     <div style="display:flex;gap:10px;margin-top:12px"><button class="btn btn-ghost" id="impCopy" style="flex:1">📋 Liste kopieren</button><button class="btn btn-primary" id="impDone" style="flex:1">Fertig</button></div>`;
   document.getElementById("impCopy").onclick=()=>{ const txt="Name\tBenutzername\tPasswort\n"+results.filter(r=>r.password).map(r=>r.name+"\t"+r.username+"\t"+r.password).join("\n"); if(navigator.clipboard) navigator.clipboard.writeText(txt); toast("Liste kopiert","ok"); };
   document.getElementById("impDone").onclick=()=>{ closeModal(); if(onDone) onDone(); };
+}
+/* ---------- Admin: Nutzer:innen importieren (ohne Klasse, Duplikate überspringen) ---------- */
+function adminImportDialog(){
+  openModal(`<button class="x" onclick="closeModal()">✕</button>
+    <h3>📥 Nutzer:innen importieren</h3>
+    <p class="muted" style="margin:2px 0 12px">Eine Person pro Zeile (Komma oder Tab, z. B. aus Excel):<br><b>Vorname, Nachname</b> – optional zusätzlich <b>Benutzername</b> und <b>Passwort</b>. Leere Felder werden automatisch erzeugt. Die Accounts sind <b>keiner Klasse</b> zugeordnet. Bereits vorhandene Benutzernamen werden übersprungen. Kein E-Mail-Versand.</p>
+    <div class="field"><label>Rolle</label><select class="input" id="impRole"><option value="student">Schüler:innen</option><option value="teacher">Lehrkräfte</option></select></div>
+    <div class="field"><textarea class="input" id="impText" style="min-height:150px;font-family:monospace;font-size:13px" placeholder="Max, Mustermann&#10;Erika, Musterfrau, erika.m&#10;Tom, Klein, tom.k, geheim123"></textarea></div>
+    <div id="impMsg" class="auth-msg" style="display:none"></div>
+    <div style="display:flex;gap:10px"><button class="btn btn-ghost" id="impCancel" style="flex:none">Abbrechen</button><button class="btn btn-primary" id="impParse" style="flex:1">Weiter</button></div>
+    <div id="impStage" style="margin-top:14px"></div>`, true);
+  document.getElementById("impCancel").onclick = closeModal;
+  document.getElementById("impText").focus();
+  document.getElementById("impParse").onclick = ()=>{
+    const list = parseStudents(document.getElementById("impText").value);
+    const role = document.getElementById("impRole").value==="teacher"?"teacher":"student";
+    const msg=document.getElementById("impMsg");
+    if(!list.length){ msg.style.display="block"; msg.className="auth-msg err"; msg.textContent="Keine gültigen Zeilen erkannt."; return; }
+    msg.style.display="none";
+    const rl = role==="teacher"?"Lehrkräfte":"Schüler:innen";
+    document.getElementById("impStage").innerHTML = `
+      <div class="card" style="margin-bottom:10px"><b>${list.length} ${rl} erkannt:</b><div class="muted" style="margin-top:4px;font-size:13px">${list.map(l=>esc(l.name)).join(" · ")}</div></div>
+      <button class="btn btn-primary btn-lg" id="impCreate">${list.length} Account${list.length>1?"s":""} jetzt erstellen</button>`;
+    document.getElementById("impCreate").onclick = ()=> doAdminImport(list, role);
+  };
+}
+async function doAdminImport(list, role){
+  const stage=document.getElementById("impStage");
+  stage.innerHTML = `<div class="card" id="impProg">⏳ Erstelle Accounts… <b id="impCount">0</b> / ${list.length}</div>`;
+  let existing=new Set();
+  try{ const { data } = await sb.from("profiles").select("username"); (data||[]).forEach(p=> existing.add((p.username||"").toLowerCase())); }catch(e){}
+  const imp = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_KEY, { auth:{ persistSession:false, autoRefreshToken:false } });
+  const used=new Set(), results=[];
+  const setCount=n=>{ const c=document.getElementById("impCount"); if(c) c.textContent=String(n); };
+  for(let i=0;i<list.length;i++){
+    const stu=list[i];
+    const provided=(stu.username||"").toLowerCase().replace(/[^a-z0-9_.\-]/g,"");
+    let base=(provided.length>=3)?provided.slice(0,18):slugUser(stu.first,stu.last); let uname=base, k=1;
+    if(provided.length>=3){
+      if(existing.has(uname)||used.has(uname)){ results.push({name:stu.name, username:uname, password:"", status:"übersprungen (existiert)"}); setCount(i+1); continue; }
+    } else { while(existing.has(uname)||used.has(uname)) uname=base+(++k); }
+    const pass=(stu.password && stu.password.length>=6)?stu.password:genPass();
+    let res=null, ok=false, lastErr="";
+    for(let attempt=0; attempt<6 && !ok; attempt++){
+      res = await imp.auth.signUp({ email:userEmail(uname), password:pass });
+      if(!res.error){ ok=true; break; }
+      lastErr=res.error.message;
+      if(/already|exists|registered/i.test(lastErr)){ if(provided.length>=3){ lastErr="existiert"; break; } uname=base+(++k); continue; }
+      break;
+    }
+    if(!ok){ const skipped=/existiert/i.test(lastErr); results.push({name:stu.name, username:uname, password:"", status: skipped?"übersprungen (existiert)":("✗ "+lastErr)}); setCount(i+1); continue; }
+    const uid=res.data.user.id;
+    const pe = await imp.from("profiles").insert({ id:uid, username:uname, role:"student", display_name:stu.name });
+    if(pe.error){ results.push({name:stu.name, username:uname, password:pass, status:"✗ Profil: "+pe.error.message}); try{await imp.auth.signOut();}catch(e){} setCount(i+1); continue; }
+    try{ await imp.auth.signOut(); }catch(e){}
+    let status="✓";
+    if(role==="teacher"){ try{ await api.adminSetRole(uid, "teacher"); }catch(e){ status="⚠ Konto ok, Rolle: "+(e.message||"Fehler"); } }
+    used.add(uname); existing.add(uname);
+    results.push({ name:stu.name, username:uname, password:pass, status });
+    setCount(i+1);
+    await new Promise(r=>setTimeout(r,180));
+  }
+  renderImportResults(stage, results, ()=> adminHome());
 }
 function renameClassDialog(classId, current){
   openModal(`<button class="x" onclick="closeModal()">✕</button>
@@ -1390,12 +1521,13 @@ async function classTeachersDialog(classId, cls){
    ============================================================================ */
 async function studentHome(){
   shell(`<div class="center-load"><span class="spin"></span>Wird geladen…</div>`);
+  _classActivity=null;   // bei jedem Übersichts-Aufruf frisch laden (Aktivitäts-Sortierung)
   let classes=[];
   try{ classes = await api.myClasses(); }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
 
   if(!classes.length){
     document.getElementById("view").innerHTML = `
-      <div class="page-head"><h2>Willkommen, ${esc(ME.display_name||ME.username)}! ${HAMSTER}</h2></div>
+      <div class="page-head"><h2>Willkommen, ${esc(ME.display_name||ME.username)}! ${HAMSTER}</h2><div class="spacer"></div><button class="btn btn-ghost" id="btnSandbox">🧪 Sandbox</button></div>
       <div class="card" style="max-width:480px;margin:0 auto;text-align:center">
         <div style="font-size:46px">🔑</div>
         <h3 style="margin:6px 0">Tritt deiner Klasse bei</h3>
@@ -1404,16 +1536,20 @@ async function studentHome(){
         <button class="btn btn-primary btn-lg" id="btnJoin">Beitreten</button>
       </div>`;
     wireJoin();
+    { const sx=document.getElementById("btnSandbox"); if(sx) sx.onclick=()=> sandboxHome(null); }
     return;
   }
   document.getElementById("view").innerHTML = `
     <div class="page-head"><h2>Meine Klassen</h2><div class="spacer"></div>
-      <button class="btn btn-ghost" id="btnJoinMore">+ Klasse beitreten</button></div>
-    <div class="grid">${classes.map(c=>`
-      <div class="card click" data-id="${c.id}"><h3>${esc(c.name)}</h3>
-        <div class="meta">Aufgaben ansehen →</div></div>`).join("")}</div>`;
+      <button class="btn btn-ghost" id="btnSandbox">🧪 Sandbox</button>
+      <button class="btn btn-ghost" id="btnJoinMore" style="margin-left:8px">+ Klasse beitreten</button></div>
+    ${classes.length>1?`<div class="page-head" style="margin:0 0 12px">${classSearchSortControls()}</div>`:""}
+    <div id="clsHost"></div>`;
+  document.getElementById("btnSandbox").onclick = ()=> sandboxHome(null);
   document.getElementById("btnJoinMore").onclick = joinDialog;
-  document.querySelectorAll(".card.click").forEach(c=> c.onclick=()=> studentClassView(c.dataset.id));
+  wireClassOverview(classes, c=>`
+      <div class="card click" data-id="${c.id}"><h3>${esc(c.name)}</h3>
+        <div class="meta">Aufgaben ansehen →</div></div>`, id=> studentClassView(id), "");
 }
 function wireJoin(){
   const inp=document.getElementById("joinCode"); inp.focus();
@@ -1454,10 +1590,10 @@ async function studentClassView(classId){
     : `<div class="empty"><span class="ic">📝</span>Noch keine Aufgaben. Schau später wieder rein!</div>`;
   document.getElementById("view").innerHTML = `
     <div class="page-head"><button class="crumb" id="back">← Meine Klassen</button></div>
-    <div class="page-head" style="margin-top:0"><h2>${esc(cls?cls.name:"Klasse")}</h2><div class="spacer"></div>${(cls&&cls.sandbox_enabled)?'<button class="btn btn-ghost" id="btnSandbox">🧪 Sandbox</button>':''}</div>
+    <div class="page-head" style="margin-top:0"><h2>${esc(cls?cls.name:"Klasse")}</h2></div>
     ${list}`;
   document.getElementById("back").onclick = studentHome;
-  const sbx=document.getElementById("btnSandbox"); if(sbx) sbx.onclick=()=> sandboxHome(classId);
+  /* Sandbox ist jetzt klassenunabhängig und steht in der Klassenübersicht */
   document.querySelectorAll(".clickrow[data-id]").forEach(r=> r.onclick=()=> solveAssignment(r.dataset.id));
 }
 
@@ -1478,7 +1614,7 @@ async function sandboxHome(classId){
     <div class="page-head" style="margin-top:0"><h2>${classId==null?"🧪 Meine Sandbox":("🧪 Sandbox – "+esc(cls?cls.name:""))}</h2><div class="spacer"></div><button class="btn btn-primary" id="btnNew">+ Neues Projekt</button></div>
     <div class="card" style="margin-bottom:12px;padding:12px 16px"><span class="muted" style="font-size:13px">Hier kannst du frei eine Welt bauen und programmieren – ganz ohne Aufgabe. Deine Projekte werden gespeichert.</span></div>
     ${list}`;
-  document.getElementById("back").onclick = ()=> (classId==null? teacherHome() : studentClassView(classId));
+  document.getElementById("back").onclick = ()=> (classId==null ? (ME.role==="teacher"?teacherHome():studentHome()) : studentClassView(classId));
   document.getElementById("btnNew").onclick = ()=> sandboxProject(classId, null);
   document.querySelectorAll(".clickrow[data-id]").forEach(r=> r.onclick=(e)=>{ if(e.target.closest("[data-del]")) return; sandboxProject(classId, r.dataset.id); });
   document.querySelectorAll("[data-del]").forEach(b=> b.onclick=async(e)=>{ e.stopPropagation(); if(!confirm("Projekt löschen?")) return; try{ await api.deleteSandboxProject(b.dataset.del); sandboxHome(classId); }catch(err){ toast(err.message||"Fehler","err"); } });
@@ -1546,6 +1682,16 @@ function fmtDate(s){ try{ const d=new Date(s); return d.toLocaleDateString("de-D
    Neueste Version zuerst. Bei jedem Deploy oben einen Eintrag ergänzen.
    ============================================================================ */
 const PATCH_NOTES = [
+  { v:"2.7", date:"13. Juni 2026", title:"Klassen-Verwaltung, Übersicht & Editor-Komfort", items:[
+    `<b>Klassenübersicht – Suche & Sortierung:</b> Über dem Klassenraster gibt es jetzt eine <b>🔍 Suche</b> und eine <b>Sortierung</b> (Neueste/Älteste zuerst, Name A–Z / Z–A, sowie „Letzte Änderung" = jüngste Abgabe in der Klasse). Greift in der Lehrer- <i>und</i> Schüler-Übersicht.`,
+    `<b>Klassenansicht neu geordnet & einklappbar:</b> Die Reihenfolge ist jetzt <b>Aufgaben → Abgabe-Matrix → Schüler:innen → Lehrkräfte</b>. Jeder Abschnitt lässt sich über den <b>▼-Pfeil</b> auf-/zuklappen – praktisch bei großen Klassen.`,
+    `<b>Einlade-Code steuern:</b> Die erstellende Lehrkraft kann den Klassencode jetzt <b>🚫 deaktivieren</b> (kein Beitritt mehr möglich) und einen <b>🔄 neuen Code erzeugen</b> (der alte wird sofort ungültig). Beides muss in einem Dialog bestätigt werden; bereits beigetretene Schüler:innen bleiben drin.`,
+    `<b>Sandbox losgelöst von Klassen:</b> Die Sandbox steht jetzt direkt in der <b>Klassenübersicht</b> – auch für Schüler:innen – und ist nicht mehr an eine einzelne Klasse gebunden. Der frühere „Sandbox an/aus"-Schalter pro Klasse entfällt.`,
+    `<b>Alphabetische Listen:</b> In der <b>Abgabe-Matrix</b>, der <b>Schülerliste</b> und der <b>Lehrkräfte-Liste</b> stehen die Namen jetzt in alphabetischer Reihenfolge.`,
+    `<b>Editor:</b> Der Bereich <b>„Ausgaben & Meldungen"</b> ist größer und lässt sich an der unteren Kante <b>frei in der Höhe ziehen</b> – mehr Zeilen auf einen Blick. Außerdem fügt <b>Enter am Zeilenanfang</b> keine Einrückung mehr hinzu, sondern schiebt die Zeile nur nach unten.`,
+    `<b>Admin – Nutzer:innen importieren:</b> Lehrkräfte <i>und</i> Schüler:innen können im Admin-Bereich per Liste angelegt werden – <b>zunächst ohne Klasse</b>. Bereits existierende Benutzernamen werden dabei übersprungen.`,
+    `<b>Admin – mehr Felder bearbeiten:</b> Neben dem Benutzernamen lassen sich nun auch <b>Vor- und Nachname</b> einer Person ändern.`,
+  ]},
   { v:"2.6", date:"8. Juni 2026", title:"Java-Korrektheit: char, Typprüfung & main-Pflicht", items:[
     `<b>char</b> ist jetzt ein vollwertiger Zahlentyp (ASCII): <code>int c = 'A';</code> ergibt <b>65</b>, <code>char s = 65;</code> ergibt <b>'A'</b> – inkl. <b>(char)/(int)-Umwandlungen</b> und Rechnen mit char, z. B. <code>char b = (char)(a + 5);</code>.`,
     `<b>Strengere Typprüfung</b> bei Zuweisungen nach Java-Regeln: int→double und char→int/double sind erlaubt, aber z. B. <code>int x = true;</code> oder <code>String s = 123;</code> nicht. double-Werte werden mit Nachkommastelle ausgegeben (z. B. <code>double i = 123;</code> → <b>123.0</b>).`,
@@ -1652,7 +1798,7 @@ function patchNotesDialog(){
 }
 
 /* ---------- Footer: Versionsnummer (aus den Patch-Notes) + Copyright ---------- */
-const APP_BUILD = "2026-06-08 23:44";   // letztes Update (im Patch-Notes-Dialog angezeigt)
+const APP_BUILD = "2026-06-13 19:54";   // letztes Update (im Patch-Notes-Dialog angezeigt)
 (function(){ const f=document.getElementById("appfoot"); if(f){ const v=(typeof PATCH_NOTES!=="undefined"&&PATCH_NOTES[0])?PATCH_NOTES[0].v:""; f.textContent='© 2026 Laurens Offinger · Version '+v; } })();
 
 boot();
