@@ -237,7 +237,7 @@ let _classActivity=null;                                      // Cache {class_id
 const DEFAULT_STARTER = "void main() {\n\t\n}";
 api.listAssignments = async (classId)=>{ const {data,error}=await sb.from("assignments").select("*").eq("class_id",classId).order("position").order("created_at"); if(error) throw error; return data||[]; };
 api.getAssignment = async (id)=>{ const {data,error}=await sb.from("assignments").select("*").eq("id",id).single(); if(error) throw error; return data; };
-api.createAssignment = async (a)=>{ const {data:mx}=await sb.from("assignments").select("position").eq("class_id",a.class_id).order("position",{ascending:false}).limit(1); const position=(mx&&mx[0]?mx[0].position:0)+1; const {data,error}=await sb.from("assignments").insert(Object.assign({position},a)).select().single(); if(error) throw error; return data; };
+api.createAssignment = async (a)=>{ const {data:mn}=await sb.from("assignments").select("position").eq("class_id",a.class_id).order("position",{ascending:true}).limit(1); const position=(mn&&mn[0]?mn[0].position:1)-1; const {data,error}=await sb.from("assignments").insert(Object.assign({position},a)).select().single(); if(error) throw error; return data; };   // neue Aufgabe ganz nach OBEN
 api.deleteAssignment = async (id)=>{ const {error}=await sb.from("assignments").delete().eq("id",id); if(error) throw error; };
 api.updateAssignment = async (id, patch)=>{ const {data,error}=await sb.from("assignments").update(patch).eq("id",id).select().single(); if(error) throw error; return data; };
 api.listTemplates = async ()=>{ const {data,error}=await sb.from("templates").select("*").order("created_at",{ascending:false}); if(error) throw error; return data||[]; };
@@ -420,7 +420,7 @@ function assignmentEditorPage(classId, onDone, existing, tplMode){
     <div class="page-head" style="margin-top:0"><h3 style="margin:0">✏️ Editor &amp; Startcode</h3><div class="spacer"></div>
       <span class="acts"><button class="abtn on" id="aeCode" title="Startcode programmieren &amp; ausführen">📝 Code</button><button class="abtn" id="aeWelt" title="Start-Territorium bauen">🌍 Welt</button></span></div>
     <div class="card" style="margin-bottom:10px;padding:10px 14px"><span class="muted" style="font-size:13px">📝 <b>Code</b> – der Startcode für Schüler:innen, genau wie ihr Editor und mit <b>▶ Start</b> direkt ausführbar. &nbsp; 🌍 <b>Welt</b> – das Start-Territorium bauen.</span></div>
-    <div id="aeHost" style="height:74vh;min-height:560px"></div>
+    <div id="aeHost" style="--edh:74vh;min-height:560px"></div>
     <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap;align-items:center">
       ${tplMode?"":`<button class="btn btn-ghost" id="asSaveTpl" style="flex:none">💾 Als Vorlage</button>`}
       <button class="btn btn-primary btn-lg" id="asSave" style="max-width:320px">${esc(saveTxt)}</button>
@@ -524,7 +524,7 @@ function reviewSubmission(assignment, history, studentName, classId){
       <span class="muted" style="font-size:12px;display:block;margin-top:3px">🛠️ Live-Korrektur: Du kannst den Code bearbeiten &amp; laufen lassen – Änderungen werden nicht automatisch gespeichert.</span>
     </div>
     ${history.length>1?`<div class="card" style="margin-bottom:10px;padding:10px 14px"><b style="font-size:13px">Versionen (neueste zuerst):</b> <span id="verNav"></span></div>`:""}
-    <div id="reviewHost" style="height:76vh;min-height:560px"></div>
+    <div id="reviewHost" style="--edh:76vh;min-height:560px"></div>
     <div id="revStudentNote" style="margin-top:14px"></div>
     <div class="card" style="margin-top:14px">
       <h3 style="margin:0 0 8px">💬 Rückmeldung an ${esc(studentName)}</h3>
@@ -606,7 +606,7 @@ async function sampleManager(assignment, classId){
     <div id="smList"></div>
     <div class="page-head" style="margin-top:10px"><h3 id="smEditTitle" style="margin:0">➕ Neue Musterlösung</h3><div class="spacer"></div><span id="smEditHint" class="muted" style="font-size:12px"></span></div>
     <div class="field" style="max-width:420px"><label>Titel (optional)</label><input class="input" id="smTitleIn" placeholder="z. B. Kurze Lösung" maxlength="80"></div>
-    <div id="smEditHost" style="height:74vh;min-height:560px"></div>
+    <div id="smEditHost" style="--edh:74vh;min-height:560px"></div>
     <div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap;align-items:center">
       <button class="btn btn-primary btn-lg" id="smSave" style="max-width:260px">💾 Speichern</button>
       <button class="btn btn-ghost" id="smNew" style="display:none">➕ Neue (Editor leeren)</button>
@@ -685,7 +685,7 @@ async function solveAssignment(assignmentId){
     ${a.hint?`<div style="margin-bottom:12px"><button class="btn btn-ghost btn-sm" id="btnHint">💡 Tipp anzeigen</button><div id="hintBox" class="card" style="display:none;margin-top:8px;background:#fffaf0">💡 ${esc(a.hint)}</div></div>`:""}
     <div id="curComment" style="margin-bottom:12px">${curComment?`<div class="card" style="background:#eef6ff;border-color:#bcd9f5"><b>💬 Rückmeldung deiner Lehrkraft:</b><div style="margin-top:4px;white-space:pre-wrap">${esc(curComment.body)}</div></div>`:""}</div>
     <div id="editNote" class="editnote" style="display:none"></div>
-    <div id="solveHost" style="height:82vh;min-height:600px"></div>
+    <div id="solveHost" style="--edh:82vh;min-height:600px"></div>
     <div style="display:flex;gap:10px;margin-top:14px;align-items:center;flex-wrap:wrap">
       <button class="btn btn-primary btn-lg" id="btnSubmit" style="max-width:240px">📤 Abgeben</button>
       <button class="btn btn-ghost" id="btnToLive" style="display:none">↺ Zur aktuellen Version</button>
@@ -751,7 +751,7 @@ function loadVersion(sub){
   if(!sub||!solveState) return;
   solveState.viewingId = sub.id;
   if(pageView) pageView.setCode(sub.code);
-  setEditNote(); renderSolveComment(sub.id); renderMyNote(sub.id);
+  setEditNote(); renderSolveComment(sub.id); renderMyNote(sub.id); renderHistoryCard();   // Buttons aktualisieren -> geöffnete Abgabe markieren
   const h=document.getElementById("solveHost"); if(h) h.scrollIntoView({behavior:"smooth",block:"start"});
 }
 function renderHistoryCard(){
@@ -794,7 +794,7 @@ function openSamplesViewer(a, samples){
     <h3>🏆 Musterlösung${samples.length>1?"en":""}</h3>
     ${tabs}
     <p class="muted" style="font-size:12px;margin:0 0 8px">Wähle eine Lösung; du kannst sie laufen lassen und Schritt für Schritt nachvollziehen.</p>
-    <div id="smHost" style="height:64vh;min-height:460px"></div>`, true);
+    <div id="smHost" style="--edh:62vh;min-height:460px"></div>`, true);
   const show=()=>{ const sm=samples[idx];
     if(modalView){ try{ modalView.destroy(); }catch(e){} }
     modalView=new HamsterView("#smHost",{mode:"solve", model:a.territory, code:sm.code, fill:true, goal:a.goal, commands:true});
@@ -810,16 +810,27 @@ function fmtDateTime(s){ try{ return new Date(s).toLocaleString("de-DE",{day:"2-
 /* ---------- Passwort ändern (alle Rollen) ---------- */
 function changePasswordDialog(){
   openModal(`<button class="x" onclick="closeModal()">✕</button>
-    <h3>Passwort ändern</h3><p class="muted" style="margin:2px 0 16px">Wähle ein neues Passwort (mind. 6 Zeichen).</p>
+    <h3>Passwort ändern</h3><p class="muted" style="margin:2px 0 16px">Gib zur Sicherheit zuerst dein <b>aktuelles</b> Passwort ein, dann das neue (mind. 6 Zeichen).</p>
+    <div class="field"><label>Aktuelles Passwort</label><input class="input" id="np0" type="password" autocomplete="current-password"></div>
     <div class="field"><label>Neues Passwort</label><input class="input" id="np1" type="password" autocomplete="new-password"></div>
     <div class="field"><label>Wiederholen</label><input class="input" id="np2" type="password" autocomplete="new-password"></div>
     <button class="btn btn-primary btn-lg" id="npSave">Passwort speichern</button>`);
-  document.getElementById("np1").focus();
+  document.getElementById("np0").focus();
   document.getElementById("npSave").onclick=async()=>{
-    const a=document.getElementById("np1").value, b=document.getElementById("np2").value;
-    if(a.length<6){ toast("Mindestens 6 Zeichen.","err"); return; }
+    const cur=document.getElementById("np0").value, a=document.getElementById("np1").value, b=document.getElementById("np2").value;
+    if(!cur){ toast("Bitte gib dein aktuelles Passwort ein.","err"); return; }
+    if(a.length<6){ toast("Das neue Passwort braucht mindestens 6 Zeichen.","err"); return; }
     if(a!==b){ toast("Die Passwörter stimmen nicht überein.","err"); return; }
     const btn=document.getElementById("npSave"); btn.disabled=true; btn.textContent="Speichere…";
+    // 1) aktuelles Passwort prüfen – über einen separaten Client, der die eigene Session NICHT stört.
+    //    E-Mail aus der AKTUELLEN Session ableiten (robust, falls der Benutzername zwischenzeitlich geändert wurde).
+    let curEmail = userEmail(ME.username);
+    try{ const { data:gu } = await sb.auth.getUser(); if(gu && gu.user && gu.user.email) curEmail = gu.user.email; }catch(e){}
+    const verify = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_KEY, { auth:{ persistSession:false, autoRefreshToken:false } });
+    const { error:vErr } = await verify.auth.signInWithPassword({ email:curEmail, password:cur });
+    try{ await verify.auth.signOut({ scope:"local" }); }catch(e){}   // NUR lokal abmelden – 'global' (Default) würde die Tokens der Haupt-Session widerrufen!
+    if(vErr){ btn.disabled=false; btn.textContent="Passwort speichern"; toast("Das aktuelle Passwort ist nicht korrekt.","err"); return; }
+    // 2) neues Passwort auf der eigenen (Haupt-)Session setzen
     const { error } = await sb.auth.updateUser({ password:a });
     if(error){ btn.disabled=false; btn.textContent="Passwort speichern"; toast(error.message||"Fehler","err"); return; }
     closeModal(); toast("Passwort geändert ✓","ok");
@@ -1636,7 +1647,7 @@ async function sandboxProject(classId, projectId){
       <span class="acts"><button class="abtn on" id="sbxCode" title="Programmieren">📝 Code</button><button class="abtn" id="sbxWelt" title="Welt bearbeiten">🌍 Welt</button></span>
       <button class="btn btn-primary btn-sm" id="sbxSave" style="margin-left:8px">💾 Speichern</button>
     </div>
-    <div id="sbxHost" style="height:80vh;min-height:600px"></div>`;
+    <div id="sbxHost" style="--edh:80vh;min-height:600px"></div>`;
   document.getElementById("sbxTitle").value = sandboxState.title;
   document.getElementById("back").onclick = ()=>{ syncSandbox(); sandboxHome(classId); };
   document.getElementById("sbxCode").onclick = ()=> setSandboxSub("code");
@@ -1682,6 +1693,13 @@ function fmtDate(s){ try{ const d=new Date(s); return d.toLocaleDateString("de-D
    Neueste Version zuerst. Bei jedem Deploy oben einen Eintrag ergänzen.
    ============================================================================ */
 const PATCH_NOTES = [
+  { v:"2.8", date:"26. Juni 2026", title:"Editor-Layout, Abgaben-Historie & Sicherheit", items:[
+    `<b>Ausgabebereich vergrößern verkleinert nicht mehr den Editor:</b> Wenn du den Bereich „Ausgaben & Meldungen" größer ziehst, bleiben <b>Quellcode und Territorium gleich groß</b> – die Seite wird stattdessen länger (Scrollen).`,
+    `<b>Abgaben-Historie:</b> Öffnest du in einer Aufgabe eine deiner früheren Abgaben, ist deren Schaltfläche jetzt als <b>„geöffnet"</b> markiert (ausgegraut), während die anderen weiterhin „Öffnen" anbieten – so siehst du sofort, welche Version gerade angezeigt wird.`,
+    `<b>Musterlösung ansehen:</b> Das Editor-Fenster ist hoch genug, sodass die <b>Schaltflächen am unteren Rand</b> (Start, Schritt, …) vollständig sichtbar sind.`,
+    `<b>Neue Aufgaben oben:</b> Eine neu erstellte Aufgabe erscheint jetzt <b>ganz oben</b> in der Aufgabenliste (statt unten). Die Reihenfolge lässt sich weiterhin mit den Pfeilen anpassen.`,
+    `<b>Passwort ändern – mit Sicherheitsabfrage:</b> Zum Ändern des eigenen Passworts muss jetzt zuerst das <b>aktuelle Passwort</b> eingegeben werden.`,
+  ]},
   { v:"2.7", date:"13. Juni 2026", title:"Klassen-Verwaltung, Übersicht & Editor-Komfort", items:[
     `<b>Klassenübersicht – Suche & Sortierung:</b> Über dem Klassenraster gibt es jetzt eine <b>🔍 Suche</b> und eine <b>Sortierung</b> (Neueste/Älteste zuerst, Name A–Z / Z–A, sowie „Letzte Änderung" = jüngste Abgabe in der Klasse). Greift in der Lehrer- <i>und</i> Schüler-Übersicht.`,
     `<b>Klassenansicht neu geordnet & einklappbar:</b> Die Reihenfolge ist jetzt <b>Aufgaben → Abgabe-Matrix → Schüler:innen → Lehrkräfte</b>. Jeder Abschnitt lässt sich über den <b>▼-Pfeil</b> auf-/zuklappen – praktisch bei großen Klassen.`,
@@ -1798,7 +1816,7 @@ function patchNotesDialog(){
 }
 
 /* ---------- Footer: Versionsnummer (aus den Patch-Notes) + Copyright ---------- */
-const APP_BUILD = "2026-06-13 19:54";   // letztes Update (im Patch-Notes-Dialog angezeigt)
+const APP_BUILD = "2026-06-26 14:42";   // letztes Update (im Patch-Notes-Dialog angezeigt)
 (function(){ const f=document.getElementById("appfoot"); if(f){ const v=(typeof PATCH_NOTES!=="undefined"&&PATCH_NOTES[0])?PATCH_NOTES[0].v:""; f.textContent='© 2026 Laurens Offinger · Version '+v; } })();
 
 boot();

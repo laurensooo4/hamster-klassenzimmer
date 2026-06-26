@@ -550,8 +550,8 @@ function injectStyles(){
   .hv{--lh:22px;--cpad:12px;display:flex;flex-direction:column;gap:10px;font-family:"Nunito",sans-serif}
   .hv .hv-main{display:grid;gap:12px;grid-template-columns:1.65fr 1fr;min-height:0}
   .hv.solo .hv-main{grid-template-columns:1fr}
-  .hv.fill{height:100%}
-  .hv.fill .hv-main{flex:1;min-height:0}
+  .hv.fill{height:auto}
+  .hv.fill .hv-main{height:var(--edh,70vh);min-height:420px}
   .hv.fill .editor{min-height:340px}
   .hv.fill .boardWrap{min-height:200px}
   .hv .hv-pane{position:relative;background:#fff;border:2px solid #e6ebf2;border-radius:14px;overflow:hidden;display:flex;flex-direction:column;min-width:0}
@@ -607,7 +607,7 @@ function injectStyles(){
   .hv .status{display:flex;gap:8px;padding:0;flex-wrap:wrap}
   .hv .stat{flex:1;min-width:60px;background:#f7f9fc;border:1px solid #eef2f7;border-radius:9px;padding:5px;text-align:center}
   .hv .stat .v{font-weight:800;font-size:15px}.hv .stat .k{font-size:10px;color:#7a8aa0}
-  .hv .out{height:120px;min-height:64px;max-height:60vh;resize:vertical;overflow:auto;padding:7px 11px;border:2px solid #e6ebf2;border-radius:12px;font:12px/1.5 "JetBrains Mono",Consolas,monospace;background:#fff}
+  .hv .out{flex:0 0 auto;height:120px;min-height:64px;max-height:70vh;resize:vertical;overflow:auto;padding:7px 11px;border:2px solid #e6ebf2;border-radius:12px;font:12px/1.5 "JetBrains Mono",Consolas,monospace;background:#fff}
   .hv .out:empty::before{content:"Ausgaben & Meldungen erscheinen hier …";color:#b6bfcc}
   .hv .out .err{color:#e63a3a;font-weight:700}.hv .out .ok{color:#46a302}.hv .out .say{color:#1899d6}
   @media(max-width:760px){.hv .hv-main{grid-template-columns:1fr}}`;
