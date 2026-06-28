@@ -373,6 +373,8 @@ api.sqlGradeSubtask = async (subtaskId, result)=>{ const {data,error}=await sb.r
 api.sqlGetMySubmission = async (assignmentId)=>{ const {data,error}=await sb.from("sql_submissions").select("*").eq("assignment_id",assignmentId).eq("student_id",ME.id).maybeSingle(); if(error) throw error; return data; };
 api.sqlMySubmissions = async (assignmentIds)=>{ if(!assignmentIds.length) return []; const {data,error}=await sb.from("sql_submissions").select("*").in("assignment_id",assignmentIds).eq("student_id",ME.id); if(error) throw error; return data||[]; };
 api.sqlSaveSubmission = async (assignmentId, answers, results, passed)=>{ const {error}=await sb.from("sql_submissions").upsert({assignment_id:assignmentId, student_id:ME.id, answers, results, passed, updated_at:new Date().toISOString()},{onConflict:"assignment_id,student_id"}); if(error) throw error; };
+api.sqlClassSubmissions = async (assignmentIds)=>{ if(!assignmentIds.length) return []; const {data,error}=await sb.from("sql_submissions").select("assignment_id,student_id,results,passed,updated_at").in("assignment_id",assignmentIds); if(error) throw error; return data||[]; };   // RLS: nur Aufgaben, deren Lehrkraft ich bin (sqlsubm_teacher_read)
+api.sqlSubtaskIds = async (assignmentIds)=>{ if(!assignmentIds.length) return []; const {data,error}=await sb.from("sql_subtasks").select("id,assignment_id").in("assignment_id",assignmentIds); if(error) throw error; return data||[]; };   // RLS: nur als Lehrkraft sichtbar (sqlsub_teacher_all)
 
 /* Headless: Code auf frischer Kopie des Territoriums laufen lassen -> Endmodell (wirft bei Fehler) */
 function runHeadless(code, territory){
@@ -1736,7 +1738,7 @@ async function sqlStudentHome(){
 const SQL_SOON = `<div class="card" style="text-align:center;padding:26px"><div style="font-size:40px">🚧</div><h3 style="margin:6px 0">SQL-Aufgaben kommen in Kürze</h3><p class="muted" style="margin:0">Datenbanken, Aufgaben mit Teilaufgaben und Abgaben folgen in den nächsten Updates. Die Klasse kann schon angelegt und der Code verteilt werden.</p></div>`;
 async function sqlTeacherClassView(classId){
   shell(`<div class="center-load"><span class="spin"></span>Klasse wird geladen…</div>`);
-  let cls, roster=[], asgs=[];
+  let cls, roster=[], asgs=[], subs=[], subtaskRows=[];
   try{
     const { data } = await sb.from("classes").select("*").eq("id",classId).single(); cls=data;
     roster = await api.classRoster(classId);
@@ -1744,7 +1746,10 @@ async function sqlTeacherClassView(classId){
     asgs = await api.sqlListAssignments(classId);
   }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
   if(!cls){ document.getElementById("view").innerHTML=errBox({message:"Klasse nicht gefunden."}); return; }
+  // Abgabe-Matrix ist Zusatz -> eigener, nicht-fataler Block: ein Fehler hier reißt Aufgaben-/Schülerliste nicht herunter
+  if(asgs.length){ const ids=asgs.map(a=>a.id); try{ subs = await api.sqlClassSubmissions(ids); subtaskRows = await api.sqlSubtaskIds(ids); }catch(e){ subs=[]; subtaskRows=[]; } }
   const canTeam=(cls.teacher_id===ME.id||ME.is_admin);
+  const subtasksByAsg=new Map(); asgs.forEach(a=>subtasksByAsg.set(a.id,[])); subtaskRows.forEach(r=>{ const arr=subtasksByAsg.get(r.assignment_id); if(arr) arr.push(r.id); });
   const rosterHtml = roster.length ? `<div class="list">${roster.map(m=>{ const p=m.profiles||{}; const nm=p.display_name||p.username||"?"; return `<div class="row"><span class="chip"><span class="av">${esc(initials(nm))}</span>${esc(nm)}</span><div class="grow"></div><span class="muted" style="font-size:11.5px">${fmtDate(m.joined_at)}</span></div>`; }).join("")}</div>`
     : `<div class="empty"><span class="ic">🎒</span>Noch keine Schüler:innen. Teile den Code <b>${esc(cls.code)}</b>!</div>`;
   const asgHtml = asgs.length ? `<div class="list">${asgs.map(a=>`
@@ -1765,6 +1770,12 @@ async function sqlTeacherClassView(classId){
     <div class="card" style="margin-bottom:14px">
       <div style="display:flex;align-items:center;gap:8px"><h3 style="margin:0">📝 Aufgaben <span class="badge gray">${asgs.length}</span></h3><div style="flex:1"></div><button class="btn btn-blue btn-sm" id="btnNewSqlAssign">+ Aufgabe stellen</button></div>
       <div style="margin-top:12px">${asgHtml}</div></div>
+    <div class="card" style="margin-bottom:14px">
+      <div style="display:flex;align-items:center;gap:8px"><h3 style="margin:0">📊 Abgabe-Matrix</h3><div style="flex:1"></div></div>
+      <div style="margin-top:12px">
+        ${(asgs.length&&roster.length)?'<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap"><span class="muted" style="font-size:12.5px">je Zelle: 🟩 richtig · 🟧 bearbeitet · ⬜ offen · ★ = alles richtig</span><div style="flex:1"></div><input class="input" id="sqlMatrixSearch" placeholder="🔍 Schüler:in suchen" style="max-width:240px"></div>':''}
+        <div id="sqlMatrixHost"></div>
+      </div></div>
     <div class="card" style="margin-bottom:14px"><h3 style="margin:0">🎒 Schüler:innen <span class="badge gray">${roster.length}</span></h3><div style="margin-top:12px">${rosterHtml}</div></div>`;
   document.getElementById("back").onclick = ()=> (viewFromAdmin?adminHome():sqlTeacherHome());
   document.getElementById("copyCode").onclick = ()=>{ if(navigator.clipboard) navigator.clipboard.writeText(cls.code); toast("Code kopiert: "+cls.code,"ok"); };
@@ -1775,6 +1786,37 @@ async function sqlTeacherClassView(classId){
   document.querySelectorAll("[data-down]").forEach(b=> b.onclick=async()=>{ await moveSqlAssignment(asgs, b.dataset.down, 1); sqlTeacherClassView(classId); });
   document.querySelectorAll("[data-pub]").forEach(b=> b.onclick=async()=>{ try{ await api.sqlUpdateAssignment(b.dataset.pub,{published:b.dataset.on!=="1"}); sqlTeacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } });
   document.querySelectorAll("[data-del]").forEach(b=> b.onclick=async()=>{ if(!confirm("Aufgabe wirklich löschen?")) return; try{ await api.sqlDeleteAssignment(b.dataset.del); sqlTeacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } });
+  const paintSqlMatrix=(q)=>{ const host=document.getElementById("sqlMatrixHost"); if(!host) return;
+    host.innerHTML = (asgs.length&&roster.length) ? buildSqlMatrix(roster, asgs, subs, subtasksByAsg, q)
+      : `<div class="empty"><span class="ic">📊</span>${!asgs.length?"Stelle Aufgaben – dann erscheint hier, wer welche Teilaufgaben gelöst hat.":"Noch keine Schüler:innen in der Klasse."}</div>`;
+  };
+  paintSqlMatrix("");
+  { const ms=document.getElementById("sqlMatrixSearch"); if(ms) ms.oninput=()=> paintSqlMatrix(ms.value); }
+}
+function buildSqlMatrix(roster, asgs, subs, subtasksByAsg, q){
+  q=(q||"").trim().toLowerCase();
+  const nmeOf=stu=>(stu.profiles&&(stu.profiles.display_name||stu.profiles.username))||"?";
+  const list = q ? roster.filter(stu=> nmeOfSafe(nmeOf(stu)).includes(q)) : roster;
+  if(!list.length) return `<div class="empty" style="padding:16px"><span class="ic">🔍</span>Keine Schüler:in gefunden.</div>`;
+  const head = asgs.map(a=>`<th title="${esc(a.title)}">${esc(a.title.length>14?a.title.slice(0,13)+"…":a.title)}</th>`).join("");
+  const seg=(n,color)=> n>0?`<div style="flex:${n};background:${color}"></div>`:"";
+  const rows = list.map(stu=>{
+    const cells = asgs.map(a=>{
+      const ids = subtasksByAsg.get(a.id)||[]; const total = ids.length;
+      if(!total) return `<td><span class="muted" style="font-size:13px" title="Aufgabe hat noch keine Teilaufgaben">—</span></td>`;
+      const sub = subs.find(x=>x.assignment_id===a.id && x.student_id===stu.student_id);
+      if(!sub) return `<td><span title="noch nicht bearbeitet (${total} Teilaufgaben)" style="color:var(--muted);font-weight:900">·</span></td>`;
+      const res = sub.results||{};
+      let g=0,y=0; for(const id of ids){ const st=res[id]; if(st==="correct") g++; else if(st==="wrong") y++; }   // "empty" (leer gespeichert) = offen/grau, konsistent mit sqlStatusIcon
+      const grey=total-g-y, done=(g===total);
+      const bar=`<div style="display:flex;height:7px;width:56px;border-radius:4px;overflow:hidden;margin:0 auto 3px;background:var(--line2)">${seg(g,"var(--green)")}${seg(y,"var(--gold)")}${seg(grey,"var(--line2)")}</div>`;
+      const cap=`<span style="font-size:11.5px;font-weight:800;color:${done?'var(--green-d)':'var(--muted)'}">${g}/${total}${done?' ★':''}</span>`;
+      const title=`✓ ${g} richtig · ~ ${y} bearbeitet · · ${grey} offen (von ${total})`;
+      return `<td><span title="${esc(title)}" style="display:inline-block;min-width:60px;text-align:center">${bar}${cap}</span></td>`;
+    }).join("");
+    return `<tr><td class="stu">${esc(nmeOf(stu))}</td>${cells}</tr>`;
+  }).join("");
+  return `<div class="matrix-wrap"><table class="matrix"><thead><tr><th class="stu">Schüler:in</th>${head}</tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 async function sqlStudentClassView(classId){
   shell(`<div class="center-load"><span class="spin"></span>Lädt…</div>`);
@@ -2187,6 +2229,12 @@ function fmtDate(s){ try{ const d=new Date(s); return d.toLocaleDateString("de-D
    Neueste Version zuerst. Bei jedem Deploy oben einen Eintrag ergänzen.
    ============================================================================ */
 const PATCH_NOTES = [
+  { v:"2.14", date:"28. Juni 2026", title:"SQL-Playground: Abgabe-Matrix für Lehrkräfte", items:[
+    `<b>Neue Abgabe-Matrix</b> in jeder SQL-Klasse: eine Tabelle <b>Schüler:innen × Aufgaben</b>. Jede Zelle zeigt auf einen Blick, wie viele <b>Teilaufgaben</b> der/die Schüler:in schon gelöst hat – als kleiner Farbbalken und als <b>Quote</b> (z. B. „3/5").`,
+    `<b>Farben je Teilaufgabe:</b> 🟩 richtig · 🟧 bearbeitet, aber noch nicht richtig · ⬜ noch nicht bearbeitet. Sind <b>alle</b> Teilaufgaben richtig, erscheint ein <b>★</b>. Beim Überfahren mit der Maus zeigt jede Zelle die genaue Aufschlüsselung.`,
+    `<b>Schüler:in suchen:</b> Über der Matrix gibt es ein Suchfeld – praktisch bei großen Klassen.`,
+    `<b>Nächste Schritte:</b> Lehrer-Korrektur & Kommentare zu Abgaben sowie ein Schalter zum <b>Freigeben der Musterlösung</b>.`,
+  ]},
   { v:"2.13", date:"28. Juni 2026", title:"SQL-Playground: Aufgaben lösen & automatische Bewertung", items:[
     `<b>Schüler:innen können SQL-Aufgaben jetzt lösen:</b> Aufgabe öffnen → links die <b>Teilaufgaben</b>, rechts Aufgabentext, ausklappbares <b>Datenbank-Schema</b>, ein <b>SQL-Editor</b> mit <b>▶ Ausführen</b> (Ergebnis-Tabelle) und <b>💾 Lösung speichern</b>.`,
     `<b>Automatische Bewertung:</b> Bei Teilaufgaben mit „Ergebnis vergleichen" prüft das System sofort, ob das Ergebnis stimmt – <b>✓ richtig</b> oder <b>~ noch nicht richtig</b>. Der Vergleich passiert <b>sicher auf dem Server</b>; die Musterlösung bleibt verborgen.`,
@@ -2342,7 +2390,7 @@ function patchNotesDialog(){
 }
 
 /* ---------- Footer: Versionsnummer (aus den Patch-Notes) + Copyright ---------- */
-const APP_BUILD = "2026-06-28 21:05";   // letztes Update (im Patch-Notes-Dialog angezeigt)
+const APP_BUILD = "2026-06-28 22:10";   // letztes Update (im Patch-Notes-Dialog angezeigt)
 (function(){ const f=document.getElementById("appfoot"); if(f){ const v=(typeof PATCH_NOTES!=="undefined"&&PATCH_NOTES[0])?PATCH_NOTES[0].v:""; f.textContent='© 2026 Laurens Offinger · Version '+v; } })();
 
 boot();
