@@ -375,6 +375,7 @@ api.sqlMySubmissions = async (assignmentIds)=>{ if(!assignmentIds.length) return
 api.sqlSaveSubmission = async (assignmentId, answers, results, passed)=>{ const {error}=await sb.from("sql_submissions").upsert({assignment_id:assignmentId, student_id:ME.id, answers, results, passed, updated_at:new Date().toISOString()},{onConflict:"assignment_id,student_id"}); if(error) throw error; };
 api.sqlClassSubmissions = async (assignmentIds)=>{ if(!assignmentIds.length) return []; const {data,error}=await sb.from("sql_submissions").select("assignment_id,student_id,results,passed,updated_at").in("assignment_id",assignmentIds); if(error) throw error; return data||[]; };   // RLS: nur Aufgaben, deren Lehrkraft ich bin (sqlsubm_teacher_read)
 api.sqlSubtaskIds = async (assignmentIds)=>{ if(!assignmentIds.length) return []; const {data,error}=await sb.from("sql_subtasks").select("id,assignment_id").in("assignment_id",assignmentIds); if(error) throw error; return data||[]; };   // RLS: nur als Lehrkraft sichtbar (sqlsub_teacher_all)
+api.sqlGetSubmission = async (assignmentId, studentId)=>{ const {data,error}=await sb.from("sql_submissions").select("*").eq("assignment_id",assignmentId).eq("student_id",studentId).maybeSingle(); if(error) throw error; return data; };   // Lehrer liest fremde Abgabe via sqlsubm_teacher_read
 
 /* Headless: Code auf frischer Kopie des Territoriums laufen lassen -> Endmodell (wirft bei Fehler) */
 function runHeadless(code, territory){
@@ -1753,11 +1754,12 @@ async function sqlTeacherClassView(classId){
   const rosterHtml = roster.length ? `<div class="list">${roster.map(m=>{ const p=m.profiles||{}; const nm=p.display_name||p.username||"?"; return `<div class="row"><span class="chip"><span class="av">${esc(initials(nm))}</span>${esc(nm)}</span><div class="grow"></div><span class="muted" style="font-size:11.5px">${fmtDate(m.joined_at)}</span></div>`; }).join("")}</div>`
     : `<div class="empty"><span class="ic">🎒</span>Noch keine Schüler:innen. Teile den Code <b>${esc(cls.code)}</b>!</div>`;
   const asgHtml = asgs.length ? `<div class="list">${asgs.map(a=>`
-      <div class="row"><span class="grow"><span class="t clickable" data-edit="${a.id}" title="Aufgabe bearbeiten">${esc(a.title)} ${a.published?"":'<span class="badge gold">Entwurf</span>'}</span><span class="s">${esc(fmtDateTime(a.created_at))}</span></span>
+      <div class="row"><span class="grow"><span class="t clickable" data-edit="${a.id}" title="Aufgabe bearbeiten">${esc(a.title)} ${a.published?"":'<span class="badge gold">Entwurf</span>'}${a.released?' <span class="badge" title="Musterlösungen für Schüler:innen sichtbar">🏆 Lösung frei</span>':''}</span><span class="s">${esc(fmtDateTime(a.created_at))}</span></span>
         <span class="acts">
           <button class="abtn" data-up="${a.id}" title="nach oben">↑</button>
           <button class="abtn" data-down="${a.id}" title="nach unten">↓</button>
           <button class="abtn" data-pub="${a.id}" data-on="${a.published?1:0}" title="${a.published?'verbergen (Entwurf)':'veröffentlichen'}">${a.published?'👁️':'🚀'}</button>
+          <button class="abtn" data-rel="${a.id}" data-relon="${a.released?1:0}" title="${a.released?'Musterlösung wieder verbergen':'Musterlösung für Schüler:innen freigeben'}">${a.released?'🏆':'🔒'}</button>
           <button class="abtn" data-edit="${a.id}" title="bearbeiten">✏️</button>
           <button class="abtn" data-del="${a.id}" title="löschen">🗑️</button>
         </span></div>`).join("")}</div>`
@@ -1785,10 +1787,12 @@ async function sqlTeacherClassView(classId){
   document.querySelectorAll("[data-up]").forEach(b=> b.onclick=async()=>{ await moveSqlAssignment(asgs, b.dataset.up, -1); sqlTeacherClassView(classId); });
   document.querySelectorAll("[data-down]").forEach(b=> b.onclick=async()=>{ await moveSqlAssignment(asgs, b.dataset.down, 1); sqlTeacherClassView(classId); });
   document.querySelectorAll("[data-pub]").forEach(b=> b.onclick=async()=>{ try{ await api.sqlUpdateAssignment(b.dataset.pub,{published:b.dataset.on!=="1"}); sqlTeacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } });
+  document.querySelectorAll("[data-rel]").forEach(b=> b.onclick=async()=>{ const on=b.dataset.relon==="1"; if(!on && !confirm("Musterlösungen dieser Aufgabe für ALLE Schüler:innen sichtbar machen?")) return; try{ await api.sqlUpdateAssignment(b.dataset.rel,{released:!on}); toast(on?"Musterlösung verborgen 🔒":"Musterlösung freigegeben 🏆","ok"); sqlTeacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } });
   document.querySelectorAll("[data-del]").forEach(b=> b.onclick=async()=>{ if(!confirm("Aufgabe wirklich löschen?")) return; try{ await api.sqlDeleteAssignment(b.dataset.del); sqlTeacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } });
   const paintSqlMatrix=(q)=>{ const host=document.getElementById("sqlMatrixHost"); if(!host) return;
     host.innerHTML = (asgs.length&&roster.length) ? buildSqlMatrix(roster, asgs, subs, subtasksByAsg, q)
       : `<div class="empty"><span class="ic">📊</span>${!asgs.length?"Stelle Aufgaben – dann erscheint hier, wer welche Teilaufgaben gelöst hat.":"Noch keine Schüler:innen in der Klasse."}</div>`;
+    host.querySelectorAll(".sqcell[data-aid]").forEach(c=> c.onclick=()=>{ const stu=roster.find(r=>r.student_id===c.dataset.sid); const nm=(stu&&stu.profiles&&(stu.profiles.display_name||stu.profiles.username))||"?"; sqlReviewSubmission(c.dataset.aid, c.dataset.sid, nm, classId); });
   };
   paintSqlMatrix("");
   { const ms=document.getElementById("sqlMatrixSearch"); if(ms) ms.oninput=()=> paintSqlMatrix(ms.value); }
@@ -1812,11 +1816,64 @@ function buildSqlMatrix(roster, asgs, subs, subtasksByAsg, q){
       const bar=`<div style="display:flex;height:7px;width:56px;border-radius:4px;overflow:hidden;margin:0 auto 3px;background:var(--line2)">${seg(g,"var(--green)")}${seg(y,"var(--gold)")}${seg(grey,"var(--line2)")}</div>`;
       const cap=`<span style="font-size:11.5px;font-weight:800;color:${done?'var(--green-d)':'var(--muted)'}">${g}/${total}${done?' ★':''}</span>`;
       const title=`✓ ${g} richtig · ~ ${y} bearbeitet · · ${grey} offen (von ${total})`;
-      return `<td><span title="${esc(title)}" style="display:inline-block;min-width:60px;text-align:center">${bar}${cap}</span></td>`;
+      return `<td><span class="sqcell" data-aid="${a.id}" data-sid="${stu.student_id}" title="${esc(title)} – Abgabe ansehen" style="display:inline-block;min-width:60px;text-align:center;cursor:pointer">${bar}${cap}</span></td>`;
     }).join("");
     return `<tr><td class="stu">${esc(nmeOf(stu))}</td>${cells}</tr>`;
   }).join("");
   return `<div class="matrix-wrap"><table class="matrix"><thead><tr><th class="stu">Schüler:in</th>${head}</tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+/* ---------- SQL-Playground: Lehrer-Einsicht in eine Schüler-Abgabe (read-only) ---------- */
+let sqlReviewState=null;
+async function sqlReviewSubmission(assignmentId, studentId, studentName, classId){
+  shell(`<div class="center-load"><span class="spin"></span>Abgabe wird geladen…</div>`);
+  let a, subtasks=[], submission=null;
+  try{ a=await api.sqlGetAssignment(assignmentId); }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
+  if(!a){ document.getElementById("view").innerHTML=errBox({message:"Aufgabe nicht gefunden."}); return; }
+  try{ subtasks=await api.sqlListSubtasks(assignmentId); }catch(e){ subtasks=[]; }
+  try{ submission=await api.sqlGetSubmission(assignmentId, studentId); }catch(e){}
+  sqlReviewState = {
+    assignmentId, classId, studentId, studentName,
+    dbText:a.db_snapshot||"", title:a.title, description:a.description||"", released:!!a.released,
+    subtasks, answers:(submission&&submission.answers)||{}, results:(submission&&submission.results)||{},
+    passed: submission?submission.passed:null, updatedAt: submission?submission.updated_at:null,
+    selected:0, view:null
+  };
+  try{ SqlEngine.ensureStyles(); }catch(e){}
+  renderSqlReview();
+}
+function renderSqlReview(){
+  const s=sqlReviewState;
+  const subList = s.subtasks.map((st,i)=>`
+      <div class="row sqst" data-i="${i}" style="cursor:pointer;${i===s.selected?'background:var(--line2);border-radius:10px':''}">
+        <span class="sicon" style="width:18px;text-align:center">${sqlStatusIcon(s.results[st.id])}</span>
+        <span class="grow"><span class="t">Teilaufgabe ${i+1}</span></span></div>`).join("");
+  const statusBadge = s.passed===true?'<span class="badge">bestanden ✓</span>':(s.updatedAt?'<span class="badge gold">in Bearbeitung</span>':'<span class="badge gray">keine Abgabe</span>');
+  document.getElementById("view").innerHTML = `
+    <div class="page-head"><button class="crumb" id="back">← Zur Klasse</button></div>
+    <div class="page-head" style="margin-top:0"><h2>Abgabe von ${esc(s.studentName)}</h2><div class="spacer"></div>${statusBadge}${s.updatedAt?`<span class="muted" style="font-size:12px;margin-left:8px">${esc(fmtDateTime(s.updatedAt))}</span>`:''}</div>
+    <div class="card" style="margin-bottom:12px;padding:12px 16px"><b>Aufgabe:</b> ${esc(s.title)}${s.description?` – <span class="muted">${esc(s.description)}</span>`:''}
+      <span class="muted" style="font-size:12px;display:block;margin-top:4px">👀 Einsicht: Du siehst die Abgabe der/des Schüler:in. Mit ▶ kannst du ihre/seine Abfrage gegen die Aufgaben-Datenbank laufen lassen (nur Ansicht, nichts wird gespeichert).</span></div>
+    <div class="grid" style="grid-template-columns:230px 1fr;gap:14px;align-items:start">
+      <div class="card"><h3 style="margin:0 0 10px">Teilaufgaben</h3><div class="list" id="revSubList">${subList||'<div class="muted" style="font-size:13px">Keine Teilaufgaben.</div>'}</div></div>
+      <div class="card" id="revRight"></div>
+    </div>`;
+  document.getElementById("back").onclick = ()=> sqlTeacherClassView(s.classId);
+  document.querySelectorAll("#revSubList .sqst").forEach(row=> row.onclick=()=>{ s.selected=+row.dataset.i; renderSqlReview(); });
+  renderSqlReviewRight();
+}
+function renderSqlReviewRight(){
+  const s=sqlReviewState, st=s.subtasks[s.selected], right=document.getElementById("revRight");
+  if(!right) return;
+  if(!st){ right.innerHTML='<div class="empty"><span class="ic">📝</span>Diese Aufgabe hat keine Teilaufgaben.</div>'; return; }
+  const status=s.results[st.id], answer=s.answers[st.id]||"";
+  right.innerHTML = `
+    <div class="field"><label>Teilaufgabe ${s.selected+1} ${sqlSolveMsg(status)}</label><div style="font-weight:700;white-space:pre-wrap">${esc(st.prompt)||'<span class="muted">(kein Text)</span>'}</div></div>
+    ${st.solution_sql?`<details class="sqv-schema" style="margin-bottom:10px"><summary>🏆 Musterlösung ${s.released?'<span class="badge" style="margin-left:4px">freigegeben</span>':'<span class="muted" style="font-weight:700">(nur für dich)</span>'}</summary><pre style="margin:0;padding:10px 14px;font-family:'JetBrains Mono',Consolas,monospace;font-size:13px;white-space:pre-wrap;overflow:auto">${esc(st.solution_sql)}</pre></details>`:''}
+    <label class="muted" style="font-size:12.5px;font-weight:800;display:block;margin-bottom:6px">Abgabe der/des Schüler:in${answer?'':' – (leer)'}</label>
+    <div id="revSqlHost"></div>`;
+  if(s.view){ try{ s.view.destroy(); }catch(e){} }
+  s.view = new SqlView("#revSqlHost", { dbText:s.dbText, query:answer, readonly:true, autofill:false });
+  pageView=s.view;
 }
 async function sqlStudentClassView(classId){
   shell(`<div class="center-load"><span class="spin"></span>Lädt…</div>`);
@@ -2229,6 +2286,11 @@ function fmtDate(s){ try{ const d=new Date(s); return d.toLocaleDateString("de-D
    Neueste Version zuerst. Bei jedem Deploy oben einen Eintrag ergänzen.
    ============================================================================ */
 const PATCH_NOTES = [
+  { v:"2.15", date:"28. Juni 2026", title:"SQL-Playground: Musterlösung freigeben & Abgaben einsehen", items:[
+    `<b>Musterlösung freigeben:</b> In der SQL-Aufgabenliste gibt es pro Aufgabe einen neuen Schalter <b>🔒/🏆</b>. Ist er aktiv (🏆 „Lösung frei"), können Schüler:innen die <b>Musterlösung jeder Teilaufgabe</b> in ihrer Aufgabe einblenden – vorher bleibt sie verborgen.`,
+    `<b>Abgaben einsehen:</b> In der <b>📊 Abgabe-Matrix</b> kannst du jetzt auf jede Zelle mit einer Abgabe klicken und die <b>Lösung der/des Schüler:in</b> ansehen – pro Teilaufgabe ihr/sein SQL, der Status (✓/~) und die Musterlösung. Mit <b>▶</b> lässt sich die Schüler-Abfrage gegen die Aufgaben-Datenbank laufen lassen (reine Ansicht, nichts wird verändert).`,
+    `<b>Nächste Schritte:</b> Rückmeldungen/Kommentare zu Abgaben (für Schüler:innen freigebbar) und Aufgaben-Vorlagen.`,
+  ]},
   { v:"2.14", date:"28. Juni 2026", title:"SQL-Playground: Abgabe-Matrix für Lehrkräfte", items:[
     `<b>Neue Abgabe-Matrix</b> in jeder SQL-Klasse: eine Tabelle <b>Schüler:innen × Aufgaben</b>. Jede Zelle zeigt auf einen Blick, wie viele <b>Teilaufgaben</b> der/die Schüler:in schon gelöst hat – als kleiner Farbbalken und als <b>Quote</b> (z. B. „3/5").`,
     `<b>Farben je Teilaufgabe:</b> 🟩 richtig · 🟧 bearbeitet, aber noch nicht richtig · ⬜ noch nicht bearbeitet. Sind <b>alle</b> Teilaufgaben richtig, erscheint ein <b>★</b>. Beim Überfahren mit der Maus zeigt jede Zelle die genaue Aufschlüsselung.`,
@@ -2390,7 +2452,7 @@ function patchNotesDialog(){
 }
 
 /* ---------- Footer: Versionsnummer (aus den Patch-Notes) + Copyright ---------- */
-const APP_BUILD = "2026-06-28 22:10";   // letztes Update (im Patch-Notes-Dialog angezeigt)
+const APP_BUILD = "2026-06-28 22:45";   // letztes Update (im Patch-Notes-Dialog angezeigt)
 (function(){ const f=document.getElementById("appfoot"); if(f){ const v=(typeof PATCH_NOTES!=="undefined"&&PATCH_NOTES[0])?PATCH_NOTES[0].v:""; f.textContent='© 2026 Laurens Offinger · Version '+v; } })();
 
 boot();
