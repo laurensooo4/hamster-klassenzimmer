@@ -376,6 +376,11 @@ api.sqlSaveSubmission = async (assignmentId, answers, results, passed)=>{ const 
 api.sqlClassSubmissions = async (assignmentIds)=>{ if(!assignmentIds.length) return []; const {data,error}=await sb.from("sql_submissions").select("assignment_id,student_id,results,passed,updated_at").in("assignment_id",assignmentIds); if(error) throw error; return data||[]; };   // RLS: nur Aufgaben, deren Lehrkraft ich bin (sqlsubm_teacher_read)
 api.sqlSubtaskIds = async (assignmentIds)=>{ if(!assignmentIds.length) return []; const {data,error}=await sb.from("sql_subtasks").select("id,assignment_id").in("assignment_id",assignmentIds); if(error) throw error; return data||[]; };   // RLS: nur als Lehrkraft sichtbar (sqlsub_teacher_all)
 api.sqlGetSubmission = async (assignmentId, studentId)=>{ const {data,error}=await sb.from("sql_submissions").select("*").eq("assignment_id",assignmentId).eq("student_id",studentId).maybeSingle(); if(error) throw error; return data; };   // Lehrer liest fremde Abgabe via sqlsubm_teacher_read
+/* SQL-Playground: Lehrer-Rückmeldungen/Kommentare zu Abgaben (für Schüler:in freigebbar; phaseQ) */
+api.sqlGetComment = async (submissionId)=>{ if(!submissionId) return null; const {data,error}=await sb.from("sql_submission_comments").select("*").eq("submission_id",submissionId).maybeSingle(); if(error) throw error; return data; };   // RLS: Lehrer immer, Schüler nur released+eigene
+api.sqlSaveComment = async (submissionId, body, released)=>{ const {data,error}=await sb.from("sql_submission_comments").upsert({submission_id:submissionId, author_id:ME.id, body, released, updated_at:new Date().toISOString()},{onConflict:"submission_id"}).select().single(); if(error) throw error; return data; };
+api.sqlDeleteComment = async (submissionId)=>{ const {error}=await sb.from("sql_submission_comments").delete().eq("submission_id",submissionId); if(error) throw error; };
+api.sqlClassComments = async (submissionIds)=>{ if(!submissionIds.length) return []; const {data,error}=await sb.from("sql_submission_comments").select("submission_id,released,body").in("submission_id",submissionIds); if(error) throw error; return data||[]; };   // für spätere Matrix-Hinweise
 
 /* Headless: Code auf frischer Kopie des Territoriums laufen lassen -> Endmodell (wirft bei Fehler) */
 function runHeadless(code, territory){
@@ -1831,11 +1836,13 @@ async function sqlReviewSubmission(assignmentId, studentId, studentName, classId
   if(!a){ document.getElementById("view").innerHTML=errBox({message:"Aufgabe nicht gefunden."}); return; }
   try{ subtasks=await api.sqlListSubtasks(assignmentId); }catch(e){ subtasks=[]; }
   try{ submission=await api.sqlGetSubmission(assignmentId, studentId); }catch(e){}
+  let comment=null; if(submission){ try{ comment=await api.sqlGetComment(submission.id); }catch(e){} }
   sqlReviewState = {
     assignmentId, classId, studentId, studentName,
     dbText:a.db_snapshot||"", title:a.title, description:a.description||"", released:!!a.released,
     subtasks, answers:(submission&&submission.answers)||{}, results:(submission&&submission.results)||{},
     passed: submission?submission.passed:null, updatedAt: submission?submission.updated_at:null,
+    submissionId: submission?submission.id:null, comment,
     selected:0, view:null
   };
   try{ SqlEngine.ensureStyles(); }catch(e){}
@@ -1856,9 +1863,22 @@ function renderSqlReview(){
     <div class="grid" style="grid-template-columns:230px 1fr;gap:14px;align-items:start">
       <div class="card"><h3 style="margin:0 0 10px">Teilaufgaben</h3><div class="list" id="revSubList">${subList||'<div class="muted" style="font-size:13px">Keine Teilaufgaben.</div>'}</div></div>
       <div class="card" id="revRight"></div>
-    </div>`;
+    </div>
+    ${s.submissionId?`<div class="card" style="margin-top:14px">
+      <h3 style="margin:0 0 8px">💬 Rückmeldung an ${esc(s.studentName)}</h3>
+      <textarea class="input" id="sqlRevComment" style="min-height:70px" placeholder="Kommentar zu dieser Abgabe…">${esc((s.comment&&s.comment.body)||"")}</textarea>
+      <div style="display:flex;gap:12px;align-items:center;margin-top:10px;flex-wrap:wrap">
+        <label style="display:flex;gap:8px;align-items:center;font-weight:800;cursor:pointer"><input type="checkbox" id="sqlRevRelease" style="width:18px;height:18px" ${s.comment&&s.comment.released?'checked':''}> Für Schüler:in sichtbar</label>
+        <div style="flex:1"></div>
+        <button class="btn btn-ghost btn-sm" id="sqlRevDelete" style="${s.comment?'':'display:none'}">Löschen</button>
+        <button class="btn btn-primary" id="sqlRevSave">Kommentar speichern</button>
+      </div>
+      <span id="sqlRevMsg" class="muted" style="display:block;margin-top:6px">${s.comment?(s.comment.released?'Für Schüler:in sichtbar ✓':'Gespeichert (noch nicht freigegeben)'):''}</span>
+    </div>`:''}`;
   document.getElementById("back").onclick = ()=> sqlTeacherClassView(s.classId);
-  document.querySelectorAll("#revSubList .sqst").forEach(row=> row.onclick=()=>{ s.selected=+row.dataset.i; renderSqlReview(); });
+  document.querySelectorAll("#revSubList .sqst").forEach(row=> row.onclick=()=>{ s.selected=+row.dataset.i; document.querySelectorAll("#revSubList .sqst").forEach(r=>{ const on=(+r.dataset.i===s.selected); r.style.background=on?'var(--line2)':''; r.style.borderRadius=on?'10px':''; }); renderSqlReviewRight(); });
+  { const sv=document.getElementById("sqlRevSave"); if(sv) sv.onclick=saveSqlReviewComment; }
+  { const dl=document.getElementById("sqlRevDelete"); if(dl) dl.onclick=deleteSqlReviewComment; }
   renderSqlReviewRight();
 }
 function renderSqlReviewRight(){
@@ -1874,6 +1894,30 @@ function renderSqlReviewRight(){
   if(s.view){ try{ s.view.destroy(); }catch(e){} }
   s.view = new SqlView("#revSqlHost", { dbText:s.dbText, query:answer, readonly:true, autofill:false });
   pageView=s.view;
+}
+async function saveSqlReviewComment(){
+  const s=sqlReviewState; if(!s||!s.submissionId) return;
+  const ta=document.getElementById("sqlRevComment"), rel=document.getElementById("sqlRevRelease");
+  const body=(ta?ta.value:"").trim(), released=!!(rel&&rel.checked);
+  if(!body){ toast("Bitte einen Kommentar eingeben.","err"); return; }
+  const btn=document.getElementById("sqlRevSave"); if(btn){ btn.disabled=true; btn.textContent="Speichere…"; }
+  try{ s.comment=await api.sqlSaveComment(s.submissionId, body, released);
+    const del=document.getElementById("sqlRevDelete"); if(del) del.style.display="";
+    const msg=document.getElementById("sqlRevMsg"); if(msg) msg.textContent=released?"Für Schüler:in sichtbar ✓":"Gespeichert (noch nicht freigegeben)";
+    toast("Kommentar gespeichert ✓","ok");
+  }catch(e){ toast(e.message||"Fehler","err"); }
+  finally{ if(btn){ btn.disabled=false; btn.textContent="Kommentar speichern"; } }
+}
+async function deleteSqlReviewComment(){
+  const s=sqlReviewState; if(!s||!s.submissionId||!s.comment) return;
+  if(!confirm("Kommentar löschen?")) return;
+  try{ await api.sqlDeleteComment(s.submissionId); s.comment=null;
+    const ta=document.getElementById("sqlRevComment"); if(ta) ta.value="";
+    const rel=document.getElementById("sqlRevRelease"); if(rel) rel.checked=false;
+    const del=document.getElementById("sqlRevDelete"); if(del) del.style.display="none";
+    const msg=document.getElementById("sqlRevMsg"); if(msg) msg.textContent="Kommentar gelöscht.";
+    toast("Gelöscht","ok");
+  }catch(e){ toast(e.message||"Fehler","err"); }
 }
 async function sqlStudentClassView(classId){
   shell(`<div class="center-load"><span class="spin"></span>Lädt…</div>`);
@@ -1905,10 +1949,12 @@ async function sqlSolveAssignment(assignmentId){
   if(!a){ document.getElementById("view").innerHTML=errBox({message:"Aufgabe nicht gefunden."}); return; }
   try{ subtasks=await api.sqlSubtasksForStudent(assignmentId); }catch(e){ subtasks=[]; }
   try{ submission=await api.sqlGetMySubmission(assignmentId); }catch(e){}
+  let comment=null; if(submission){ try{ comment=await api.sqlGetComment(submission.id); }catch(e){} }   // RLS: nur freigegebene eigene
   sqlSolveState = {
     assignmentId, classId:a.class_id, dbText:a.db_snapshot||"", released:!!a.released,
     title:a.title, description:a.description||"", subtasks:subtasks,
     answers:(submission&&submission.answers)||{}, results:(submission&&submission.results)||{},
+    teacherComment:(comment&&comment.body)||"",
     selected:0, view:null
   };
   try{ SqlEngine.ensureStyles(); }catch(e){}
@@ -1924,6 +1970,7 @@ function renderSqlSolve(){
     <div class="page-head"><button class="crumb" id="back">← Zur Klasse</button></div>
     <div class="page-head" style="margin-top:0"><h2>${esc(s.title)}</h2></div>
     ${s.description?`<div class="card" style="margin-bottom:12px;padding:12px 16px"><span class="muted" style="font-size:13.5px;white-space:pre-wrap">${esc(s.description)}</span></div>`:""}
+    ${s.teacherComment?`<div class="card" style="margin-bottom:12px;padding:12px 16px;border-left:4px solid var(--gold)"><b>💬 Rückmeldung deiner Lehrkraft:</b><div style="margin-top:4px;white-space:pre-wrap">${esc(s.teacherComment)}</div></div>`:""}
     <div class="grid" style="grid-template-columns:230px 1fr;gap:14px;align-items:start">
       <div class="card"><h3 style="margin:0 0 10px">Teilaufgaben</h3><div class="list" id="solveSubList">${subList||'<div class="muted" style="font-size:13px">Keine Teilaufgaben.</div>'}</div></div>
       <div class="card" id="solveRight"></div>
@@ -2286,6 +2333,11 @@ function fmtDate(s){ try{ const d=new Date(s); return d.toLocaleDateString("de-D
    Neueste Version zuerst. Bei jedem Deploy oben einen Eintrag ergänzen.
    ============================================================================ */
 const PATCH_NOTES = [
+  { v:"2.16", date:"28. Juni 2026", title:"SQL-Playground: Rückmeldungen zu Abgaben", items:[
+    `<b>Kommentar zur Abgabe:</b> In der Korrekturansicht (📊 Abgabe-Matrix → Zelle anklicken) kannst du der/dem Schüler:in jetzt eine <b>Rückmeldung</b> schreiben. Mit dem Schalter <b>„Für Schüler:in sichtbar"</b> entscheidest du, ob sie freigegeben wird – nicht freigegebene Kommentare bleiben für Schüler:innen vollständig unsichtbar (serverseitig abgesichert).`,
+    `<b>Schüler:innen sehen freigegebene Rückmeldungen</b> oben in ihrer Aufgabe (💬 Rückmeldung deiner Lehrkraft).`,
+    `<b>Nächste Schritte:</b> Aufgaben-Vorlagen (Aufgaben als Vorlage speichern und wiederverwenden).`,
+  ]},
   { v:"2.15", date:"28. Juni 2026", title:"SQL-Playground: Musterlösung freigeben & Abgaben einsehen", items:[
     `<b>Musterlösung freigeben:</b> In der SQL-Aufgabenliste gibt es pro Aufgabe einen neuen Schalter <b>🔒/🏆</b>. Ist er aktiv (🏆 „Lösung frei"), können Schüler:innen die <b>Musterlösung jeder Teilaufgabe</b> in ihrer Aufgabe einblenden – vorher bleibt sie verborgen.`,
     `<b>Abgaben einsehen:</b> In der <b>📊 Abgabe-Matrix</b> kannst du jetzt auf jede Zelle mit einer Abgabe klicken und die <b>Lösung der/des Schüler:in</b> ansehen – pro Teilaufgabe ihr/sein SQL, der Status (✓/~) und die Musterlösung. Mit <b>▶</b> lässt sich die Schüler-Abfrage gegen die Aufgaben-Datenbank laufen lassen (reine Ansicht, nichts wird verändert).`,
@@ -2452,7 +2504,7 @@ function patchNotesDialog(){
 }
 
 /* ---------- Footer: Versionsnummer (aus den Patch-Notes) + Copyright ---------- */
-const APP_BUILD = "2026-06-28 22:45";   // letztes Update (im Patch-Notes-Dialog angezeigt)
+const APP_BUILD = "2026-06-28 23:20";   // letztes Update (im Patch-Notes-Dialog angezeigt)
 (function(){ const f=document.getElementById("appfoot"); if(f){ const v=(typeof PATCH_NOTES!=="undefined"&&PATCH_NOTES[0])?PATCH_NOTES[0].v:""; f.textContent='© 2026 Laurens Offinger · Version '+v; } })();
 
 boot();
