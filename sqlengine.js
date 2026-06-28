@@ -31,7 +31,7 @@
       loadingP.catch(function(){ loadingP=null; });   // bei Fehler zurücksetzen -> erneuter Versuch möglich (sonst SQL-Tool bis Reload tot)
       return loadingP;
     },
-    run: async function(dbText){ var SQL=await SqlEngine.ensure(); var db=new SQL.Database(); db.run(dbText||""); return db; },
+    run: async function(dbText){ var SQL=await SqlEngine.ensure(); var db=new SQL.Database(); try{ db.run(dbText||""); }catch(e){ try{ db.close(); }catch(_){} throw e; } return db; },
     schema: function(db){
       var out=[], t;
       try{ t=db.exec("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"); }catch(e){ return out; }
@@ -108,6 +108,9 @@
       return '<div class="sqv-schtab"><b>'+esc(t.name)+"</b> &nbsp;"+cols+"</div>";
     }).join("");
   }
+
+  SqlEngine.ensureStyles = injectStyles;                                   // Styles laden (für eigenständige SQL-Editoren)
+  SqlEngine.schemaHtml = function(db){ injectStyles(); return schemaHtml(db); };
 
   class SqlView {
     constructor(host, opts){

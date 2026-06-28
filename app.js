@@ -349,6 +349,12 @@ api.setClassJoinOpen = async (classId, open)=>{ const {error}=await sb.from("cla
 api.regenerateClassCode = async (classId)=>{ for(let t=0;t<6;t++){ const code=genCode(6); const {error}=await sb.from("classes").update({code}).eq("id",classId); if(!error) return code; if(!/duplicate|unique/i.test(error.message)) throw error; } throw new Error("Konnte keinen eindeutigen Code erzeugen."); };
 api.adminSetRole = async (userId, role)=>{ const {error}=await sb.rpc("admin_set_role",{p_user:userId, p_role:role}); if(error) throw error; };
 api.adminSetDisplayName = async (userId, name)=>{ const {error}=await sb.rpc("admin_set_display_name",{p_user:userId, p_display:name}); if(error) throw error; };
+/* ===== SQL-Playground: Datenbank-Bibliothek ===== */
+api.sqlListDatabases = async ()=>{ const {data,error}=await sb.rpc("shared_sql_databases"); if(error) throw error; return data||[]; };
+api.sqlGetDatabase = async (id)=>{ const {data,error}=await sb.from("sql_databases").select("*").eq("id",id).single(); if(error) throw error; return data; };
+api.sqlCreateDatabase = async (d)=>{ const {data,error}=await sb.from("sql_databases").insert(Object.assign({owner_id:ME.id},d)).select().single(); if(error) throw error; return data; };
+api.sqlUpdateDatabase = async (id,patch)=>{ const {data,error}=await sb.from("sql_databases").update(Object.assign({updated_at:new Date().toISOString()},patch)).eq("id",id).select().single(); if(error) throw error; return data; };
+api.sqlDeleteDatabase = async (id)=>{ const {error}=await sb.from("sql_databases").delete().eq("id",id); if(error) throw error; };
 
 /* Headless: Code auf frischer Kopie des Territoriums laufen lassen -> Endmodell (wirft bei Fehler) */
 function runHeadless(code, territory){
@@ -1666,10 +1672,12 @@ async function sqlTeacherHome(){
   try{ classes = await api.myTeacherClasses(); }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
   document.getElementById("view").innerHTML = `
     <div class="page-head"><h2>🗄️ SQL · Meine Klassen</h2><div class="spacer"></div>
-      <button class="btn btn-ghost" id="btnSqlSandbox">🧪 Sandbox</button>
+      <button class="btn btn-ghost" id="btnSqlDatabases">🗄️ Datenbanken</button>
+      <button class="btn btn-ghost" id="btnSqlSandbox" style="margin-left:8px">🧪 Sandbox</button>
       <button class="btn btn-primary" id="btnNewClass" style="margin-left:8px">+ Neue Klasse</button></div>
     ${classes.length>1?`<div class="page-head" style="margin:0 0 12px">${classSearchSortControls()}</div>`:""}
     <div id="clsHost"></div>`;
+  document.getElementById("btnSqlDatabases").onclick = ()=> sqlDatabasesPage();
   document.getElementById("btnSqlSandbox").onclick = ()=> sqlSandbox();
   document.getElementById("btnNewClass").onclick = newClassDialog;
   wireClassOverview(classes, c=>`
@@ -1764,6 +1772,85 @@ async function sqlSandbox(){
   document.getElementById("sqlSbxReset").onclick = ()=> build(sel.value);
 }
 
+/* ---------- SQL-Playground: Datenbank-Bibliothek (Lehrkräfte) ---------- */
+async function sqlDatabasesPage(){
+  shell(`<div class="center-load"><span class="spin"></span>Datenbanken…</div>`);
+  let list=[]; try{ list=await api.sqlListDatabases(); }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
+  const rows = list.length ? `<div class="list">${list.map(d=>`
+      <div class="row clickrow" data-open="${d.id}" style="cursor:pointer">
+        <span class="grow"><span class="t">${esc(d.name)}</span><span class="s">von ${esc(d.owner_name)}${d.mine?" (du)":""} · ${d.shared?"🌍 geteilt":"🔒 privat"} · ${esc(fmtDateTime(d.updated_at))}</span></span>
+        ${(d.mine||ME.is_admin)?`<button class="btn btn-sm btn-ghost" data-del="${d.id}" data-nm="${esc(d.name)}" title="löschen">🗑️</button>`:""}
+        <span style="margin-left:8px;color:#7a8aa0">→</span></div>`).join("")}</div>`
+    : `<div class="empty"><span class="ic">🗄️</span>Noch keine Datenbanken. Lege deine erste an!</div>`;
+  document.getElementById("view").innerHTML = `
+    <div class="page-head"><button class="crumb" id="back">← SQL · Meine Klassen</button></div>
+    <div class="page-head" style="margin-top:0"><h2>🗄️ Datenbanken</h2><div class="spacer"></div>
+      <button class="btn btn-primary" id="btnNewDb">+ Neue Datenbank</button></div>
+    <div class="card" style="margin-bottom:12px;padding:12px 16px"><span class="muted" style="font-size:13px">Datenbanken für SQL-Aufgaben. <b>Geteilte</b> Datenbanken können auch andere Lehrkräfte verwenden; <b>private</b> nur du.</span></div>
+    ${rows}`;
+  document.getElementById("back").onclick = sqlTeacherHome;
+  document.getElementById("btnNewDb").onclick = ()=> sqlDatabaseEditorPage(null);
+  document.querySelectorAll(".clickrow[data-open]").forEach(r=> r.onclick=(e)=>{ if(e.target.closest("[data-del]")) return; const d=list.find(x=>x.id===r.dataset.open); sqlDatabaseEditorPage(d); });
+  document.querySelectorAll("[data-del]").forEach(b=> b.onclick=async(e)=>{ e.stopPropagation(); if(!confirm(`Datenbank „${b.dataset.nm}" wirklich löschen?`)) return; try{ await api.sqlDeleteDatabase(b.dataset.del); toast("Datenbank gelöscht","ok"); sqlDatabasesPage(); }catch(err){ toast(err.message||"Fehler","err"); } });
+}
+async function sqlDatabaseEditorPage(meta){
+  const isNew=!meta, canEdit=isNew||!!meta.mine||ME.is_admin;
+  shell(`<div class="center-load"><span class="spin"></span>Lädt…</div>`);
+  let sqlText="", name="", shared=false;
+  if(!isNew){
+    try{ const d=await api.sqlGetDatabase(meta.id); sqlText=d.sql_text||""; name=d.name||""; shared=!!d.shared; }
+    catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
+  }
+  try{ SqlEngine.ensureStyles(); }catch(e){}
+  const title = isNew?"Neue Datenbank":(canEdit?"Datenbank bearbeiten":esc(name));
+  document.getElementById("view").innerHTML = `
+    <div class="page-head"><button class="crumb" id="back">← Datenbanken</button></div>
+    <div class="page-head" style="margin-top:0"><h2>🗄️ ${title}</h2>${(!canEdit&&meta)?`<span class="badge gray" style="margin-left:8px;align-self:center">von ${esc(meta.owner_name)} · nur ansehen</span>`:""}</div>
+    <div class="card" style="margin-bottom:14px">
+      <div class="field" style="margin-bottom:${canEdit?"14px":"0"}"><label>Name</label><input class="input" id="dbName" maxlength="80" value="${esc(name)}" ${canEdit?"":"disabled"}></div>
+      ${canEdit?`<label style="display:flex;align-items:center;gap:8px;font-weight:700;font-size:14px;cursor:pointer"><input type="checkbox" id="dbShared" ${shared?"checked":""}> 🌍 Für andere Lehrkräfte freigeben</label>`:""}
+    </div>
+    <div class="page-head" style="margin:0 0 8px"><h3 style="margin:0">SQL-Code (erstellt die Datenbank)</h3><div class="spacer"></div>
+      ${canEdit?`<input type="file" id="dbFile" accept=".sql,.txt" style="display:none"><button class="btn btn-ghost btn-sm" id="dbOpen" title="SQL-Datei öffnen">📂 Datei öffnen</button>`:""}
+      <button class="btn btn-ghost btn-sm" id="dbDownload" style="margin-left:8px" title="als .sql herunterladen">⬇️ Download</button>
+      <button class="btn btn-blue btn-sm" id="dbRun" style="margin-left:8px">▶ Ausführen</button></div>
+    <textarea class="sqv-input" id="dbSql" style="min-height:220px" spellcheck="false" placeholder="CREATE TABLE …;  INSERT INTO … ;" ${canEdit?"":"readonly"}></textarea>
+    <div class="page-head" style="margin:14px 0 8px"><h3 style="margin:0">Datenbank-Schema</h3></div>
+    <div id="dbSchema"><div class="sqv-note" style="color:var(--muted);font-size:13px;padding:8px 2px">Führe den SQL-Code mit ▶ aus, um das Schema zu sehen.</div></div>
+    ${canEdit?`<div style="margin-top:16px"><button class="btn btn-primary btn-lg" id="dbSave">💾 Datenbank speichern</button></div>`:""}`;
+  document.getElementById("dbSql").value = sqlText;
+  document.getElementById("back").onclick = sqlDatabasesPage;
+  const runDb = async ()=>{
+    const txt=document.getElementById("dbSql").value, out=document.getElementById("dbSchema");
+    out.innerHTML='<div class="center-load"><span class="spin"></span>Wird ausgeführt…</div>';
+    let db=null;
+    try{ db=await SqlEngine.run(txt); }
+    catch(e){ out.innerHTML=`<div class="sqv-err">Fehler beim Ausführen: ${esc(e.message||e)}</div>`; return false; }
+    const sch=SqlEngine.schema(db);
+    out.innerHTML = (sch.length?`<div style="color:var(--green-d);font-weight:800;margin-bottom:8px">✓ Erfolgreich aufgebaut – ${sch.length} Tabelle(n)</div>`:'<div class="sqv-note" style="color:var(--muted);font-size:13px">Lief fehlerfrei, aber es wurden keine Tabellen erstellt.</div>') + SqlEngine.schemaHtml(db);
+    try{ db.close(); }catch(e){}
+    return true;
+  };
+  document.getElementById("dbRun").onclick = runDb;
+  document.getElementById("dbDownload").onclick = ()=>{ const txt=document.getElementById("dbSql").value; const nm=((document.getElementById("dbName").value||"").trim()||"datenbank").replace(/[^\w.\- ]+/g,"_")+".sql"; const blob=new Blob([txt],{type:"text/plain;charset=utf-8"}); const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=nm; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),1500); };
+  { const fo=document.getElementById("dbOpen"); if(fo){ const fi=document.getElementById("dbFile");
+      fo.onclick=()=> fi.click();
+      fi.onchange=(e)=>{ const f=e.target.files[0]; if(!f) return; const rd=new FileReader(); rd.onload=()=>{ document.getElementById("dbSql").value=String(rd.result||""); toast("Datei geladen ✓","ok"); }; rd.readAsText(f); }; } }
+  { const sv=document.getElementById("dbSave"); if(sv) sv.onclick=async()=>{
+      const nm=(document.getElementById("dbName").value||"").trim();
+      const txt=document.getElementById("dbSql").value;
+      const sh=!!(document.getElementById("dbShared")&&document.getElementById("dbShared").checked);
+      if(!nm){ toast("Bitte einen Namen eingeben.","err"); return; }
+      if(!txt.trim()){ toast("Bitte SQL-Code eingeben.","err"); return; }
+      sv.disabled=true; sv.textContent="Prüfe…";
+      let db=null; try{ db=await SqlEngine.run(txt); try{ db.close(); }catch(e){} }
+      catch(e){ sv.disabled=false; sv.textContent="💾 Datenbank speichern"; toast("SQL-Fehler – bitte korrigieren.","err"); document.getElementById("dbSchema").innerHTML=`<div class="sqv-err">Fehler: ${esc(e.message||e)}</div>`; return; }
+      sv.textContent="Speichere…";
+      try{ if(isNew) await api.sqlCreateDatabase({name:nm, sql_text:txt, shared:sh}); else await api.sqlUpdateDatabase(meta.id,{name:nm, sql_text:txt, shared:sh}); toast("Datenbank gespeichert ✓","ok"); sqlDatabasesPage(); }
+      catch(e){ sv.disabled=false; sv.textContent="💾 Datenbank speichern"; toast(e.message||"Fehler","err"); }
+  }; }
+}
+
 /* ============================================================================
    SANDBOX (freier Modus) – Schüler:innen bauen Welt + Code, speicherbar
    ============================================================================ */
@@ -1849,6 +1936,13 @@ function fmtDate(s){ try{ const d=new Date(s); return d.toLocaleDateString("de-D
    Neueste Version zuerst. Bei jedem Deploy oben einen Eintrag ergänzen.
    ============================================================================ */
 const PATCH_NOTES = [
+  { v:"2.11", date:"28. Juni 2026", title:"SQL-Playground: Datenbank-Bibliothek", items:[
+    `Neuer Knopf <b>🗄️ Datenbanken</b> im SQL-Tool: Lehrkräfte legen hier eigene <b>Datenbanken</b> an – Name vergeben und den <b>SQL-Code</b> eingeben, der die Datenbank erstellt (Tabellen + Daten).`,
+    `<b>▶ Ausführen</b> testet den Code sofort und zeigt darunter das entstandene <b>Datenbank-Schema</b> (Tabellen + Spalten, Primärschlüssel hervorgehoben). Gespeichert wird nur, wenn der Code fehlerfrei läuft.`,
+    `<b>Teilen:</b> Eine Datenbank kann <b>für andere Lehrkräfte freigegeben</b> (oder privat gehalten) werden; in der Liste steht jeweils der <b>Ersteller</b>. Geteilte Datenbanken sehen andere Lehrkräfte nur zum Ansehen/Verwenden.`,
+    `SQL-Code lässt sich aus einer <b>.sql-Datei laden</b> (📂) und als <b>.sql herunterladen</b> (⬇️).`,
+    `Diese Datenbanken sind die Grundlage für die <b>SQL-Aufgaben</b>, die als Nächstes kommen.`,
+  ]},
   { v:"2.10", date:"28. Juni 2026", title:"SQL-Playground: SQL-Sandbox (erste Funktion)", items:[
     `<b>🧪 SQL-Sandbox</b> im SQL-Tool: Wähle eine <b>Beispiel-Datenbank</b> (SQL Island oder Fußball – oder eine leere), klappe das <b>Datenbank-Schema</b> auf, schreib eine <b>SQL-Abfrage</b> und führe sie mit <b>▶ Ausführen</b> (oder <b>Strg+Enter</b>) aus – das Ergebnis erscheint als Tabelle.`,
     `Die Datenbank läuft <b>komplett im Browser</b> (SQLite) – du kannst gefahrlos alles ausprobieren (auch <code>CREATE</code>/<code>INSERT</code>/<code>UPDATE</code>); mit <b>↺ Zurücksetzen</b> ist die Datenbank wieder im Ausgangszustand. In der Sandbox wird nichts gespeichert.`,
@@ -1983,7 +2077,7 @@ function patchNotesDialog(){
 }
 
 /* ---------- Footer: Versionsnummer (aus den Patch-Notes) + Copyright ---------- */
-const APP_BUILD = "2026-06-28 19:38";   // letztes Update (im Patch-Notes-Dialog angezeigt)
+const APP_BUILD = "2026-06-28 20:23";   // letztes Update (im Patch-Notes-Dialog angezeigt)
 (function(){ const f=document.getElementById("appfoot"); if(f){ const v=(typeof PATCH_NOTES!=="undefined"&&PATCH_NOTES[0])?PATCH_NOTES[0].v:""; f.textContent='© 2026 Laurens Offinger · Version '+v; } })();
 
 boot();
