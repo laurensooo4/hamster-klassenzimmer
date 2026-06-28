@@ -1666,9 +1666,11 @@ async function sqlTeacherHome(){
   try{ classes = await api.myTeacherClasses(); }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
   document.getElementById("view").innerHTML = `
     <div class="page-head"><h2>🗄️ SQL · Meine Klassen</h2><div class="spacer"></div>
-      <button class="btn btn-primary" id="btnNewClass">+ Neue Klasse</button></div>
+      <button class="btn btn-ghost" id="btnSqlSandbox">🧪 Sandbox</button>
+      <button class="btn btn-primary" id="btnNewClass" style="margin-left:8px">+ Neue Klasse</button></div>
     ${classes.length>1?`<div class="page-head" style="margin:0 0 12px">${classSearchSortControls()}</div>`:""}
     <div id="clsHost"></div>`;
+  document.getElementById("btnSqlSandbox").onclick = ()=> sqlSandbox();
   document.getElementById("btnNewClass").onclick = newClassDialog;
   wireClassOverview(classes, c=>`
       <div class="card click" data-id="${c.id}"><h3>${esc(c.name)}</h3>
@@ -1683,7 +1685,7 @@ async function sqlStudentHome(){
   try{ classes = await api.myClasses(); }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
   if(!classes.length){
     document.getElementById("view").innerHTML = `
-      <div class="page-head"><h2>🗄️ SQL-Playground</h2></div>
+      <div class="page-head"><h2>🗄️ SQL-Playground</h2><div class="spacer"></div><button class="btn btn-ghost" id="btnSqlSandbox">🧪 Sandbox</button></div>
       <div class="card" style="max-width:480px;margin:0 auto;text-align:center">
         <div style="font-size:46px">🔑</div>
         <h3 style="margin:6px 0">Tritt deiner Klasse bei</h3>
@@ -1691,13 +1693,15 @@ async function sqlStudentHome(){
         <div class="field"><input class="input" id="joinCode" placeholder="z. B. K7Q2MX" maxlength="8" style="text-align:center;text-transform:uppercase;letter-spacing:3px;font-family:monospace;font-size:22px"></div>
         <button class="btn btn-primary btn-lg" id="btnJoin">Beitreten</button>
       </div>`;
-    wireJoin(); return;
+    wireJoin(); { const sx=document.getElementById("btnSqlSandbox"); if(sx) sx.onclick=()=> sqlSandbox(); } return;
   }
   document.getElementById("view").innerHTML = `
     <div class="page-head"><h2>🗄️ SQL · Meine Klassen</h2><div class="spacer"></div>
-      <button class="btn btn-ghost" id="btnJoinMore">+ Klasse beitreten</button></div>
+      <button class="btn btn-ghost" id="btnSqlSandbox">🧪 Sandbox</button>
+      <button class="btn btn-ghost" id="btnJoinMore" style="margin-left:8px">+ Klasse beitreten</button></div>
     ${classes.length>1?`<div class="page-head" style="margin:0 0 12px">${classSearchSortControls()}</div>`:""}
     <div id="clsHost"></div>`;
+  document.getElementById("btnSqlSandbox").onclick = ()=> sqlSandbox();
   document.getElementById("btnJoinMore").onclick = joinDialog;
   wireClassOverview(classes, c=>`
       <div class="card click" data-id="${c.id}"><h3>${esc(c.name)}</h3>
@@ -1735,6 +1739,29 @@ async function sqlStudentClassView(classId){
     <div class="page-head" style="margin-top:0"><h2>${esc(cls?cls.name:"Klasse")}</h2></div>
     <div class="card" style="text-align:center;padding:26px"><div style="font-size:40px">🚧</div><h3 style="margin:6px 0">Hier kommen bald SQL-Aufgaben</h3><p class="muted" style="margin:0">Deine Lehrkraft stellt in Kürze Aufgaben. Schau später wieder rein!</p></div>`;
   document.getElementById("back").onclick = sqlStudentHome;
+}
+
+/* ---------- SQL-Sandbox (freies Ausprobieren, nichts wird gespeichert) ---------- */
+async function sqlSandbox(){
+  shell(`<div class="page-head"><button class="crumb" id="back">← Zurück</button></div>
+    <div class="page-head" style="margin-top:0"><h2>🧪 SQL-Sandbox</h2><div class="spacer"></div>
+      <label class="muted" style="font-size:13px;font-weight:800;align-self:center">Datenbank:</label>
+      <select class="input" id="sqlSbxDb" style="max-width:200px;margin-left:8px;width:auto"></select>
+      <button class="btn btn-ghost btn-sm" id="sqlSbxReset" style="margin-left:8px" title="Datenbank in den Ausgangszustand zurücksetzen">↺ Zurücksetzen</button></div>
+    <div class="card" style="margin-bottom:12px;padding:12px 16px"><span class="muted" style="font-size:13px">Probiere SQL frei aus: Datenbank wählen, Abfrage schreiben und mit ▶ (oder Strg+Enter) ausführen. Hier wird nichts gespeichert.</span></div>
+    <div id="sqlSbxHost"><div class="center-load"><span class="spin"></span>SQL-Engine wird geladen…</div></div>`);
+  document.getElementById("back").onclick = ()=> (ME.role==="teacher"?sqlTeacherHome():sqlStudentHome());
+  try{ await SqlEngine.ensure(); }
+  catch(e){ const h=document.getElementById("sqlSbxHost"); if(h) h.innerHTML=errBox({message:"SQL-Engine konnte nicht geladen werden: "+(e.message||e)}); return; }
+  const sel=document.getElementById("sqlSbxDb"); if(!sel) return;   // Nutzer hat während des Ladens weggeklickt
+  const samples=SqlEngine.samples();
+  sel.innerHTML = samples.map(s=>`<option value="${esc(s.id)}">${esc(s.name)}</option>`).join("") + `<option value="__empty">(leere Datenbank)</option>`;
+  const dbTextFor = id=>{ if(id==="__empty") return ""; const s=samples.find(x=>x.id===id); return s?s.sql:""; };
+  let view=null;
+  const build = (id)=>{ if(view){ try{ view.destroy(); }catch(e){} } view=new SqlView("#sqlSbxHost",{ dbText:dbTextFor(id) }); pageView=view; };
+  build(sel.value);
+  sel.onchange = ()=> build(sel.value);
+  document.getElementById("sqlSbxReset").onclick = ()=> build(sel.value);
 }
 
 /* ============================================================================
@@ -1822,6 +1849,11 @@ function fmtDate(s){ try{ const d=new Date(s); return d.toLocaleDateString("de-D
    Neueste Version zuerst. Bei jedem Deploy oben einen Eintrag ergänzen.
    ============================================================================ */
 const PATCH_NOTES = [
+  { v:"2.10", date:"28. Juni 2026", title:"SQL-Playground: SQL-Sandbox (erste Funktion)", items:[
+    `<b>🧪 SQL-Sandbox</b> im SQL-Tool: Wähle eine <b>Beispiel-Datenbank</b> (SQL Island oder Fußball – oder eine leere), klappe das <b>Datenbank-Schema</b> auf, schreib eine <b>SQL-Abfrage</b> und führe sie mit <b>▶ Ausführen</b> (oder <b>Strg+Enter</b>) aus – das Ergebnis erscheint als Tabelle.`,
+    `Die Datenbank läuft <b>komplett im Browser</b> (SQLite) – du kannst gefahrlos alles ausprobieren (auch <code>CREATE</code>/<code>INSERT</code>/<code>UPDATE</code>); mit <b>↺ Zurücksetzen</b> ist die Datenbank wieder im Ausgangszustand. In der Sandbox wird nichts gespeichert.`,
+    `<b>Klassen, Aufgaben mit Teilaufgaben und Abgaben</b> für den SQL-Playground folgen in den nächsten Updates.`,
+  ]},
   { v:"2.9", date:"28. Juni 2026", title:"Mehr-Tool-Plattform, SQL-Playground (Start) & Dark-Mode", items:[
     `<b>Mehrere Lern-Tools:</b> Nach dem Login wählst du jetzt aus, <b>welches Tool</b> du nutzen möchtest – den <b>🐹 Hamster-Simulator</b> oder den neuen <b>🗄️ SQL-Playground</b>. <b>Filius</b> und <b>Java</b> sind schon aufgeführt, aber noch deaktiviert (folgen später). Wechseln kannst du jederzeit oben im Konto-Menü unter <b>„🔀 Tool wechseln"</b>.`,
     `<b>SQL-Playground startet:</b> Du kannst bereits <b>SQL-Klassen anlegen</b> und Schüler:innen per Code beitreten lassen. <b>Datenbanken, Aufgaben mit Teilaufgaben und Abgaben</b> folgen Schritt für Schritt in den nächsten Updates.`,
@@ -1951,7 +1983,7 @@ function patchNotesDialog(){
 }
 
 /* ---------- Footer: Versionsnummer (aus den Patch-Notes) + Copyright ---------- */
-const APP_BUILD = "2026-06-28 19:17";   // letztes Update (im Patch-Notes-Dialog angezeigt)
+const APP_BUILD = "2026-06-28 19:38";   // letztes Update (im Patch-Notes-Dialog angezeigt)
 (function(){ const f=document.getElementById("appfoot"); if(f){ const v=(typeof PATCH_NOTES!=="undefined"&&PATCH_NOTES[0])?PATCH_NOTES[0].v:""; f.textContent='© 2026 Laurens Offinger · Version '+v; } })();
 
 boot();
