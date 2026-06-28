@@ -190,7 +190,44 @@
     .auth-card{padding:24px 20px}
     .role-pick{grid-template-columns:1fr 1fr}
   }
+
+  /* ---------- Tool-Launcher ---------- */
+  .toolgrid{grid-template-columns:repeat(auto-fill,minmax(220px,1fr));max-width:760px;margin:0 auto}
+  .card.tool{text-align:center;padding:24px 16px}
+  .card.tool .ticon{font-size:46px;line-height:1;margin-bottom:6px}
+  .card.tool.disabled{opacity:.55;filter:grayscale(.6);cursor:not-allowed}
+
+  /* ---------- Dark Mode (hell/dunkel/automatisch) ---------- */
+  :root[data-theme="dark"]{
+    --ink:#e7edf5; --muted:#9aa7b8; --line:#2b3442; --line2:#222b37;
+    --bg:#141a22; --card:#1e2531; --green-l:#26361b;
+    --shadow:0 8px 26px rgba(0,0,0,.55);
+  }
+  :root[data-theme="dark"] body{background:var(--bg)}
+  :root[data-theme="dark"] .topbar{background:var(--card)}
+  :root[data-theme="dark"] .menu{background:var(--card)}
+  :root[data-theme="dark"] .menu-item.danger:hover{background:#3a1f22}
+  :root[data-theme="dark"] .input{background:#161d27;color:var(--ink);border-color:var(--line)}
+  :root[data-theme="dark"] .input:focus{background:#1e2531}
+  :root[data-theme="dark"] .btn-ghost{background:#1e2531;color:var(--ink);box-shadow:0 0 0 2px var(--line) inset}
+  :root[data-theme="dark"] .tabs button.active{background:#2b3442;color:var(--ink)}
+  :root[data-theme="dark"] .role-opt{background:#1e2531}
+  :root[data-theme="dark"] .codechip{background:#2a2410;color:var(--gold)}
+  :root[data-theme="dark"] .modal{background:var(--card)}
+  :root[data-theme="dark"] .matrix-wrap{background:var(--card)}
+  :root[data-theme="dark"] table.matrix thead th,
+  :root[data-theme="dark"] table.matrix th.stu,
+  :root[data-theme="dark"] table.matrix td.stu{background:var(--card)}
+  :root[data-theme="dark"] table.matrix tbody tr:nth-child(even) td,
+  :root[data-theme="dark"] table.matrix tbody tr:nth-child(even) td.stu{background:#18202b}
+  :root[data-theme="dark"] .row{background:var(--card)}
+  :root[data-theme="dark"] .abtn:not(.on){background:#1e2531;color:var(--ink)}
+  :root[data-theme="dark"] .abtn:not(.on):hover{background:#27303d}
+  :root[data-theme="dark"] .patch-fab{background:var(--card);color:var(--ink)}
+  :root[data-theme="dark"] #appfoot{background:rgba(20,26,34,.93)}
+  :root[data-theme="dark"] .auth-wrap{background:radial-gradient(1200px 500px at 50% -10%, #102438, transparent), var(--bg)}
 </style>
+<script>(function(){try{var p=localStorage.getItem('themePref')||'auto';var d=p==='dark'||(p==='auto'&&window.matchMedia&&window.matchMedia('(prefers-color-scheme:dark)').matches);document.documentElement.setAttribute('data-theme',d?'dark':'light');}catch(e){}})();</script>
 </head>
 <body>
   <div id="splash"><div class="h">🐹</div><div class="t">Informatik am Gymnasium Wesermünde lädt…</div></div>
@@ -200,7 +237,7 @@
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="config.js"></script>
-  <script src="engine.js?v=h11"></script>
-  <script src="app.js?v=h11"></script>
+  <script src="engine.js?v=h12"></script>
+  <script src="app.js?v=h12"></script>
 </body>
 </html>

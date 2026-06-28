@@ -8,6 +8,7 @@ const sb = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_KEY
 });
 
 let ME = null;          // aktuelles Profil {id, username, role, display_name}
+let ACTIVE_TOOL = null; // gewähltes Lern-Tool: 'hamster' | 'sql' (null => Tool-Auswahl zeigen)
 const app = () => document.getElementById("app");
 
 /* ---------- Helfer ---------- */
@@ -18,6 +19,18 @@ const initials = s => (s||"?").trim().slice(0,1).toUpperCase();
 function toast(msg, type){ const t=document.getElementById("toast"); t.textContent=msg; t.className=(type||"")+" show"; clearTimeout(toast._t); toast._t=setTimeout(()=>t.className=t.className.replace("show","").trim(),2400); }
 function hideSplash(){ const s=document.getElementById("splash"); if(s) s.classList.add("hide"); }
 const HAMSTER = "🐹";
+
+/* ---------- Theme (hell / dunkel / automatisch) ---------- */
+function themePref(){ try{ return localStorage.getItem("themePref")||"auto"; }catch(e){ return "auto"; } }
+function themeIsDark(p){ p=p||themePref(); return p==="dark" || (p==="auto" && window.matchMedia && window.matchMedia("(prefers-color-scheme:dark)").matches); }
+function applyTheme(){
+  const p=themePref();
+  document.documentElement.setAttribute("data-theme", themeIsDark(p)?"dark":"light");
+  const b=document.getElementById("themeBtn");
+  if(b){ b.textContent = p==="dark"?"🌙":p==="light"?"☀️":"🌗"; b.title = "Design: "+(p==="dark"?"Dunkel":p==="light"?"Hell":"Automatisch (System)")+" – klicken zum Wechseln"; }
+}
+function cycleTheme(){ const order=["auto","light","dark"]; const next=order[(order.indexOf(themePref())+1)%order.length]; try{ localStorage.setItem("themePref", next); }catch(e){} applyTheme(); }
+if(window.matchMedia){ try{ window.matchMedia("(prefers-color-scheme:dark)").addEventListener("change", ()=>{ if(themePref()==="auto") applyTheme(); }); }catch(e){} }
 
 /* ---------- Modal ---------- */
 function openModal(html, wide){
@@ -32,13 +45,14 @@ function closeModal(){ if(typeof modalView!=="undefined" && modalView){ try{ mod
 
 /* ---------- Boot / Routing ---------- */
 async function boot(){
+  applyTheme();
   try{
     const { data:{ session } } = await sb.auth.getSession();
     if(session) await loadMe(session.user.id);
   }catch(e){ console.error(e); }
   hideSplash();
   route();
-  sb.auth.onAuthStateChange((event)=>{ if(event==="SIGNED_OUT"){ ME=null; route(); } });
+  sb.auth.onAuthStateChange((event)=>{ if(event==="SIGNED_OUT"){ ME=null; ACTIVE_TOOL=null; route(); } });
 }
 async function loadMe(uid){
   const { data, error } = await sb.from("profiles").select("*").eq("id", uid).maybeSingle();
@@ -49,10 +63,35 @@ async function loadMe(uid){
 let viewFromAdmin=false;   // merkt sich, ob eine Klasse aus der Admin-Ansicht geöffnet wurde
 function route(){
   if(!ME){ renderAuth(); return; }
+  if(!ACTIVE_TOOL){ toolLauncher(); return; }
+  if(ACTIVE_TOOL==="sql"){ if(ME.role==="teacher") sqlTeacherHome(); else sqlStudentHome(); return; }
   if(ME.role==="teacher") teacherHome();
   else studentHome();
 }
-async function signOut(){ await sb.auth.signOut(); ME=null; renderAuth(); }
+async function signOut(){ await sb.auth.signOut(); ME=null; ACTIVE_TOOL=null; renderAuth(); }
+
+/* ---------- Tool-Auswahl (Launcher) ---------- */
+const TOOLS = [
+  { id:"hamster", name:"Hamster-Simulator", icon:"🐹", desc:"Programmieren lernen mit dem Hamster", active:true },
+  { id:"sql",     name:"SQL-Playground",    icon:"🗄️", desc:"Datenbanken & SQL-Abfragen üben",     active:true },
+  { id:"filius",  name:"Filius",            icon:"🌐", desc:"Computernetzwerke verstehen",          active:false },
+  { id:"java",    name:"Java",              icon:"☕", desc:"Java programmieren",                   active:false },
+];
+function toolLauncher(){
+  shell(`<div class="page-head" style="justify-content:center;text-align:center"><div>
+      <h2 style="margin:0">Was möchtest du nutzen?</h2>
+      <p class="muted" style="margin:6px 0 0">Wähle ein Lern-Tool – wechseln kannst du jederzeit oben im Konto-Menü.</p></div></div>
+    <div class="grid toolgrid">${TOOLS.map(t=>`
+      <div class="card tool ${t.active?"click":"disabled"}" ${t.active?`data-tool="${t.id}"`:""}>
+        <div class="ticon">${t.icon}</div>
+        <h3 style="margin:0 0 4px">${esc(t.name)}</h3>
+        <div class="meta">${esc(t.desc)}</div>
+        ${t.active?"":'<div style="margin-top:10px"><span class="badge gray">in Arbeit</span></div>'}
+      </div>`).join("")}</div>`);
+  document.querySelectorAll(".card.tool.click[data-tool]").forEach(c=> c.onclick=()=> setTool(c.dataset.tool));
+}
+function setTool(id){ ACTIVE_TOOL=id; route(); }
+function switchTool(){ ACTIVE_TOOL=null; route(); }
 
 /* ============================================================================
    AUTH-SCREEN (Duolingo-Stil)
@@ -109,6 +148,7 @@ async function doLogin(){
     await sb.from("profiles").insert({ id:data.user.id, username:normUser(u), role:"student", display_name:u.trim() });
     await loadMe(data.user.id);
   }
+  ACTIVE_TOOL=null;   // neue Anmeldung -> immer Tool-Auswahl zeigen (geteiltes Gerät)
   route();
 }
 async function doRegister(){
@@ -123,6 +163,7 @@ async function doRegister(){
   if(role==="teacher" && !code){ authMsg("Bitte den Lehrer-Code eingeben."); return; }
   const displayName = first+" "+last;
   setBusy(true);
+  ACTIVE_TOOL=null;   // Standard: nach Registrierung Tool-Auswahl (bei Klassencode-Beitritt unten überschrieben)
   // 1) Code prüfen, BEVOR ein Account angelegt wird
   let className=null;
   if(role==="teacher"){
@@ -146,7 +187,7 @@ async function doRegister(){
   } else {
     const { error:e2 } = await sb.from("profiles").insert({ id:uid, username:u, role:"student", display_name:displayName });
     if(e2){ setBusy(false); if(/duplicate|unique/i.test(e2.message)) authMsg("Dieser Benutzername ist schon vergeben."); else authMsg("Profil konnte nicht angelegt werden: "+e2.message); return; }
-    if(code){ const { error:e3 } = await sb.rpc("join_class", { p_code: code }); if(e3){ setBusy(false); authMsg("Beitritt fehlgeschlagen: "+e3.message); return; } }
+    if(code){ const { data:jc, error:e3 } = await sb.rpc("join_class", { p_code: code }); if(e3){ setBusy(false); authMsg("Beitritt fehlgeschlagen: "+e3.message); return; } const j=Array.isArray(jc)?jc[0]:jc; if(j&&j.tool) ACTIVE_TOOL=j.tool; }
   }
   await loadMe(uid);
   toast(className?("Willkommen in "+className+", "+first+"! 🎉"):("Willkommen, "+first+"! 🎉"),"ok");
@@ -164,10 +205,12 @@ function shell(inner){
     <div class="topbar">
       <div class="brand"><span class="h">${HAMSTER}</span> Informatik am Gymnasium Wesermünde</div>
       <div class="spacer"></div>
+      <button class="btn btn-ghost btn-sm" id="themeBtn" title="Design wechseln" style="margin-right:8px">🌗</button>
       ${roleBadge}
       <div class="usermenu">
         <button class="chip ${ME.role} chipbtn" id="userBtn" title="Konto-Menü"><span class="av">${esc(initials(ME.display_name||ME.username))}</span>${esc(ME.display_name||ME.username)}<span class="caret">▾</span></button>
         <div class="menu" id="userMenu" style="display:none">
+          <button class="menu-item" data-act="switch">🔀 Tool wechseln</button>
           ${ME.is_admin?`<button class="menu-item" data-act="admin">🛠️ Admin-Bereich</button>`:""}
           <button class="menu-item" data-act="pw">🔑 Passwort ändern</button>
           <button class="menu-item danger" data-act="logout">🚪 Abmelden</button>
@@ -179,11 +222,13 @@ function shell(inner){
   { const ub=document.getElementById("userBtn"), um=document.getElementById("userMenu");
     if(ub&&um){
       ub.onclick=(e)=>{ e.stopPropagation(); um.style.display = (um.style.display==="none"?"block":"none"); };
-      um.querySelectorAll("[data-act]").forEach(b=> b.onclick=()=>{ const a=b.dataset.act; um.style.display="none"; if(a==="admin") adminHome(); else if(a==="pw") changePasswordDialog(); else if(a==="logout") signOut(); });
+      um.querySelectorAll("[data-act]").forEach(b=> b.onclick=()=>{ const a=b.dataset.act; um.style.display="none"; if(a==="switch") switchTool(); else if(a==="admin") adminHome(); else if(a==="pw") changePasswordDialog(); else if(a==="logout") signOut(); });
     }
   }
   if(!window._umClose){ window._umClose=true; document.addEventListener("click",(e)=>{ const um=document.getElementById("userMenu"); if(um && um.style.display!=="none" && !e.target.closest("#userMenu") && !e.target.closest("#userBtn")) um.style.display="none"; }); }
   { const bp=document.getElementById("btnPatch"); if(bp) bp.onclick = patchNotesDialog; }
+  { const tb=document.getElementById("themeBtn"); if(tb) tb.onclick = cycleTheme; }
+  applyTheme();
   document.getElementById("view").innerHTML = inner;
 }
 
@@ -195,23 +240,25 @@ function genCode(n){ n=n||6; let s=""; const a=new Uint32Array(n); window.crypto
 
 const api = {
   async myClasses(){
-    const { data, error } = await sb.from("classes").select("*").order("created_at",{ascending:false});
+    const { data, error } = await sb.from("classes").select("*").eq("tool", ACTIVE_TOOL||"hamster").order("created_at",{ascending:false});
     if(error) throw error; return data||[];
   },
-  // Lehrer-Ansicht: NUR eigene + Klassen, in denen ich Co-Lehrkraft bin (auch als Admin)
+  // Lehrer-Ansicht: NUR eigene + Klassen, in denen ich Co-Lehrkraft bin (auch als Admin) – gefiltert nach aktivem Tool
   async myTeacherClasses(){
-    const own = await sb.from("classes").select("*").eq("teacher_id", ME.id); if(own.error) throw own.error;
+    const tool = ACTIVE_TOOL||"hamster";
+    const own = await sb.from("classes").select("*").eq("teacher_id", ME.id).eq("tool", tool); if(own.error) throw own.error;
     const ct = await sb.from("class_teachers").select("class_id").eq("teacher_id", ME.id); if(ct.error) throw ct.error;
     const coIds = (ct.data||[]).map(r=>r.class_id);
-    let co=[]; if(coIds.length){ const r = await sb.from("classes").select("*").in("id", coIds); if(r.error) throw r.error; co=r.data||[]; }
+    let co=[]; if(coIds.length){ const r = await sb.from("classes").select("*").in("id", coIds); if(r.error) throw r.error; co=(r.data||[]).filter(c=>c.tool===tool); }
     const map=new Map(); [...(own.data||[]), ...co].forEach(c=> map.set(c.id, c));
     return [...map.values()].sort((a,b)=> new Date(b.created_at)-new Date(a.created_at));
   },
   async deleteClass(id){ const { error } = await sb.from("classes").delete().eq("id", id); if(error) throw error; },
   async createClass(name){
+    const tool = ACTIVE_TOOL||"hamster";
     for(let tries=0; tries<5; tries++){
       const code = genCode(6);
-      const { data, error } = await sb.from("classes").insert({ name, code, teacher_id:ME.id }).select().single();
+      const { data, error } = await sb.from("classes").insert({ name, code, teacher_id:ME.id, tool }).select().single();
       if(!error) return data;
       if(!/duplicate|unique/i.test(error.message)) throw error;
     }
@@ -872,7 +919,7 @@ async function adminHome(){
       <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px"><h3 style="margin:0">👥 Nutzer:innen <span class="badge gray">${users.length}</span> <span class="muted" style="font-weight:600;font-size:12px">· ${tN} Lehrkräfte · ${sN} Schüler:innen${aN?" · "+aN+" Admin":""}</span></h3><div style="flex:1"></div>
         <button class="btn btn-ghost btn-sm" id="admImport" style="margin-right:8px">📥 Importieren</button><input class="input" id="admUsrSearch" placeholder="🔍 Name · Benutzername" style="max-width:260px"></div>
       <div id="admUsers" style="margin-top:12px"></div></div>`;
-  document.getElementById("admBack").onclick = teacherHome;
+  document.getElementById("admBack").onclick = ()=> route();   // zurück ins aktive Tool (nicht hart Hamster)
   document.getElementById("btnNewClass").onclick = newClassDialog;
   const cs=document.getElementById("admClsSearch"), us=document.getElementById("admUsrSearch");
   cs.oninput=()=> renderAdminClasses(cs.value); us.oninput=()=> renderAdminUsers(us.value);
@@ -884,11 +931,12 @@ function renderAdminClasses(q){
   q=(q||"").trim().toLowerCase();
   const tname=c=>(c.teacher&&(c.teacher.display_name||c.teacher.username))||"";
   const list=adminState.classes.filter(c=> !q || (c.name||"").toLowerCase().includes(q)||(c.code||"").toLowerCase().includes(q)||tname(c).toLowerCase().includes(q));
+  const toolBadge=c=> c.tool==="sql"?'<span class="badge blue" style="margin-left:6px">SQL</span>':'<span class="badge gray" style="margin-left:6px">Hamster</span>';
   el.innerHTML = list.length ? `<div class="grid">${list.map(c=>`
-      <div class="card click" data-id="${c.id}"><h3>${esc(c.name)}</h3>
+      <div class="card click" data-id="${c.id}" data-tool="${esc(c.tool||"hamster")}"><h3>${esc(c.name)}${toolBadge(c)}</h3>
         <div class="meta">Code: <b>${esc(c.code)}</b> · 👩‍🏫 ${esc(tname(c)||"–")}</div></div>`).join("")}</div>`
     : `<div class="empty" style="padding:14px"><span class="ic">🔍</span>Keine Klasse gefunden.</div>`;
-  el.querySelectorAll(".card.click").forEach(c=> c.onclick=()=>{ viewFromAdmin=true; teacherClassView(c.dataset.id); });
+  el.querySelectorAll(".card.click").forEach(c=> c.onclick=()=>{ viewFromAdmin=true; (c.dataset.tool==="sql"?sqlTeacherClassView:teacherClassView)(c.dataset.id); });
 }
 function renderAdminUsers(q){
   const el=document.getElementById("admUsers"); if(!el||!adminState) return;
@@ -969,14 +1017,14 @@ async function adminUserProfile(userId){
   let classesHtml="";
   try{
     if(prof.role==="student"){
-      const {data:ms}=await sb.from("memberships").select("joined_at, classes:class_id(id,name,code,teacher:teacher_id(display_name,username))").eq("student_id",userId);
-      const rows=(ms||[]).map(m=>{ const c=m.classes||{}; const t=c.teacher||{}; return `<div class="row clickrow" data-cls="${c.id}" style="cursor:pointer"><span class="grow"><span class="t">${esc(c.name||"?")}</span><span class="s">Code: ${esc(c.code||"–")} · 👩‍🏫 ${esc(t.display_name||t.username||"–")}</span></span><span style="color:#7a8aa0">→</span></div>`; }).join("");
+      const {data:ms}=await sb.from("memberships").select("joined_at, classes:class_id(id,name,code,tool,teacher:teacher_id(display_name,username))").eq("student_id",userId);
+      const rows=(ms||[]).map(m=>{ const c=m.classes||{}; const t=c.teacher||{}; return `<div class="row clickrow" data-cls="${c.id}" data-tool="${esc(c.tool||"hamster")}" style="cursor:pointer"><span class="grow"><span class="t">${esc(c.name||"?")}</span><span class="s">Code: ${esc(c.code||"–")} · 👩‍🏫 ${esc(t.display_name||t.username||"–")}</span></span><span style="color:#7a8aa0">→</span></div>`; }).join("");
       classesHtml=`<h3 style="margin:0 0 10px">🎒 Klassen (Mitglied) <span class="badge gray">${(ms||[]).length}</span></h3><div class="list">${rows||'<div class="muted" style="font-size:13px">In keiner Klasse.</div>'}</div>`;
     } else {
-      const own=await sb.from("classes").select("id,name,code").eq("teacher_id",userId).order("created_at",{ascending:false});
-      const co=await sb.from("class_teachers").select("classes:class_id(id,name,code)").eq("teacher_id",userId);
-      const ownRows=((own.data)||[]).map(c=>`<div class="row clickrow" data-cls="${c.id}" style="cursor:pointer"><span class="grow"><span class="t">${esc(c.name)}</span><span class="s">Code: ${esc(c.code)} · Eigentümer:in</span></span><span style="color:#7a8aa0">→</span></div>`).join("");
-      const coRows=((co.data)||[]).map(x=>{ const c=x.classes||{}; return `<div class="row clickrow" data-cls="${c.id}" style="cursor:pointer"><span class="grow"><span class="t">${esc(c.name||"?")}</span><span class="s">Code: ${esc(c.code||"–")} · Co-Lehrkraft</span></span><span style="color:#7a8aa0">→</span></div>`; }).join("");
+      const own=await sb.from("classes").select("id,name,code,tool").eq("teacher_id",userId).order("created_at",{ascending:false});
+      const co=await sb.from("class_teachers").select("classes:class_id(id,name,code,tool)").eq("teacher_id",userId);
+      const ownRows=((own.data)||[]).map(c=>`<div class="row clickrow" data-cls="${c.id}" data-tool="${esc(c.tool||"hamster")}" style="cursor:pointer"><span class="grow"><span class="t">${esc(c.name)}</span><span class="s">Code: ${esc(c.code)} · Eigentümer:in</span></span><span style="color:#7a8aa0">→</span></div>`).join("");
+      const coRows=((co.data)||[]).map(x=>{ const c=x.classes||{}; return `<div class="row clickrow" data-cls="${c.id}" data-tool="${esc(c.tool||"hamster")}" style="cursor:pointer"><span class="grow"><span class="t">${esc(c.name||"?")}</span><span class="s">Code: ${esc(c.code||"–")} · Co-Lehrkraft</span></span><span style="color:#7a8aa0">→</span></div>`; }).join("");
       const cnt=((own.data)||[]).length+((co.data)||[]).length;
       classesHtml=`<h3 style="margin:0 0 10px">👩‍🏫 Klassen <span class="badge gray">${cnt}</span></h3><div class="list">${(ownRows+coRows)||'<div class="muted" style="font-size:13px">Keine Klassen.</div>'}</div>`;
     }
@@ -991,7 +1039,7 @@ async function adminUserProfile(userId){
     </div>
     <div class="card">${classesHtml}</div>`;
   document.getElementById("back").onclick = adminHome;
-  document.querySelectorAll("[data-cls]").forEach(b=> b.onclick=()=>{ viewFromAdmin=true; teacherClassView(b.dataset.cls); });
+  document.querySelectorAll("[data-cls]").forEach(b=> b.onclick=()=>{ viewFromAdmin=true; (b.dataset.tool==="sql"?sqlTeacherClassView:teacherClassView)(b.dataset.cls); });
 }
 
 /* ============================================================================
@@ -1070,7 +1118,7 @@ function newClassDialog(){
   const inp=document.getElementById("clName"); inp.focus();
   const go=async()=>{ const name=inp.value.trim(); if(!name){ inp.focus(); return; }
     const btn=document.getElementById("clCreate"); btn.disabled=true; btn.textContent="Erstelle…";
-    try{ const c=await api.createClass(name); closeModal(); toast('Klasse "'+name+'" erstellt 🎉',"ok"); teacherClassView(c.id); }
+    try{ const c=await api.createClass(name); closeModal(); toast('Klasse "'+name+'" erstellt 🎉',"ok"); (ACTIVE_TOOL==="sql"?sqlTeacherClassView:teacherClassView)(c.id); }
     catch(e){ btn.disabled=false; btn.textContent="Klasse erstellen"; toast(e.message||"Fehler","err"); } };
   document.getElementById("clCreate").onclick=go;
   inp.addEventListener("keydown",e=>{ if(e.key==="Enter") go(); });
@@ -1566,7 +1614,7 @@ function wireJoin(){
   const inp=document.getElementById("joinCode"); inp.focus();
   const go=async()=>{ const code=inp.value.trim().toUpperCase(); if(!code){ inp.focus(); return; }
     const btn=document.getElementById("btnJoin"); btn.disabled=true; btn.textContent="Trete bei…";
-    try{ const c=await api.joinClass(code); toast('Du bist jetzt in "'+(c?c.name:"")+'" 🎉',"ok"); studentHome(); }
+    try{ const c=await api.joinClass(code); if(c&&c.tool) ACTIVE_TOOL=c.tool; toast('Du bist jetzt in "'+(c?c.name:"")+'" 🎉',"ok"); route(); }
     catch(e){ btn.disabled=false; btn.textContent="Beitreten"; toast(/nicht gefunden/i.test(e.message)?"Klassencode nicht gefunden.":(e.message||"Fehler"),"err"); } };
   document.getElementById("btnJoin").onclick=go;
   inp.addEventListener("keydown",e=>{ if(e.key==="Enter") go(); });
@@ -1578,7 +1626,7 @@ function joinDialog(){
     <button class="btn btn-primary btn-lg" id="btnJoin">Beitreten</button>`);
   const inp=document.getElementById("joinCode"); inp.focus();
   const go=async()=>{ const code=inp.value.trim().toUpperCase(); if(!code) return;
-    try{ const c=await api.joinClass(code); closeModal(); toast('Beigetreten: "'+(c?c.name:"")+'"',"ok"); studentHome(); }
+    try{ const c=await api.joinClass(code); if(c&&c.tool) ACTIVE_TOOL=c.tool; closeModal(); toast('Beigetreten: "'+(c?c.name:"")+'"',"ok"); route(); }
     catch(e){ toast(/nicht gefunden/i.test(e.message)?"Klassencode nicht gefunden.":(e.message||"Fehler"),"err"); } };
   document.getElementById("btnJoin").onclick=go;
   inp.addEventListener("keydown",e=>{ if(e.key==="Enter") go(); });
@@ -1606,6 +1654,87 @@ async function studentClassView(classId){
   document.getElementById("back").onclick = studentHome;
   /* Sandbox ist jetzt klassenunabhängig und steht in der Klassenübersicht */
   document.querySelectorAll(".clickrow[data-id]").forEach(r=> r.onclick=()=> solveAssignment(r.dataset.id));
+}
+
+/* ============================================================================
+   SQL-PLAYGROUND – Phase 1: Klassen anlegen/beitreten (Aufgaben folgen)
+   ============================================================================ */
+async function sqlTeacherHome(){
+  shell(`<div class="center-load"><span class="spin"></span>Klassen werden geladen…</div>`);
+  _classActivity=null;
+  let classes=[];
+  try{ classes = await api.myTeacherClasses(); }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
+  document.getElementById("view").innerHTML = `
+    <div class="page-head"><h2>🗄️ SQL · Meine Klassen</h2><div class="spacer"></div>
+      <button class="btn btn-primary" id="btnNewClass">+ Neue Klasse</button></div>
+    ${classes.length>1?`<div class="page-head" style="margin:0 0 12px">${classSearchSortControls()}</div>`:""}
+    <div id="clsHost"></div>`;
+  document.getElementById("btnNewClass").onclick = newClassDialog;
+  wireClassOverview(classes, c=>`
+      <div class="card click" data-id="${c.id}"><h3>${esc(c.name)}</h3>
+        <div class="meta">Code: <b>${esc(c.code)}</b></div></div>`,
+    id=>{ viewFromAdmin=false; sqlTeacherClassView(id); },
+    `<div class="empty"><span class="ic">🗄️</span>Noch keine SQL-Klassen. Erstelle deine erste Klasse!</div>`);
+}
+async function sqlStudentHome(){
+  shell(`<div class="center-load"><span class="spin"></span>Wird geladen…</div>`);
+  _classActivity=null;
+  let classes=[];
+  try{ classes = await api.myClasses(); }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
+  if(!classes.length){
+    document.getElementById("view").innerHTML = `
+      <div class="page-head"><h2>🗄️ SQL-Playground</h2></div>
+      <div class="card" style="max-width:480px;margin:0 auto;text-align:center">
+        <div style="font-size:46px">🔑</div>
+        <h3 style="margin:6px 0">Tritt deiner Klasse bei</h3>
+        <p class="muted" style="margin:0 0 16px">Gib den Code ein, den du von deiner Lehrkraft bekommen hast.</p>
+        <div class="field"><input class="input" id="joinCode" placeholder="z. B. K7Q2MX" maxlength="8" style="text-align:center;text-transform:uppercase;letter-spacing:3px;font-family:monospace;font-size:22px"></div>
+        <button class="btn btn-primary btn-lg" id="btnJoin">Beitreten</button>
+      </div>`;
+    wireJoin(); return;
+  }
+  document.getElementById("view").innerHTML = `
+    <div class="page-head"><h2>🗄️ SQL · Meine Klassen</h2><div class="spacer"></div>
+      <button class="btn btn-ghost" id="btnJoinMore">+ Klasse beitreten</button></div>
+    ${classes.length>1?`<div class="page-head" style="margin:0 0 12px">${classSearchSortControls()}</div>`:""}
+    <div id="clsHost"></div>`;
+  document.getElementById("btnJoinMore").onclick = joinDialog;
+  wireClassOverview(classes, c=>`
+      <div class="card click" data-id="${c.id}"><h3>${esc(c.name)}</h3>
+        <div class="meta">Aufgaben ansehen →</div></div>`, id=> sqlStudentClassView(id), "");
+}
+const SQL_SOON = `<div class="card" style="text-align:center;padding:26px"><div style="font-size:40px">🚧</div><h3 style="margin:6px 0">SQL-Aufgaben kommen in Kürze</h3><p class="muted" style="margin:0">Datenbanken, Aufgaben mit Teilaufgaben und Abgaben folgen in den nächsten Updates. Die Klasse kann schon angelegt und der Code verteilt werden.</p></div>`;
+async function sqlTeacherClassView(classId){
+  shell(`<div class="center-load"><span class="spin"></span>Klasse wird geladen…</div>`);
+  let cls, roster=[];
+  try{
+    const { data } = await sb.from("classes").select("*").eq("id",classId).single(); cls=data;
+    roster = await api.classRoster(classId);
+    roster.sort((a,b)=>{ const na=((a.profiles&&(a.profiles.display_name||a.profiles.username))||"").toLowerCase(), nb=((b.profiles&&(b.profiles.display_name||b.profiles.username))||"").toLowerCase(); return na.localeCompare(nb,"de"); });
+  }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
+  if(!cls){ document.getElementById("view").innerHTML=errBox({message:"Klasse nicht gefunden."}); return; }
+  const canTeam=(cls.teacher_id===ME.id||ME.is_admin);
+  const rosterHtml = roster.length ? `<div class="list">${roster.map(m=>{ const p=m.profiles||{}; const nm=p.display_name||p.username||"?"; return `<div class="row"><span class="chip"><span class="av">${esc(initials(nm))}</span>${esc(nm)}</span><div class="grow"></div><span class="muted" style="font-size:11.5px">${fmtDate(m.joined_at)}</span></div>`; }).join("")}</div>`
+    : `<div class="empty"><span class="ic">🎒</span>Noch keine Schüler:innen. Teile den Code <b>${esc(cls.code)}</b>!</div>`;
+  document.getElementById("view").innerHTML = `
+    <div class="page-head"><button class="crumb" id="back">${viewFromAdmin?"← Admin-Bereich":"← Meine Klassen"}</button></div>
+    <div class="page-head" style="margin-top:0"><h2>${esc(cls.name)}</h2><div class="spacer"></div>
+      <span class="codechip" title="Einlade-Code">🔑 ${esc(cls.code)} <button class="btn btn-sm btn-ghost" id="copyCode" style="margin-left:4px">Kopieren</button></span>
+      ${canTeam?`<button class="btn btn-ghost btn-sm" id="btnDeleteClass" style="margin-left:8px;color:var(--red-d)" title="Klasse löschen">🗑️ Löschen</button>`:""}</div>
+    <div class="card" style="margin-bottom:14px"><h3 style="margin:0">🎒 Schüler:innen <span class="badge gray">${roster.length}</span></h3><div style="margin-top:12px">${rosterHtml}</div></div>
+    ${SQL_SOON}`;
+  document.getElementById("back").onclick = ()=> (viewFromAdmin?adminHome():sqlTeacherHome());
+  document.getElementById("copyCode").onclick = ()=>{ if(navigator.clipboard) navigator.clipboard.writeText(cls.code); toast("Code kopiert: "+cls.code,"ok"); };
+  { const bd=document.getElementById("btnDeleteClass"); if(bd) bd.onclick=async()=>{ if(!confirm(`Klasse „${cls.name}" wirklich löschen? Alle Zuordnungen werden entfernt.`)) return; try{ await api.deleteClass(classId); toast("Klasse gelöscht","ok"); (viewFromAdmin?adminHome():sqlTeacherHome()); }catch(e){ toast(e.message||"Fehler","err"); } }; }
+}
+async function sqlStudentClassView(classId){
+  shell(`<div class="center-load"><span class="spin"></span>Lädt…</div>`);
+  let cls; try{ const { data } = await sb.from("classes").select("*").eq("id",classId).single(); cls=data; }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
+  document.getElementById("view").innerHTML = `
+    <div class="page-head"><button class="crumb" id="back">← Meine Klassen</button></div>
+    <div class="page-head" style="margin-top:0"><h2>${esc(cls?cls.name:"Klasse")}</h2></div>
+    <div class="card" style="text-align:center;padding:26px"><div style="font-size:40px">🚧</div><h3 style="margin:6px 0">Hier kommen bald SQL-Aufgaben</h3><p class="muted" style="margin:0">Deine Lehrkraft stellt in Kürze Aufgaben. Schau später wieder rein!</p></div>`;
+  document.getElementById("back").onclick = sqlStudentHome;
 }
 
 /* ============================================================================
@@ -1693,6 +1822,12 @@ function fmtDate(s){ try{ const d=new Date(s); return d.toLocaleDateString("de-D
    Neueste Version zuerst. Bei jedem Deploy oben einen Eintrag ergänzen.
    ============================================================================ */
 const PATCH_NOTES = [
+  { v:"2.9", date:"28. Juni 2026", title:"Mehr-Tool-Plattform, SQL-Playground (Start) & Dark-Mode", items:[
+    `<b>Mehrere Lern-Tools:</b> Nach dem Login wählst du jetzt aus, <b>welches Tool</b> du nutzen möchtest – den <b>🐹 Hamster-Simulator</b> oder den neuen <b>🗄️ SQL-Playground</b>. <b>Filius</b> und <b>Java</b> sind schon aufgeführt, aber noch deaktiviert (folgen später). Wechseln kannst du jederzeit oben im Konto-Menü unter <b>„🔀 Tool wechseln"</b>.`,
+    `<b>SQL-Playground startet:</b> Du kannst bereits <b>SQL-Klassen anlegen</b> und Schüler:innen per Code beitreten lassen. <b>Datenbanken, Aufgaben mit Teilaufgaben und Abgaben</b> folgen Schritt für Schritt in den nächsten Updates.`,
+    `<b>Klassen gehören zu einem Tool:</b> Hamster- und SQL-Klassen sind getrennt – in der Hamster-Übersicht erscheinen nur Hamster-Klassen und umgekehrt. Bestehende Klassen bleiben Hamster-Klassen.`,
+    `<b>🌗 Dark-Mode:</b> Oben rechts in der Titelleiste kannst du zwischen <b>hell</b>, <b>dunkel</b> und <b>automatisch</b> (folgt der System-Einstellung) umschalten. Die Wahl wird auf dem Gerät gespeichert.`,
+  ]},
   { v:"2.8", date:"26. Juni 2026", title:"Editor-Layout, Abgaben-Historie & Sicherheit", items:[
     `<b>Ausgabebereich vergrößern verkleinert nicht mehr den Editor:</b> Wenn du den Bereich „Ausgaben & Meldungen" größer ziehst, bleiben <b>Quellcode und Territorium gleich groß</b> – die Seite wird stattdessen länger (Scrollen).`,
     `<b>Abgaben-Historie:</b> Öffnest du in einer Aufgabe eine deiner früheren Abgaben, ist deren Schaltfläche jetzt als <b>„geöffnet"</b> markiert (ausgegraut), während die anderen weiterhin „Öffnen" anbieten – so siehst du sofort, welche Version gerade angezeigt wird.`,
@@ -1816,7 +1951,7 @@ function patchNotesDialog(){
 }
 
 /* ---------- Footer: Versionsnummer (aus den Patch-Notes) + Copyright ---------- */
-const APP_BUILD = "2026-06-26 14:42";   // letztes Update (im Patch-Notes-Dialog angezeigt)
+const APP_BUILD = "2026-06-28 19:17";   // letztes Update (im Patch-Notes-Dialog angezeigt)
 (function(){ const f=document.getElementById("appfoot"); if(f){ const v=(typeof PATCH_NOTES!=="undefined"&&PATCH_NOTES[0])?PATCH_NOTES[0].v:""; f.textContent='© 2026 Laurens Offinger · Version '+v; } })();
 
 boot();
