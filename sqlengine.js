@@ -121,6 +121,7 @@
       this.query = opts.query||"";
       this.readonly = !!opts.readonly;
       this.onQuery = opts.onQuery||null;
+      this.autofill = opts.autofill !== false;   // Standard: leere Abfrage automatisch mit "SELECT * FROM …" vorbelegen
       this.db = null;
       this._build();
     }
@@ -145,7 +146,7 @@
         if(this.db){ try{ this.db.close(); }catch(e){} }
         this.db = await SqlEngine.run(this.dbText);
         if(sb) sb.innerHTML=schemaHtml(this.db);
-        if(!this.getQuery().trim()){ var s=SqlEngine.schema(this.db); if(s.length) this.setQuery("SELECT * FROM "+s[0].name+";"); }
+        if(this.autofill && !this.getQuery().trim()){ var s=SqlEngine.schema(this.db); if(s.length) this.setQuery("SELECT * FROM "+s[0].name+";"); }
         if(msg) msg.textContent="";
       }catch(e){
         if(sb) sb.textContent="Fehler beim Laden der Datenbank: "+(e.message||e);

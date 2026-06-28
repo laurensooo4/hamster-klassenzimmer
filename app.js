@@ -355,6 +355,17 @@ api.sqlGetDatabase = async (id)=>{ const {data,error}=await sb.from("sql_databas
 api.sqlCreateDatabase = async (d)=>{ const {data,error}=await sb.from("sql_databases").insert(Object.assign({owner_id:ME.id},d)).select().single(); if(error) throw error; return data; };
 api.sqlUpdateDatabase = async (id,patch)=>{ const {data,error}=await sb.from("sql_databases").update(Object.assign({updated_at:new Date().toISOString()},patch)).eq("id",id).select().single(); if(error) throw error; return data; };
 api.sqlDeleteDatabase = async (id)=>{ const {error}=await sb.from("sql_databases").delete().eq("id",id); if(error) throw error; };
+/* ===== SQL-Playground: Aufgaben + Teilaufgaben ===== */
+api.sqlListAssignments = async (classId)=>{ const {data,error}=await sb.from("sql_assignments").select("*").eq("class_id",classId).order("position").order("created_at"); if(error) throw error; return data||[]; };
+api.sqlGetAssignment = async (id)=>{ const {data,error}=await sb.from("sql_assignments").select("*").eq("id",id).single(); if(error) throw error; return data; };
+api.sqlCreateAssignment = async (a)=>{ const {data:mn}=await sb.from("sql_assignments").select("position").eq("class_id",a.class_id).order("position",{ascending:true}).limit(1); const position=(mn&&mn[0]?mn[0].position:1)-1; const {data,error}=await sb.from("sql_assignments").insert(Object.assign({position},a)).select().single(); if(error) throw error; return data; };
+api.sqlUpdateAssignment = async (id,patch)=>{ const {data,error}=await sb.from("sql_assignments").update(patch).eq("id",id).select().single(); if(error) throw error; return data; };
+api.sqlDeleteAssignment = async (id)=>{ const {error}=await sb.from("sql_assignments").delete().eq("id",id); if(error) throw error; };
+api.sqlListSubtasks = async (assignmentId)=>{ const {data,error}=await sb.from("sql_subtasks").select("*").eq("assignment_id",assignmentId).order("position"); if(error) throw error; return data||[]; };
+api.sqlInsertSubtask = async (s)=>{ const {data,error}=await sb.from("sql_subtasks").insert(s).select().single(); if(error) throw error; return data; };
+api.sqlUpdateSubtask = async (id,patch)=>{ const {error}=await sb.from("sql_subtasks").update(patch).eq("id",id); if(error) throw error; };
+api.sqlDeleteSubtask = async (id)=>{ const {error}=await sb.from("sql_subtasks").delete().eq("id",id); if(error) throw error; };
+async function moveSqlAssignment(list, id, dir){ const i=list.findIndex(x=>x.id===id); const j=i+dir; if(i<0||j<0||j>=list.length) return; const a=list[i], b=list[j]; await api.sqlUpdateAssignment(a.id,{position:b.position}); await api.sqlUpdateAssignment(b.id,{position:a.position}); }
 
 /* Headless: Code auf frischer Kopie des Territoriums laufen lassen -> Endmodell (wirft bei Fehler) */
 function runHeadless(code, territory){
@@ -1718,26 +1729,45 @@ async function sqlStudentHome(){
 const SQL_SOON = `<div class="card" style="text-align:center;padding:26px"><div style="font-size:40px">🚧</div><h3 style="margin:6px 0">SQL-Aufgaben kommen in Kürze</h3><p class="muted" style="margin:0">Datenbanken, Aufgaben mit Teilaufgaben und Abgaben folgen in den nächsten Updates. Die Klasse kann schon angelegt und der Code verteilt werden.</p></div>`;
 async function sqlTeacherClassView(classId){
   shell(`<div class="center-load"><span class="spin"></span>Klasse wird geladen…</div>`);
-  let cls, roster=[];
+  let cls, roster=[], asgs=[];
   try{
     const { data } = await sb.from("classes").select("*").eq("id",classId).single(); cls=data;
     roster = await api.classRoster(classId);
     roster.sort((a,b)=>{ const na=((a.profiles&&(a.profiles.display_name||a.profiles.username))||"").toLowerCase(), nb=((b.profiles&&(b.profiles.display_name||b.profiles.username))||"").toLowerCase(); return na.localeCompare(nb,"de"); });
+    asgs = await api.sqlListAssignments(classId);
   }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
   if(!cls){ document.getElementById("view").innerHTML=errBox({message:"Klasse nicht gefunden."}); return; }
   const canTeam=(cls.teacher_id===ME.id||ME.is_admin);
   const rosterHtml = roster.length ? `<div class="list">${roster.map(m=>{ const p=m.profiles||{}; const nm=p.display_name||p.username||"?"; return `<div class="row"><span class="chip"><span class="av">${esc(initials(nm))}</span>${esc(nm)}</span><div class="grow"></div><span class="muted" style="font-size:11.5px">${fmtDate(m.joined_at)}</span></div>`; }).join("")}</div>`
     : `<div class="empty"><span class="ic">🎒</span>Noch keine Schüler:innen. Teile den Code <b>${esc(cls.code)}</b>!</div>`;
+  const asgHtml = asgs.length ? `<div class="list">${asgs.map(a=>`
+      <div class="row"><span class="grow"><span class="t clickable" data-edit="${a.id}" title="Aufgabe bearbeiten">${esc(a.title)} ${a.published?"":'<span class="badge gold">Entwurf</span>'}</span><span class="s">${esc(fmtDateTime(a.created_at))}</span></span>
+        <span class="acts">
+          <button class="abtn" data-up="${a.id}" title="nach oben">↑</button>
+          <button class="abtn" data-down="${a.id}" title="nach unten">↓</button>
+          <button class="abtn" data-pub="${a.id}" data-on="${a.published?1:0}" title="${a.published?'verbergen (Entwurf)':'veröffentlichen'}">${a.published?'👁️':'🚀'}</button>
+          <button class="abtn" data-edit="${a.id}" title="bearbeiten">✏️</button>
+          <button class="abtn" data-del="${a.id}" title="löschen">🗑️</button>
+        </span></div>`).join("")}</div>`
+    : `<div class="empty" style="padding:16px"><span class="ic">📝</span>Noch keine Aufgaben.</div>`;
   document.getElementById("view").innerHTML = `
     <div class="page-head"><button class="crumb" id="back">${viewFromAdmin?"← Admin-Bereich":"← Meine Klassen"}</button></div>
     <div class="page-head" style="margin-top:0"><h2>${esc(cls.name)}</h2><div class="spacer"></div>
       <span class="codechip" title="Einlade-Code">🔑 ${esc(cls.code)} <button class="btn btn-sm btn-ghost" id="copyCode" style="margin-left:4px">Kopieren</button></span>
       ${canTeam?`<button class="btn btn-ghost btn-sm" id="btnDeleteClass" style="margin-left:8px;color:var(--red-d)" title="Klasse löschen">🗑️ Löschen</button>`:""}</div>
-    <div class="card" style="margin-bottom:14px"><h3 style="margin:0">🎒 Schüler:innen <span class="badge gray">${roster.length}</span></h3><div style="margin-top:12px">${rosterHtml}</div></div>
-    ${SQL_SOON}`;
+    <div class="card" style="margin-bottom:14px">
+      <div style="display:flex;align-items:center;gap:8px"><h3 style="margin:0">📝 Aufgaben <span class="badge gray">${asgs.length}</span></h3><div style="flex:1"></div><button class="btn btn-blue btn-sm" id="btnNewSqlAssign">+ Aufgabe stellen</button></div>
+      <div style="margin-top:12px">${asgHtml}</div></div>
+    <div class="card" style="margin-bottom:14px"><h3 style="margin:0">🎒 Schüler:innen <span class="badge gray">${roster.length}</span></h3><div style="margin-top:12px">${rosterHtml}</div></div>`;
   document.getElementById("back").onclick = ()=> (viewFromAdmin?adminHome():sqlTeacherHome());
   document.getElementById("copyCode").onclick = ()=>{ if(navigator.clipboard) navigator.clipboard.writeText(cls.code); toast("Code kopiert: "+cls.code,"ok"); };
-  { const bd=document.getElementById("btnDeleteClass"); if(bd) bd.onclick=async()=>{ if(!confirm(`Klasse „${cls.name}" wirklich löschen? Alle Zuordnungen werden entfernt.`)) return; try{ await api.deleteClass(classId); toast("Klasse gelöscht","ok"); (viewFromAdmin?adminHome():sqlTeacherHome()); }catch(e){ toast(e.message||"Fehler","err"); } }; }
+  { const bd=document.getElementById("btnDeleteClass"); if(bd) bd.onclick=async()=>{ if(!confirm(`Klasse „${cls.name}" wirklich löschen? Alle Aufgaben und Zuordnungen werden entfernt.`)) return; try{ await api.deleteClass(classId); toast("Klasse gelöscht","ok"); (viewFromAdmin?adminHome():sqlTeacherHome()); }catch(e){ toast(e.message||"Fehler","err"); } }; }
+  document.getElementById("btnNewSqlAssign").onclick = ()=> sqlAssignmentEditorPage(classId, null);
+  document.querySelectorAll("[data-edit]").forEach(b=> b.onclick=()=> sqlAssignmentEditorPage(classId, {id:b.dataset.edit}));
+  document.querySelectorAll("[data-up]").forEach(b=> b.onclick=async()=>{ await moveSqlAssignment(asgs, b.dataset.up, -1); sqlTeacherClassView(classId); });
+  document.querySelectorAll("[data-down]").forEach(b=> b.onclick=async()=>{ await moveSqlAssignment(asgs, b.dataset.down, 1); sqlTeacherClassView(classId); });
+  document.querySelectorAll("[data-pub]").forEach(b=> b.onclick=async()=>{ try{ await api.sqlUpdateAssignment(b.dataset.pub,{published:b.dataset.on!=="1"}); sqlTeacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } });
+  document.querySelectorAll("[data-del]").forEach(b=> b.onclick=async()=>{ if(!confirm("Aufgabe wirklich löschen?")) return; try{ await api.sqlDeleteAssignment(b.dataset.del); sqlTeacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } });
 }
 async function sqlStudentClassView(classId){
   shell(`<div class="center-load"><span class="spin"></span>Lädt…</div>`);
@@ -1851,6 +1881,130 @@ async function sqlDatabaseEditorPage(meta){
   }; }
 }
 
+/* ---------- SQL-Playground: Aufgaben-Editor (Lehrkräfte) ---------- */
+let sqlAssignState=null;
+async function sqlAssignmentEditorPage(classId, existing){
+  shell(`<div class="center-load"><span class="spin"></span>Lädt…</div>`);
+  let dbs=[]; try{ dbs=await api.sqlListDatabases(); }catch(e){ dbs=[]; }
+  let a=null, subs=[];
+  if(existing && existing.id){ try{ a=await api.sqlGetAssignment(existing.id); subs=await api.sqlListSubtasks(existing.id); }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; } }
+  sqlAssignState = {
+    classId, id: a?a.id:null,
+    title: a?(a.title||""):"", description: a?(a.description||""):"", published: a?!!a.published:false,
+    databaseId: a?a.database_id:(dbs[0]?dbs[0].id:null),
+    dbText: a?(a.db_snapshot||""):"",
+    dbs,
+    subtasks: subs.length ? subs.map(s=>({ id:s.id, prompt:s.prompt||"", solution_sql:s.solution_sql||"", compare:!!s.compare, ordered:!!s.ordered }))
+                          : [{ prompt:"", solution_sql:"", compare:true, ordered:false }],
+    selected: 0, deletedIds: [], view: null
+  };
+  // Für eine neue Aufgabe: SQL-Text der vorgewählten Bibliotheks-DB laden (einfrieren beim Speichern)
+  if(!sqlAssignState.dbText && sqlAssignState.databaseId){ try{ const d=await api.sqlGetDatabase(sqlAssignState.databaseId); sqlAssignState.dbText=d.sql_text||""; }catch(e){} }
+  try{ SqlEngine.ensureStyles(); }catch(e){}
+  renderSqlAssignEditor();
+}
+function renderSqlAssignEditor(){
+  const s=sqlAssignState;
+  const inList = s.databaseId && s.dbs.some(d=>d.id===s.databaseId);
+  const dbOpts = `${!inList?`<option value="" selected>${s.dbText?"— gespeicherte Datenbank —":(s.dbs.length?"— bitte wählen —":"— erst eine Datenbank anlegen —")}</option>`:""}`
+    + s.dbs.map(d=>`<option value="${esc(d.id)}" ${d.id===s.databaseId?"selected":""}>${esc(d.name)}${d.mine?"":" (von "+esc(d.owner_name)+")"}</option>`).join("");
+  const subList = s.subtasks.map((st,i)=>`
+      <div class="row sqst" data-i="${i}" style="cursor:pointer;${i===s.selected?'background:var(--line2);border-radius:10px':''}">
+        <span class="grow"><span class="t">Teilaufgabe ${i+1}</span><span class="s">${esc((st.prompt||"").slice(0,38))||"(kein Text)"}</span></span>
+        <button class="abtn" data-up="${i}" title="nach oben">↑</button>
+        <button class="abtn" data-down="${i}" title="nach unten">↓</button>
+        <button class="abtn" data-delsub="${i}" title="löschen">🗑️</button>
+      </div>`).join("");
+  document.getElementById("view").innerHTML = `
+    <div class="page-head"><button class="crumb" id="back">← Zur Klasse</button></div>
+    <div class="card" style="margin-bottom:14px">
+      <div class="page-head" style="margin:0 0 12px"><h2 style="margin:0">${s.id?"SQL-Aufgabe bearbeiten":"Neue SQL-Aufgabe"}</h2><div class="spacer"></div>
+        <label class="muted" style="font-size:13px;font-weight:800;align-self:center">Datenbank:</label>
+        <select class="input" id="saDb" style="max-width:260px;margin-left:8px;width:auto">${dbOpts}</select>
+        <button class="btn btn-primary" id="saSave" style="margin-left:8px">💾 Aufgabe speichern</button></div>
+      <div class="field"><label>Titel der Aufgabe</label><input class="input" id="saTitle" maxlength="120" value="${esc(s.title)}"></div>
+      <div class="field" style="margin-bottom:10px"><label>Beschreibung (optional)</label><textarea class="input" id="saDesc" style="min-height:54px">${esc(s.description)}</textarea></div>
+      <label style="display:flex;align-items:center;gap:8px;font-weight:700;font-size:14px;cursor:pointer"><input type="checkbox" id="saPub" ${s.published?"checked":""}> 🚀 Veröffentlicht (für Schüler:innen sichtbar)</label>
+    </div>
+    <div class="grid" style="grid-template-columns:250px 1fr;gap:14px;align-items:start">
+      <div class="card">
+        <h3 style="margin:0 0 10px">Teilaufgaben</h3>
+        <div class="list" id="saSubList">${subList}</div>
+        <button class="btn btn-ghost btn-sm" id="saAddSub" style="margin-top:10px;width:100%">+ Teilaufgabe</button>
+      </div>
+      <div class="card" id="saRight"></div>
+    </div>`;
+  document.getElementById("back").onclick = ()=>{ syncSqlSubtask(); sqlTeacherClassView(s.classId); };
+  document.getElementById("saTitle").oninput = (e)=>{ s.title=e.target.value; };
+  document.getElementById("saDesc").oninput = (e)=>{ s.description=e.target.value; };
+  document.getElementById("saPub").onchange = (e)=>{ s.published=e.target.checked; };
+  document.getElementById("saDb").onchange = async (e)=>{ syncSqlSubtask(); const v=e.target.value; if(!v){ s.databaseId=null; renderSqlSubtaskPane(); return; } s.databaseId=v; try{ const d=await api.sqlGetDatabase(v); s.dbText=d.sql_text||""; }catch(err){} renderSqlSubtaskPane(); };
+  document.getElementById("saSave").onclick = saveSqlAssignment;
+  document.getElementById("saAddSub").onclick = ()=>{ syncSqlSubtask(); s.subtasks.push({ prompt:"", solution_sql:"", compare:true, ordered:false }); s.selected=s.subtasks.length-1; renderSqlAssignEditor(); };
+  document.querySelectorAll("#saSubList .sqst").forEach(row=> row.onclick=(e)=>{ if(e.target.closest("[data-up],[data-down],[data-delsub]")) return; selectSqlSubtask(+row.dataset.i); });
+  document.querySelectorAll("#saSubList [data-up]").forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); const i=+b.dataset.up; if(i<=0) return; syncSqlSubtask(); const a=s.subtasks; [a[i-1],a[i]]=[a[i],a[i-1]]; s.selected=i-1; renderSqlAssignEditor(); });
+  document.querySelectorAll("#saSubList [data-down]").forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); const i=+b.dataset.down; if(i>=s.subtasks.length-1) return; syncSqlSubtask(); const a=s.subtasks; [a[i+1],a[i]]=[a[i],a[i+1]]; s.selected=i+1; renderSqlAssignEditor(); });
+  document.querySelectorAll("#saSubList [data-delsub]").forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); const i=+b.dataset.delsub; if(s.subtasks.length<=1){ toast("Mindestens eine Teilaufgabe ist nötig.","err"); return; } if(!confirm("Teilaufgabe "+(i+1)+" löschen?")) return; syncSqlSubtask(); const rem=s.subtasks[i]; if(rem.id) s.deletedIds.push(rem.id); s.subtasks.splice(i,1); if(i<s.selected) s.selected--; if(s.selected>=s.subtasks.length) s.selected=s.subtasks.length-1; if(s.selected<0) s.selected=0; renderSqlAssignEditor(); });
+  renderSqlSubtaskPane();
+}
+function renderSqlSubtaskPane(){
+  const s=sqlAssignState, st=s.subtasks[s.selected], right=document.getElementById("saRight");
+  if(!right) return;
+  if(!st){ right.innerHTML='<div class="empty">Füge links eine Teilaufgabe hinzu.</div>'; return; }
+  right.innerHTML = `
+    <div class="field"><label>Aufgabentext – Teilaufgabe ${s.selected+1}</label><textarea class="input" id="stPrompt" style="min-height:70px" placeholder="z. B. Gib die Namen aller Bewohner aus, die Bäcker sind.">${esc(st.prompt)}</textarea></div>
+    <label style="display:flex;align-items:center;gap:8px;font-weight:700;font-size:14px;cursor:pointer;margin-bottom:6px"><input type="checkbox" id="stCompare" ${st.compare?"checked":""}> Ergebnis mit Musterlösung vergleichen</label>
+    <label style="display:flex;align-items:center;gap:8px;font-weight:700;font-size:13px;cursor:pointer;margin-bottom:12px;${st.compare?'':'opacity:.45'}"><input type="checkbox" id="stOrdered" ${st.ordered?"checked":""} ${st.compare?'':'disabled'}> Zeilen-Reihenfolge muss stimmen (bei <code>ORDER BY</code>)</label>
+    <div class="muted" style="font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Musterlösung (SQL)</div>
+    <div id="stSqlHost"></div>`;
+  document.getElementById("stPrompt").oninput = (e)=>{ st.prompt=e.target.value; const li=document.querySelector(`#saSubList .sqst[data-i="${s.selected}"] .s`); if(li) li.textContent=(st.prompt||"").slice(0,38)||"(kein Text)"; };
+  document.getElementById("stCompare").onchange = (e)=>{ syncSqlSubtask(); st.compare=e.target.checked; renderSqlSubtaskPane(); };
+  document.getElementById("stOrdered").onchange = (e)=>{ st.ordered=e.target.checked; };
+  if(s.view){ try{ s.view.destroy(); }catch(e){} }
+  s.view = new SqlView("#stSqlHost", { dbText:s.dbText, query: st.solution_sql||"", autofill:false });
+  pageView = s.view;
+}
+function syncSqlSubtask(){
+  const s=sqlAssignState; if(!s) return; const st=s.subtasks[s.selected]; if(!st) return;
+  const p=document.getElementById("stPrompt"); if(p) st.prompt=p.value;
+  const c=document.getElementById("stCompare"); if(c) st.compare=c.checked;
+  const o=document.getElementById("stOrdered"); if(o) st.ordered=o.checked;
+  if(s.view) st.solution_sql=s.view.getQuery();
+}
+function selectSqlSubtask(i){ syncSqlSubtask(); sqlAssignState.selected=i; renderSqlAssignEditor(); }
+async function saveSqlAssignment(){
+  const s=sqlAssignState; syncSqlSubtask();
+  const title=(s.title||"").trim();
+  if(!title){ toast("Bitte einen Titel eingeben.","err"); return; }
+  if(!s.dbText){ toast("Bitte eine Datenbank wählen (ggf. erst eine in 🗄️ Datenbanken anlegen).","err"); return; }
+  if(!s.subtasks.length){ toast("Bitte mindestens eine Teilaufgabe anlegen.","err"); return; }
+  const btn=document.getElementById("saSave"); btn.disabled=true; btn.textContent="Prüfe…";
+  // Musterlösungen prüfen + Ergebnis-Snapshot (expected) berechnen
+  try{
+    for(let i=0;i<s.subtasks.length;i++){ const st=s.subtasks[i];
+      if(!(st.prompt||"").trim()) throw new Error("Teilaufgabe "+(i+1)+": Aufgabentext fehlt.");
+      if(st.compare){
+        if(!(st.solution_sql||"").trim()) throw new Error("Teilaufgabe "+(i+1)+": Musterlösung fehlt (für den Ergebnisvergleich nötig).");
+        let db=null; try{ db=await SqlEngine.run(s.dbText); }catch(e){ throw new Error("Die Datenbank ist fehlerhaft: "+(e.message||e)); }
+        let out; try{ out=db.exec(st.solution_sql); }catch(e){ try{db.close();}catch(_){} throw new Error("Teilaufgabe "+(i+1)+": Musterlösung fehlerhaft – "+(e.message||e)); }
+        st.expected=SqlEngine.normalize(out, st.ordered); try{ db.close(); }catch(e){}
+      } else st.expected=null;
+    }
+  }catch(e){ btn.disabled=false; btn.textContent="💾 Aufgabe speichern"; toast(e.message||"Fehler","err"); return; }
+  btn.textContent="Speichere…";
+  try{
+    let aid=s.id;
+    const payload={ class_id:s.classId, title, description:(s.description||"").trim()||null, published:s.published, database_id:s.databaseId, db_snapshot:s.dbText };
+    if(aid){ await api.sqlUpdateAssignment(aid, payload); } else { const a=await api.sqlCreateAssignment(payload); aid=a.id; s.id=aid; }
+    for(let i=0;i<s.subtasks.length;i++){ const st=s.subtasks[i];
+      const sp={ assignment_id:aid, position:i, prompt:(st.prompt||"").trim(), solution_sql:st.solution_sql||"", compare:st.compare, ordered:st.ordered, expected:st.expected||null };
+      if(st.id){ await api.sqlUpdateSubtask(st.id, sp); } else { const ins=await api.sqlInsertSubtask(sp); st.id=ins.id; } }
+    for(const did of (s.deletedIds||[])){ try{ await api.sqlDeleteSubtask(did); }catch(e){} }
+    s.deletedIds=[];
+    toast("Aufgabe gespeichert ✓","ok"); sqlTeacherClassView(s.classId);
+  }catch(e){ btn.disabled=false; btn.textContent="💾 Aufgabe speichern"; toast(e.message||"Fehler","err"); }
+}
+
 /* ============================================================================
    SANDBOX (freier Modus) – Schüler:innen bauen Welt + Code, speicherbar
    ============================================================================ */
@@ -1936,6 +2090,13 @@ function fmtDate(s){ try{ const d=new Date(s); return d.toLocaleDateString("de-D
    Neueste Version zuerst. Bei jedem Deploy oben einen Eintrag ergänzen.
    ============================================================================ */
 const PATCH_NOTES = [
+  { v:"2.12", date:"28. Juni 2026", title:"SQL-Playground: Aufgaben-Editor", items:[
+    `Lehrkräfte können jetzt <b>SQL-Aufgaben stellen</b> (in einer SQL-Klasse → „+ Aufgabe stellen"). Eine Aufgabe besteht aus <b>einer Datenbank</b> (aus der 🗄️ Bibliothek) und beliebig vielen <b>Teilaufgaben</b>.`,
+    `Pro Teilaufgabe (linke Liste): <b>Aufgabentext</b>, eine <b>Musterlösung (SQL)</b> mit <b>▶ Ausführen</b> + Ergebnis-Vorschau und der Schalter <b>„Ergebnis mit Musterlösung vergleichen"</b> (für die spätere automatische Bewertung). Teilaufgaben lassen sich <b>hinzufügen, umsortieren (↑↓) und löschen</b>.`,
+    `Aufgaben können <b>veröffentlicht</b> oder als <b>Entwurf</b> gehalten, umsortiert, bearbeitet und gelöscht werden.`,
+    `Beim Speichern wird die Datenbank <b>in die Aufgabe eingefroren</b> (spätere Änderungen an der Bibliotheks-Datenbank verändern bestehende Aufgaben nicht), die Musterlösungen werden <b>geprüft</b> und das erwartete Ergebnis <b>sicher hinterlegt</b> (für Schüler:innen verborgen).`,
+    `<b>Nächster Schritt:</b> Schüler:innen lösen diese Aufgaben und bekommen automatisches Feedback (folgt im nächsten Update).`,
+  ]},
   { v:"2.11", date:"28. Juni 2026", title:"SQL-Playground: Datenbank-Bibliothek", items:[
     `Neuer Knopf <b>🗄️ Datenbanken</b> im SQL-Tool: Lehrkräfte legen hier eigene <b>Datenbanken</b> an – Name vergeben und den <b>SQL-Code</b> eingeben, der die Datenbank erstellt (Tabellen + Daten).`,
     `<b>▶ Ausführen</b> testet den Code sofort und zeigt darunter das entstandene <b>Datenbank-Schema</b> (Tabellen + Spalten, Primärschlüssel hervorgehoben). Gespeichert wird nur, wenn der Code fehlerfrei läuft.`,
@@ -2077,7 +2238,7 @@ function patchNotesDialog(){
 }
 
 /* ---------- Footer: Versionsnummer (aus den Patch-Notes) + Copyright ---------- */
-const APP_BUILD = "2026-06-28 20:23";   // letztes Update (im Patch-Notes-Dialog angezeigt)
+const APP_BUILD = "2026-06-28 20:46";   // letztes Update (im Patch-Notes-Dialog angezeigt)
 (function(){ const f=document.getElementById("appfoot"); if(f){ const v=(typeof PATCH_NOTES!=="undefined"&&PATCH_NOTES[0])?PATCH_NOTES[0].v:""; f.textContent='© 2026 Laurens Offinger · Version '+v; } })();
 
 boot();
