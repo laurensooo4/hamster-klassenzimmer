@@ -381,6 +381,12 @@ api.sqlGetComment = async (submissionId)=>{ if(!submissionId) return null; const
 api.sqlSaveComment = async (submissionId, body, released)=>{ const {data,error}=await sb.from("sql_submission_comments").upsert({submission_id:submissionId, author_id:ME.id, body, released, updated_at:new Date().toISOString()},{onConflict:"submission_id"}).select().single(); if(error) throw error; return data; };
 api.sqlDeleteComment = async (submissionId)=>{ const {error}=await sb.from("sql_submission_comments").delete().eq("submission_id",submissionId); if(error) throw error; };
 api.sqlClassComments = async (submissionIds)=>{ if(!submissionIds.length) return []; const {data,error}=await sb.from("sql_submission_comments").select("submission_id,released,body").in("submission_id",submissionIds); if(error) throw error; return data||[]; };   // für spätere Matrix-Hinweise
+/* SQL-Playground: Aufgaben-Vorlagen (phaseR) */
+api.sqlListTemplates = async ()=>{ const {data,error}=await sb.rpc("shared_sql_templates"); if(error) throw error; return data||[]; };
+api.sqlGetTemplate = async (id)=>{ const {data,error}=await sb.from("sql_assignment_templates").select("*").eq("id",id).single(); if(error) throw error; return data; };   // RLS: eigene + geteilte
+api.sqlCreateTemplate = async (t)=>{ const {data,error}=await sb.from("sql_assignment_templates").insert(Object.assign({owner_id:ME.id},t)).select().single(); if(error) throw error; return data; };
+api.sqlUpdateTemplate = async (id,patch)=>{ const {data,error}=await sb.from("sql_assignment_templates").update(Object.assign({updated_at:new Date().toISOString()},patch)).eq("id",id).select().single(); if(error) throw error; return data; };
+api.sqlDeleteTemplate = async (id)=>{ const {error}=await sb.from("sql_assignment_templates").delete().eq("id",id); if(error) throw error; };
 
 /* Headless: Code auf frischer Kopie des Territoriums laufen lassen -> Endmodell (wirft bei Fehler) */
 function runHeadless(code, territory){
@@ -1699,11 +1705,13 @@ async function sqlTeacherHome(){
   document.getElementById("view").innerHTML = `
     <div class="page-head"><h2>🗄️ SQL · Meine Klassen</h2><div class="spacer"></div>
       <button class="btn btn-ghost" id="btnSqlDatabases">🗄️ Datenbanken</button>
+      <button class="btn btn-ghost" id="btnSqlTemplates" style="margin-left:8px">📋 Vorlagen</button>
       <button class="btn btn-ghost" id="btnSqlSandbox" style="margin-left:8px">🧪 Sandbox</button>
       <button class="btn btn-primary" id="btnNewClass" style="margin-left:8px">+ Neue Klasse</button></div>
     ${classes.length>1?`<div class="page-head" style="margin:0 0 12px">${classSearchSortControls()}</div>`:""}
     <div id="clsHost"></div>`;
   document.getElementById("btnSqlDatabases").onclick = ()=> sqlDatabasesPage();
+  document.getElementById("btnSqlTemplates").onclick = ()=> sqlTemplatesPage();
   document.getElementById("btnSqlSandbox").onclick = ()=> sqlSandbox();
   document.getElementById("btnNewClass").onclick = newClassDialog;
   wireClassOverview(classes, c=>`
@@ -1775,7 +1783,7 @@ async function sqlTeacherClassView(classId){
       <span class="codechip" title="Einlade-Code">🔑 ${esc(cls.code)} <button class="btn btn-sm btn-ghost" id="copyCode" style="margin-left:4px">Kopieren</button></span>
       ${canTeam?`<button class="btn btn-ghost btn-sm" id="btnDeleteClass" style="margin-left:8px;color:var(--red-d)" title="Klasse löschen">🗑️ Löschen</button>`:""}</div>
     <div class="card" style="margin-bottom:14px">
-      <div style="display:flex;align-items:center;gap:8px"><h3 style="margin:0">📝 Aufgaben <span class="badge gray">${asgs.length}</span></h3><div style="flex:1"></div><button class="btn btn-blue btn-sm" id="btnNewSqlAssign">+ Aufgabe stellen</button></div>
+      <div style="display:flex;align-items:center;gap:8px"><h3 style="margin:0">📝 Aufgaben <span class="badge gray">${asgs.length}</span></h3><div style="flex:1"></div><button class="btn btn-ghost btn-sm" id="btnSqlFromTpl">📋 aus Vorlage</button><button class="btn btn-blue btn-sm" id="btnNewSqlAssign" style="margin-left:8px">+ Aufgabe stellen</button></div>
       <div style="margin-top:12px">${asgHtml}</div></div>
     <div class="card" style="margin-bottom:14px">
       <div style="display:flex;align-items:center;gap:8px"><h3 style="margin:0">📊 Abgabe-Matrix</h3><div style="flex:1"></div></div>
@@ -1788,6 +1796,7 @@ async function sqlTeacherClassView(classId){
   document.getElementById("copyCode").onclick = ()=>{ if(navigator.clipboard) navigator.clipboard.writeText(cls.code); toast("Code kopiert: "+cls.code,"ok"); };
   { const bd=document.getElementById("btnDeleteClass"); if(bd) bd.onclick=async()=>{ if(!confirm(`Klasse „${cls.name}" wirklich löschen? Alle Aufgaben und Zuordnungen werden entfernt.`)) return; try{ await api.deleteClass(classId); toast("Klasse gelöscht","ok"); (viewFromAdmin?adminHome():sqlTeacherHome()); }catch(e){ toast(e.message||"Fehler","err"); } }; }
   document.getElementById("btnNewSqlAssign").onclick = ()=> sqlAssignmentEditorPage(classId, null);
+  document.getElementById("btnSqlFromTpl").onclick = ()=> sqlPickTemplate(classId);
   document.querySelectorAll("[data-edit]").forEach(b=> b.onclick=()=> sqlAssignmentEditorPage(classId, {id:b.dataset.edit}));
   document.querySelectorAll("[data-up]").forEach(b=> b.onclick=async()=>{ await moveSqlAssignment(asgs, b.dataset.up, -1); sqlTeacherClassView(classId); });
   document.querySelectorAll("[data-down]").forEach(b=> b.onclick=async()=>{ await moveSqlAssignment(asgs, b.dataset.down, 1); sqlTeacherClassView(classId); });
@@ -1826,6 +1835,35 @@ function buildSqlMatrix(roster, asgs, subs, subtasksByAsg, q){
     return `<tr><td class="stu">${esc(nmeOf(stu))}</td>${cells}</tr>`;
   }).join("");
   return `<div class="matrix-wrap"><table class="matrix"><thead><tr><th class="stu">Schüler:in</th>${head}</tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+/* ---------- SQL-Playground: Aufgaben-Vorlagen ---------- */
+async function sqlPickTemplate(classId){
+  openModal(`<button class="x" id="tplPickX">×</button><h3 style="margin:0 0 12px">📋 Aufgabe aus Vorlage</h3><div id="tplPickHost"><div class="center-load"><span class="spin"></span>Vorlagen…</div></div>`);
+  { const x=document.getElementById("tplPickX"); if(x) x.onclick=closeModal; }
+  let list=[]; try{ list=await api.sqlListTemplates(); }catch(e){ const h=document.getElementById("tplPickHost"); if(h) h.innerHTML=errBox(e); return; }
+  const host=document.getElementById("tplPickHost"); if(!host) return;   // Modal zwischenzeitlich geschlossen
+  if(!list.length){ host.innerHTML=`<div class="empty"><span class="ic">📋</span>Noch keine Vorlagen. Öffne eine Aufgabe und wähle „⭐ Als Vorlage", um eine anzulegen.</div>`; return; }
+  host.innerHTML=`<div class="muted" style="font-size:12.5px;margin-bottom:8px">Wähle eine Vorlage – sie wird als neue Aufgabe in dieser Klasse geöffnet (du kannst sie vor dem Speichern anpassen).</div>
+    <div class="list">${list.map(t=>`
+      <div class="row clickrow" data-tpl="${t.id}" style="cursor:pointer"><span class="grow"><span class="t">${esc(t.title)}</span><span class="s">${t.subtask_count} Teilaufgabe(n) · von ${esc(t.owner_name)}${t.mine?" (du)":""}${t.shared?" · 🌍 geteilt":""}</span></span><span style="margin-left:8px;color:#7a8aa0">→</span></div>`).join("")}</div>`;
+  host.querySelectorAll(".clickrow[data-tpl]").forEach(r=> r.onclick=async()=>{ try{ const tpl=await api.sqlGetTemplate(r.dataset.tpl); closeModal(); sqlAssignmentEditorPage(classId, null, tpl); }catch(e){ toast(e.message||"Fehler","err"); } });
+}
+async function sqlTemplatesPage(){
+  shell(`<div class="center-load"><span class="spin"></span>Vorlagen…</div>`);
+  let list=[]; try{ list=await api.sqlListTemplates(); }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
+  const rows = list.length ? `<div class="list">${list.map(t=>`
+      <div class="row"><span class="grow"><span class="t">${esc(t.title)}</span><span class="s">${t.subtask_count} Teilaufgabe(n) · von ${esc(t.owner_name)}${t.mine?" (du)":""} · ${t.shared?"🌍 geteilt":"🔒 privat"} · ${esc(fmtDateTime(t.updated_at))}</span></span>
+        ${(t.mine||ME.is_admin)?`<button class="abtn" data-share="${t.id}" data-on="${t.shared?1:0}" title="${t.shared?'Freigabe zurücknehmen':'für andere Lehrkräfte freigeben'}">${t.shared?'🌍':'🔒'}</button><button class="abtn" data-del="${t.id}" data-nm="${esc(t.title)}" title="löschen">🗑️</button>`:""}
+      </div>`).join("")}</div>`
+    : `<div class="empty"><span class="ic">📋</span>Noch keine Vorlagen. Öffne eine Aufgabe und wähle „⭐ Als Vorlage", um eine anzulegen.</div>`;
+  document.getElementById("view").innerHTML = `
+    <div class="page-head"><button class="crumb" id="back">← SQL · Meine Klassen</button></div>
+    <div class="page-head" style="margin-top:0"><h2>📋 Aufgaben-Vorlagen</h2></div>
+    <div class="card" style="margin-bottom:12px;padding:12px 16px"><span class="muted" style="font-size:13px">Vorlagen sind wiederverwendbare Aufgaben (mit Datenbank + Teilaufgaben). In einer Klasse legst du über <b>📋 aus Vorlage</b> eine neue Aufgabe daraus an. <b>Geteilte</b> Vorlagen können auch andere Lehrkräfte verwenden.</span></div>
+    ${rows}`;
+  document.getElementById("back").onclick = sqlTeacherHome;
+  document.querySelectorAll("[data-share]").forEach(b=> b.onclick=async()=>{ const on=b.dataset.on==="1"; try{ await api.sqlUpdateTemplate(b.dataset.share,{shared:!on}); toast(on?"Freigabe zurückgenommen":"Vorlage freigegeben 🌍","ok"); sqlTemplatesPage(); }catch(e){ toast(e.message||"Fehler","err"); } });
+  document.querySelectorAll("[data-del]").forEach(b=> b.onclick=async()=>{ if(!confirm(`Vorlage „${b.dataset.nm}" wirklich löschen?`)) return; try{ await api.sqlDeleteTemplate(b.dataset.del); toast("Vorlage gelöscht","ok"); sqlTemplatesPage(); }catch(e){ toast(e.message||"Fehler","err"); } });
 }
 /* ---------- SQL-Playground: Lehrer-Einsicht in eine Schüler-Abgabe (read-only) ---------- */
 let sqlReviewState=null;
@@ -2126,11 +2164,24 @@ async function sqlDatabaseEditorPage(meta){
 
 /* ---------- SQL-Playground: Aufgaben-Editor (Lehrkräfte) ---------- */
 let sqlAssignState=null;
-async function sqlAssignmentEditorPage(classId, existing){
+async function sqlAssignmentEditorPage(classId, existing, prefill){
   shell(`<div class="center-load"><span class="spin"></span>Lädt…</div>`);
   let dbs=[]; try{ dbs=await api.sqlListDatabases(); }catch(e){ dbs=[]; }
   let a=null, subs=[];
   if(existing && existing.id){ try{ a=await api.sqlGetAssignment(existing.id); subs=await api.sqlListSubtasks(existing.id); }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; } }
+  if(prefill){   // neue Aufgabe aus Vorlage: Inhalt übernehmen, als NEUE Aufgabe (id=null) in dieser Klasse
+    sqlAssignState = {
+      classId, id:null,
+      title: prefill.title||"", description: prefill.description||"", published:false,
+      databaseId: null, dbText: prefill.db_snapshot||"", dbs,
+      subtasks: (prefill.subtasks&&prefill.subtasks.length)
+        ? prefill.subtasks.map(st=>({ prompt:st.prompt||"", solution_sql:st.solution_sql||"", compare:!!st.compare, ordered:!!st.ordered, expected:st.expected||null }))
+        : [{ prompt:"", solution_sql:"", compare:true, ordered:false }],
+      selected:0, deletedIds:[], view:null
+    };
+    try{ SqlEngine.ensureStyles(); }catch(e){}
+    renderSqlAssignEditor(); return;
+  }
   sqlAssignState = {
     classId, id: a?a.id:null,
     title: a?(a.title||""):"", description: a?(a.description||""):"", published: a?!!a.published:false,
@@ -2164,6 +2215,7 @@ function renderSqlAssignEditor(){
       <div class="page-head" style="margin:0 0 12px"><h2 style="margin:0">${s.id?"SQL-Aufgabe bearbeiten":"Neue SQL-Aufgabe"}</h2><div class="spacer"></div>
         <label class="muted" style="font-size:13px;font-weight:800;align-self:center">Datenbank:</label>
         <select class="input" id="saDb" style="max-width:260px;margin-left:8px;width:auto">${dbOpts}</select>
+        <button class="btn btn-ghost btn-sm" id="saTpl" style="margin-left:8px" title="Diese Aufgabe als wiederverwendbare Vorlage speichern">⭐ Als Vorlage</button>
         <button class="btn btn-primary" id="saSave" style="margin-left:8px">💾 Aufgabe speichern</button></div>
       <div class="field"><label>Titel der Aufgabe</label><input class="input" id="saTitle" maxlength="120" value="${esc(s.title)}"></div>
       <div class="field" style="margin-bottom:10px"><label>Beschreibung (optional)</label><textarea class="input" id="saDesc" style="min-height:54px">${esc(s.description)}</textarea></div>
@@ -2183,6 +2235,7 @@ function renderSqlAssignEditor(){
   document.getElementById("saPub").onchange = (e)=>{ s.published=e.target.checked; };
   document.getElementById("saDb").onchange = async (e)=>{ syncSqlSubtask(); const v=e.target.value; if(!v){ s.databaseId=null; renderSqlSubtaskPane(); return; } s.databaseId=v; try{ const d=await api.sqlGetDatabase(v); s.dbText=d.sql_text||""; }catch(err){} renderSqlSubtaskPane(); };
   document.getElementById("saSave").onclick = saveSqlAssignment;
+  document.getElementById("saTpl").onclick = saveSqlTemplate;
   document.getElementById("saAddSub").onclick = ()=>{ syncSqlSubtask(); s.subtasks.push({ prompt:"", solution_sql:"", compare:true, ordered:false }); s.selected=s.subtasks.length-1; renderSqlAssignEditor(); };
   document.querySelectorAll("#saSubList .sqst").forEach(row=> row.onclick=(e)=>{ if(e.target.closest("[data-up],[data-down],[data-delsub]")) return; selectSqlSubtask(+row.dataset.i); });
   document.querySelectorAll("#saSubList [data-up]").forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); const i=+b.dataset.up; if(i<=0) return; syncSqlSubtask(); const a=s.subtasks; [a[i-1],a[i]]=[a[i],a[i-1]]; s.selected=i-1; renderSqlAssignEditor(); });
@@ -2215,6 +2268,34 @@ function syncSqlSubtask(){
   if(s.view) st.solution_sql=s.view.getQuery();
 }
 function selectSqlSubtask(i){ syncSqlSubtask(); sqlAssignState.selected=i; renderSqlAssignEditor(); }
+// Validiert Teilaufgaben (Aufgabentext + Musterlösung) und füllt st.expected; wirft bei Fehler.
+async function computeSqlExpected(s){
+  for(let i=0;i<s.subtasks.length;i++){ const st=s.subtasks[i];
+    if(!(st.prompt||"").trim()) throw new Error("Teilaufgabe "+(i+1)+": Aufgabentext fehlt.");
+    if(st.compare){
+      if(!(st.solution_sql||"").trim()) throw new Error("Teilaufgabe "+(i+1)+": Musterlösung fehlt (für den Ergebnisvergleich nötig).");
+      let db=null; try{ db=await SqlEngine.run(s.dbText); }catch(e){ throw new Error("Die Datenbank ist fehlerhaft: "+(e.message||e)); }
+      let out; try{ out=db.exec(st.solution_sql); }catch(e){ try{db.close();}catch(_){} throw new Error("Teilaufgabe "+(i+1)+": Musterlösung fehlerhaft – "+(e.message||e)); }
+      st.expected=SqlEngine.normalize(out, st.ordered); try{ db.close(); }catch(e){}
+    } else st.expected=null;
+  }
+}
+async function saveSqlTemplate(){
+  const s=sqlAssignState; syncSqlSubtask();
+  const title=(s.title||"").trim();
+  if(!title){ toast("Bitte zuerst einen Titel eingeben.","err"); return; }
+  if(!s.dbText){ toast("Bitte eine Datenbank wählen.","err"); return; }
+  if(!s.subtasks.length){ toast("Bitte mindestens eine Teilaufgabe anlegen.","err"); return; }
+  const name=prompt("Name der Vorlage:", title); if(name===null) return;
+  const btn=document.getElementById("saTpl"); if(btn){ btn.disabled=true; btn.textContent="Prüfe…"; }
+  try{ await computeSqlExpected(s); }
+  catch(e){ if(btn){ btn.disabled=false; btn.textContent="⭐ Als Vorlage"; } toast(e.message||"Fehler","err"); return; }
+  const subtasks=s.subtasks.map(st=>({ prompt:(st.prompt||"").trim(), solution_sql:st.solution_sql||"", compare:!!st.compare, ordered:!!st.ordered, expected:st.expected||null }));
+  try{ await api.sqlCreateTemplate({ title:(name.trim()||title), description:(s.description||"").trim()||null, db_snapshot:s.dbText, subtasks });
+    toast("Als Vorlage gespeichert ⭐","ok");
+  }catch(e){ toast(e.message||"Fehler","err"); }
+  finally{ if(btn){ btn.disabled=false; btn.textContent="⭐ Als Vorlage"; } }
+}
 async function saveSqlAssignment(){
   const s=sqlAssignState; syncSqlSubtask();
   const title=(s.title||"").trim();
@@ -2223,17 +2304,8 @@ async function saveSqlAssignment(){
   if(!s.subtasks.length){ toast("Bitte mindestens eine Teilaufgabe anlegen.","err"); return; }
   const btn=document.getElementById("saSave"); btn.disabled=true; btn.textContent="Prüfe…";
   // Musterlösungen prüfen + Ergebnis-Snapshot (expected) berechnen
-  try{
-    for(let i=0;i<s.subtasks.length;i++){ const st=s.subtasks[i];
-      if(!(st.prompt||"").trim()) throw new Error("Teilaufgabe "+(i+1)+": Aufgabentext fehlt.");
-      if(st.compare){
-        if(!(st.solution_sql||"").trim()) throw new Error("Teilaufgabe "+(i+1)+": Musterlösung fehlt (für den Ergebnisvergleich nötig).");
-        let db=null; try{ db=await SqlEngine.run(s.dbText); }catch(e){ throw new Error("Die Datenbank ist fehlerhaft: "+(e.message||e)); }
-        let out; try{ out=db.exec(st.solution_sql); }catch(e){ try{db.close();}catch(_){} throw new Error("Teilaufgabe "+(i+1)+": Musterlösung fehlerhaft – "+(e.message||e)); }
-        st.expected=SqlEngine.normalize(out, st.ordered); try{ db.close(); }catch(e){}
-      } else st.expected=null;
-    }
-  }catch(e){ btn.disabled=false; btn.textContent="💾 Aufgabe speichern"; toast(e.message||"Fehler","err"); return; }
+  try{ await computeSqlExpected(s); }
+  catch(e){ btn.disabled=false; btn.textContent="💾 Aufgabe speichern"; toast(e.message||"Fehler","err"); return; }
   btn.textContent="Speichere…";
   try{
     let aid=s.id;
@@ -2333,6 +2405,12 @@ function fmtDate(s){ try{ const d=new Date(s); return d.toLocaleDateString("de-D
    Neueste Version zuerst. Bei jedem Deploy oben einen Eintrag ergänzen.
    ============================================================================ */
 const PATCH_NOTES = [
+  { v:"2.17", date:"28. Juni 2026", title:"SQL-Playground: Aufgaben-Vorlagen", items:[
+    `<b>Aufgabe als Vorlage speichern:</b> Im Aufgaben-Editor gibt es jetzt <b>⭐ Als Vorlage</b> – die komplette Aufgabe (Datenbank + alle Teilaufgaben + Musterlösungen) wird als wiederverwendbare Vorlage gespeichert.`,
+    `<b>Aus Vorlage erstellen:</b> In einer Klasse legst du über <b>📋 aus Vorlage</b> mit einem Klick eine neue Aufgabe aus einer Vorlage an – du kannst sie vor dem Speichern noch anpassen. So musst du wiederkehrende Aufgaben nicht doppelt bauen.`,
+    `<b>Vorlagen-Bibliothek</b> (Knopf <b>📋 Vorlagen</b> auf „SQL · Meine Klassen"): Vorlagen ansehen, löschen und – wie bei Datenbanken – <b>für andere Lehrkräfte freigeben</b> (🌍) oder privat halten.`,
+    `Damit ist der SQL-Playground rund: Datenbanken, Aufgaben, Lösen + Benotung, Auswertung, Rückmeldungen und Vorlagen.`,
+  ]},
   { v:"2.16", date:"28. Juni 2026", title:"SQL-Playground: Rückmeldungen zu Abgaben", items:[
     `<b>Kommentar zur Abgabe:</b> In der Korrekturansicht (📊 Abgabe-Matrix → Zelle anklicken) kannst du der/dem Schüler:in jetzt eine <b>Rückmeldung</b> schreiben. Mit dem Schalter <b>„Für Schüler:in sichtbar"</b> entscheidest du, ob sie freigegeben wird – nicht freigegebene Kommentare bleiben für Schüler:innen vollständig unsichtbar (serverseitig abgesichert).`,
     `<b>Schüler:innen sehen freigegebene Rückmeldungen</b> oben in ihrer Aufgabe (💬 Rückmeldung deiner Lehrkraft).`,
@@ -2504,7 +2582,7 @@ function patchNotesDialog(){
 }
 
 /* ---------- Footer: Versionsnummer (aus den Patch-Notes) + Copyright ---------- */
-const APP_BUILD = "2026-06-28 23:20";   // letztes Update (im Patch-Notes-Dialog angezeigt)
+const APP_BUILD = "2026-06-28 23:55";   // letztes Update (im Patch-Notes-Dialog angezeigt)
 (function(){ const f=document.getElementById("appfoot"); if(f){ const v=(typeof PATCH_NOTES!=="undefined"&&PATCH_NOTES[0])?PATCH_NOTES[0].v:""; f.textContent='© 2026 Laurens Offinger · Version '+v; } })();
 
 boot();
