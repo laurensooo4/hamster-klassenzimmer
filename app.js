@@ -2272,14 +2272,12 @@ function renderSqlAssignEditor(){
   const inList = s.databaseId && s.dbs.some(d=>d.id===s.databaseId);
   const dbOpts = `${!inList?`<option value="" selected>${s.dbText?"— gespeicherte Datenbank —":(s.dbs.length?"— bitte wählen —":"— erst eine Datenbank anlegen —")}</option>`:""}`
     + s.dbs.map(d=>`<option value="${esc(d.id)}" ${d.id===s.databaseId?"selected":""}>${esc(d.name)}${d.mine?"":" (von "+esc(d.owner_name)+")"}</option>`).join("");
-  const subList = s.subtasks.map((st,i)=>`
-      <div class="sqst" data-i="${i}" style="cursor:pointer;padding:8px 10px;border-radius:10px;${i===s.selected?'background:var(--line2)':''}">
-        <div style="display:flex;align-items:center;gap:4px"><span class="t" style="flex:1">Teilaufgabe ${i+1}</span>
-          <button class="abtn" data-up="${i}" title="nach oben">↑</button>
-          <button class="abtn" data-down="${i}" title="nach unten">↓</button>
-          <button class="abtn" data-delsub="${i}" title="löschen">🗑️</button></div>
-        <div class="s" style="margin-top:3px;white-space:normal;line-height:1.35">${esc((st.prompt||"").slice(0,90))||"(kein Text)"}</div>
-      </div>`).join("");
+  const subList = s.subtasks.map((st,i)=>{ const txt=(st.prompt||"").trim(); return `
+      <div class="sqedit${i===s.selected?' sel':''}" data-i="${i}">
+        <div class="sqedit-h"><span class="sqedit-no">${i+1}</span><span class="sqedit-t">Teilaufgabe ${i+1}</span>
+          <span class="sqedit-acts"><button class="abtn" data-up="${i}" title="nach oben">↑</button><button class="abtn" data-down="${i}" title="nach unten">↓</button><button class="abtn" data-delsub="${i}" title="löschen">🗑️</button></span></div>
+        <div class="sqedit-prev${txt?"":" empty"}">${txt?esc(txt.slice(0,120)):"(noch kein Text)"}</div>
+      </div>`; }).join("");
   document.getElementById("view").innerHTML = `
     <div class="page-head"><button class="crumb" id="back">${s.isTemplate?"← Vorlagen":"← Zur Klasse"}</button></div>
     <div class="card" style="margin-bottom:14px">
@@ -2308,7 +2306,7 @@ function renderSqlAssignEditor(){
   document.getElementById("saSave").onclick = s.isTemplate?saveSqlTemplateFromEditor:saveSqlAssignment;
   { const tb=document.getElementById("saTpl"); if(tb) tb.onclick=saveSqlTemplate; }
   document.getElementById("saAddSub").onclick = ()=>{ syncSqlSubtask(); s.subtasks.push({ prompt:"", solution_sql:"", compare:true, ordered:false }); s.selected=s.subtasks.length-1; renderSqlAssignEditor(); };
-  document.querySelectorAll("#saSubList .sqst").forEach(row=> row.onclick=(e)=>{ if(e.target.closest("[data-up],[data-down],[data-delsub]")) return; selectSqlSubtask(+row.dataset.i); });
+  document.querySelectorAll("#saSubList .sqedit").forEach(row=> row.onclick=(e)=>{ if(e.target.closest("[data-up],[data-down],[data-delsub]")) return; selectSqlSubtask(+row.dataset.i); });
   document.querySelectorAll("#saSubList [data-up]").forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); const i=+b.dataset.up; if(i<=0) return; syncSqlSubtask(); const a=s.subtasks; [a[i-1],a[i]]=[a[i],a[i-1]]; s.selected=i-1; renderSqlAssignEditor(); });
   document.querySelectorAll("#saSubList [data-down]").forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); const i=+b.dataset.down; if(i>=s.subtasks.length-1) return; syncSqlSubtask(); const a=s.subtasks; [a[i+1],a[i]]=[a[i],a[i+1]]; s.selected=i+1; renderSqlAssignEditor(); });
   document.querySelectorAll("#saSubList [data-delsub]").forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); const i=+b.dataset.delsub; if(s.subtasks.length<=1){ toast("Mindestens eine Teilaufgabe ist nötig.","err"); return; } if(!confirm("Teilaufgabe "+(i+1)+" löschen?")) return; syncSqlSubtask(); const rem=s.subtasks[i]; if(rem.id) s.deletedIds.push(rem.id); s.subtasks.splice(i,1); if(i<s.selected) s.selected--; if(s.selected>=s.subtasks.length) s.selected=s.subtasks.length-1; if(s.selected<0) s.selected=0; renderSqlAssignEditor(); });
@@ -2324,7 +2322,7 @@ function renderSqlSubtaskPane(){
     <label style="display:flex;align-items:center;gap:8px;font-weight:700;font-size:13px;cursor:pointer;margin-bottom:12px;${st.compare?'':'opacity:.45'}"><input type="checkbox" id="stOrdered" ${st.ordered?"checked":""} ${st.compare?'':'disabled'}> Zeilen-Reihenfolge muss stimmen (bei <code>ORDER BY</code>)</label>
     <div class="muted" style="font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Musterlösung (SQL)</div>
     <div id="stSqlHost"></div>`;
-  document.getElementById("stPrompt").oninput = (e)=>{ st.prompt=e.target.value; const li=document.querySelector(`#saSubList .sqst[data-i="${s.selected}"] .s`); if(li) li.textContent=(st.prompt||"").slice(0,90)||"(kein Text)"; };
+  document.getElementById("stPrompt").oninput = (e)=>{ st.prompt=e.target.value; const li=document.querySelector(`#saSubList .sqedit[data-i="${s.selected}"] .sqedit-prev`); if(li){ const v=(st.prompt||"").trim(); li.textContent=v?v.slice(0,120):"(noch kein Text)"; li.classList.toggle("empty",!v); } };
   document.getElementById("stCompare").onchange = (e)=>{ syncSqlSubtask(); st.compare=e.target.checked; renderSqlSubtaskPane(); };
   document.getElementById("stOrdered").onchange = (e)=>{ st.ordered=e.target.checked; };
   if(s.view){ try{ s.view.destroy(); }catch(e){} }
@@ -2509,6 +2507,9 @@ function fmtDate(s){ try{ const d=new Date(s); return d.toLocaleDateString("de-D
    Neueste Version zuerst. Bei jedem Deploy oben einen Eintrag ergänzen.
    ============================================================================ */
 const PATCH_NOTES = [
+  { v:"2.21", date:"1. Juli 2026", title:"SQL-Aufgaben-Editor: schönere Teilaufgaben-Liste", items:[
+    `Die <b>Teilaufgaben-Liste</b> im Aufgaben-Editor ist jetzt deutlich übersichtlicher: jede Teilaufgabe ist eine eigene <b>Karte</b> mit <b>Nummern-Marke</b>, klar erkennbarer Auswahl (grün hervorgehoben) und einer auf zwei Zeilen begrenzten <b>Vorschau</b> des Aufgabentexts.`,
+  ]},
   { v:"2.20", date:"30. Juni 2026", title:"SQL-Klassen: volle Verwaltung wie beim Hamster", items:[
     `In einer SQL-Klasse gibt es jetzt oben Schnellzugriffe auf <b>🗄️ Datenbanken</b> und <b>📋 Vorlagen</b>.`,
     `<b>Schüler:innen-Verwaltung</b> wie im Hamster-Tool: <b>📥 Importieren</b>, einzelne entfernen, Passwort zurücksetzen und ein Klick auf den Namen öffnet das <b>Schüler-Profil</b> (Fortschritt je Aufgabe + private Notizen).`,
@@ -2708,7 +2709,7 @@ function patchNotesDialog(){
 }
 
 /* ---------- Footer: Versionsnummer (aus den Patch-Notes) + Copyright ---------- */
-const APP_BUILD = "2026-06-30 19:30";   // letztes Update (im Patch-Notes-Dialog angezeigt)
+const APP_BUILD = "2026-07-01 12:00";   // letztes Update (im Patch-Notes-Dialog angezeigt)
 (function(){ const f=document.getElementById("appfoot"); if(f){ const v=(typeof PATCH_NOTES!=="undefined"&&PATCH_NOTES[0])?PATCH_NOTES[0].v:""; f.textContent='© 2026 Laurens Offinger · Version '+v; } })();
 
 boot();
