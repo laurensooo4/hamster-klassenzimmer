@@ -2275,10 +2275,8 @@ function renderSqlAssignEditor(){
   const subList = s.subtasks.map((st,i)=>{ const txt=(st.prompt||"").trim(); return `
       <div class="sqedit${i===s.selected?' sel':''}" data-i="${i}">
         <div class="sqedit-row">
-          <div class="sqedit-main">
-            <div class="sqedit-h"><span class="sqedit-no">${i+1}</span><span class="sqedit-t">Teilaufgabe ${i+1}</span></div>
-            <div class="sqedit-prev${txt?"":" empty"}">${txt?esc(txt.slice(0,200)):"(noch kein Text)"}</div>
-          </div>
+          <span class="sqedit-no">${i+1}</span>
+          <span class="sqedit-t${txt?"":" empty"}" title="${esc(txt)}">${txt?esc(txt.slice(0,200)):"(noch kein Aufgabentext)"}</span>
           <div class="sqedit-acts"><button class="abtn" data-up="${i}" title="nach oben">↑</button><button class="abtn" data-down="${i}" title="nach unten">↓</button><button class="abtn" data-delsub="${i}" title="löschen">🗑️</button></div>
         </div>
       </div>`; }).join("");
@@ -2324,7 +2322,7 @@ function renderSqlSubtaskPane(){
     <label style="display:flex;align-items:center;gap:8px;font-weight:700;font-size:13px;cursor:pointer;margin-bottom:12px;${st.compare?'':'opacity:.45'}"><input type="checkbox" id="stOrdered" ${st.ordered?"checked":""} ${st.compare?'':'disabled'}> Zeilen-Reihenfolge muss stimmen (bei <code>ORDER BY</code>)</label>
     <div class="muted" style="font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Musterlösung (SQL)</div>
     <div id="stSqlHost"></div>`;
-  document.getElementById("stPrompt").oninput = (e)=>{ st.prompt=e.target.value; const li=document.querySelector(`#saSubList .sqedit[data-i="${s.selected}"] .sqedit-prev`); if(li){ const v=(st.prompt||"").trim(); li.textContent=v?v.slice(0,120):"(noch kein Text)"; li.classList.toggle("empty",!v); } };
+  document.getElementById("stPrompt").oninput = (e)=>{ st.prompt=e.target.value; const li=document.querySelector(`#saSubList .sqedit[data-i="${s.selected}"] .sqedit-t`); if(li){ const v=(st.prompt||"").trim(); li.textContent=v?v.slice(0,200):"(noch kein Aufgabentext)"; li.title=v; li.classList.toggle("empty",!v); } };
   document.getElementById("stCompare").onchange = (e)=>{ syncSqlSubtask(); st.compare=e.target.checked; renderSqlSubtaskPane(); };
   document.getElementById("stOrdered").onchange = (e)=>{ st.ordered=e.target.checked; };
   if(s.view){ try{ s.view.destroy(); }catch(e){} }
@@ -2509,6 +2507,9 @@ function fmtDate(s){ try{ const d=new Date(s); return d.toLocaleDateString("de-D
    Neueste Version zuerst. Bei jedem Deploy oben einen Eintrag ergänzen.
    ============================================================================ */
 const PATCH_NOTES = [
+  { v:"2.23", date:"1. Juli 2026", title:"SQL-Editor: Aufgabentext direkt in der Teilaufgaben-Liste", items:[
+    `In der Teilaufgaben-Liste steht jetzt direkt der <b>Aufgabentext</b> neben der Nummer (die Zwischenüberschrift „Teilaufgabe N" entfällt) – so erkennst du jede Teilaufgabe sofort am Inhalt.`,
+  ]},
   { v:"2.22", date:"1. Juli 2026", title:"SQL-Aufgaben-Editor: Teilaufgaben über die volle Breite", items:[
     `Der Aufgaben-Editor ist jetzt <b>untereinander</b> aufgebaut: zuerst die <b>Teilaufgaben-Liste über die volle Breite</b> (jede als Karte mit Nummer, Vorschau und den Schaltflächen ↑ ↓ 🗑 rechts), darunter der <b>Editierbereich</b> der gewählten Teilaufgabe (Aufgabentext, Musterlösung, Ausführen).`,
     `Beim Klick auf eine Teilaufgabe springt die Ansicht automatisch zum Editierbereich.`,
@@ -2715,7 +2716,7 @@ function patchNotesDialog(){
 }
 
 /* ---------- Footer: Versionsnummer (aus den Patch-Notes) + Copyright ---------- */
-const APP_BUILD = "2026-07-01 13:30";   // letztes Update (im Patch-Notes-Dialog angezeigt)
+const APP_BUILD = "2026-07-01 14:15";   // letztes Update (im Patch-Notes-Dialog angezeigt)
 (function(){ const f=document.getElementById("appfoot"); if(f){ const v=(typeof PATCH_NOTES!=="undefined"&&PATCH_NOTES[0])?PATCH_NOTES[0].v:""; f.textContent='© 2026 Laurens Offinger · Version '+v; } })();
 
 boot();
