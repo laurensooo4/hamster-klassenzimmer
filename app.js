@@ -79,8 +79,7 @@ const TOOLS = [
 ];
 function toolLauncher(){
   shell(`<div class="page-head" style="justify-content:center;text-align:center"><div>
-      <h2 style="margin:0">Was möchtest du nutzen?</h2>
-      <p class="muted" style="margin:6px 0 0">Wähle ein Lern-Tool – wechseln kannst du jederzeit oben im Konto-Menü.</p></div></div>
+      <h2 style="margin:0">Was möchtest du nutzen?</h2></div></div>
     <div class="grid toolgrid">${TOOLS.map(t=>`
       <div class="card tool ${t.active?"click":"disabled"}" ${t.active?`data-tool="${t.id}"`:""}>
         <div class="ticon">${t.icon}</div>
@@ -204,13 +203,13 @@ function shell(inner){
   app().innerHTML = `
     <div class="topbar">
       <div class="brand"><span class="h">${HAMSTER}</span> Informatik am Gymnasium Wesermünde</div>
+      <button class="btn btn-ghost btn-sm" id="homeBtn" title="Zur Tool-Auswahl" style="margin-left:8px">🏠</button>
       <div class="spacer"></div>
       <button class="btn btn-ghost btn-sm" id="themeBtn" title="Design wechseln" style="margin-right:8px">🌗</button>
       ${roleBadge}
       <div class="usermenu">
         <button class="chip ${ME.role} chipbtn" id="userBtn" title="Konto-Menü"><span class="av">${esc(initials(ME.display_name||ME.username))}</span>${esc(ME.display_name||ME.username)}<span class="caret">▾</span></button>
         <div class="menu" id="userMenu" style="display:none">
-          <button class="menu-item" data-act="switch">🔀 Tool wechseln</button>
           ${ME.is_admin?`<button class="menu-item" data-act="admin">🛠️ Admin-Bereich</button>`:""}
           <button class="menu-item" data-act="pw">🔑 Passwort ändern</button>
           <button class="menu-item danger" data-act="logout">🚪 Abmelden</button>
@@ -219,10 +218,11 @@ function shell(inner){
     </div>
     <div class="container" id="view"></div>
     ${ME.role==="teacher"?`<button class="patch-fab" id="btnPatch" title="Patch-Notes – was ist neu?"><span class="dot"></span>🗒️<span class="lbl">&nbsp;Patch-Notes</span></button>`:""}`;
+  { const hb=document.getElementById("homeBtn"); if(hb) hb.onclick=()=> switchTool(); }
   { const ub=document.getElementById("userBtn"), um=document.getElementById("userMenu");
     if(ub&&um){
       ub.onclick=(e)=>{ e.stopPropagation(); um.style.display = (um.style.display==="none"?"block":"none"); };
-      um.querySelectorAll("[data-act]").forEach(b=> b.onclick=()=>{ const a=b.dataset.act; um.style.display="none"; if(a==="switch") switchTool(); else if(a==="admin") adminHome(); else if(a==="pw") changePasswordDialog(); else if(a==="logout") signOut(); });
+      um.querySelectorAll("[data-act]").forEach(b=> b.onclick=()=>{ const a=b.dataset.act; um.style.display="none"; if(a==="admin") adminHome(); else if(a==="pw") changePasswordDialog(); else if(a==="logout") signOut(); });
     }
   }
   if(!window._umClose){ window._umClose=true; document.addEventListener("click",(e)=>{ const um=document.getElementById("userMenu"); if(um && um.style.display!=="none" && !e.target.closest("#userMenu") && !e.target.closest("#userBtn")) um.style.display="none"; }); }
@@ -1224,7 +1224,7 @@ async function teacherClassView(classId){
       <div id="sec-leh" class="list" style="margin-top:12px${secOpen.leh?"":";display:none"}">${teachers.length?teachers.map(t=>`<div class="row"><span class="chip"><span class="av">${esc(initials(t.display_name||t.username))}</span>${esc(t.display_name||t.username)}</span><div class="grow"></div>${t.is_owner?'<span class="badge blue">Ersteller:in</span>':'<span class="badge gray">Co-Lehrkraft</span>'}</div>`).join(""):'<div class="muted" style="font-size:13px">—</div>'}</div></div>`;
   document.getElementById("back").onclick = ()=> (viewFromAdmin?adminHome():teacherHome());
   document.getElementById("copyCode").onclick = ()=>{ if(navigator.clipboard) navigator.clipboard.writeText(cls.code); toast("Code kopiert: "+cls.code,"ok"); };
-  document.getElementById("btnRename").onclick = ()=> renameClassDialog(classId, cls.name);
+  document.getElementById("btnRename").onclick = ()=> renameClassDialog(classId, cls.name, cls.tool);
   { const bt=document.getElementById("btnCodeToggle"); if(bt) bt.onclick=async()=>{ const disabling=(cls.join_open!==false); if(disabling){ if(!confirm(`Beitritt für „${cls.name}" deaktivieren?\n\nMit dem Code ${cls.code} kann danach niemand mehr neu beitreten. Bereits beigetretene Schüler:innen bleiben in der Klasse.`)) return; } try{ await api.setClassJoinOpen(classId, !disabling); toast(disabling?"Beitritt deaktiviert 🚫":"Beitritt wieder aktiv 🔓","ok"); teacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } }; }
   { const bn=document.getElementById("btnCodeNew"); if(bn) bn.onclick=async()=>{ if(!confirm(`Neuen Einlade-Code für „${cls.name}" erzeugen?\n\nDer bisherige Code ${cls.code} wird sofort ungültig – verteile danach den neuen Code. Bereits beigetretene Schüler:innen bleiben in der Klasse.`)) return; try{ const nc=await api.regenerateClassCode(classId); toast("Neuer Code: "+nc,"ok"); teacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } }; }
   document.querySelectorAll(".sectoggle[data-sec]").forEach(t=> t.onclick=()=>{ const k=t.dataset.sec; secOpen[k]=!secOpen[k]; const body=document.getElementById("sec-"+k); if(body) body.style.display=secOpen[k]?"":"none"; const ar=t.querySelector(".secarrow"); if(ar) ar.textContent=secOpen[k]?"▼":"▶"; });
@@ -1564,7 +1564,7 @@ async function doAdminImport(list, role){
   }
   renderImportResults(stage, results, ()=> adminHome());
 }
-function renameClassDialog(classId, current){
+function renameClassDialog(classId, current, tool){
   openModal(`<button class="x" onclick="closeModal()">✕</button>
     <h3>Klasse umbenennen</h3>
     <div class="field"><label>Klassenname</label><input class="input" id="rnName" maxlength="60"></div>
@@ -1574,7 +1574,7 @@ function renameClassDialog(classId, current){
     const btn=document.getElementById("rnSave"); btn.disabled=true; btn.textContent="Speichere…";
     const { error } = await sb.from("classes").update({ name }).eq("id", classId);
     if(error){ btn.disabled=false; btn.textContent="Speichern"; toast(error.message||"Fehler","err"); return; }
-    closeModal(); toast("Umbenannt ✓","ok"); teacherClassView(classId); };
+    closeModal(); toast("Umbenannt ✓","ok"); ((tool||ACTIVE_TOOL)==="sql"?sqlTeacherClassView:teacherClassView)(classId); };
   document.getElementById("rnSave").onclick=go;
   inp.addEventListener("keydown",e=>{ if(e.key==="Enter") go(); });
 }
@@ -1609,7 +1609,7 @@ async function classTeachersDialog(classId, cls){
     document.querySelectorAll("[data-rmteacher]").forEach(b=> b.onclick=async()=>{ try{ await api.removeClassTeacher(classId, b.dataset.rmteacher); toast("Entfernt","ok"); refresh(); }catch(e){ toast(e.message||"Fehler","err"); } });
   }
   document.getElementById("ctAdd").onclick=async()=>{ const sel=document.getElementById("ctSelect"); if(!sel.value) return; try{ await api.addClassTeacher(classId, sel.value); toast("Hinzugefügt ✓","ok"); refresh(); }catch(e){ toast(e.message||"Fehler","err"); } };
-  { const tb=document.getElementById("ctTransfer"); if(tb) tb.onclick=async()=>{ const sel=document.getElementById("ctTransferSel"); if(!sel.value) return; const nm=(sel.options[sel.selectedIndex]||{}).text||"diese Lehrkraft"; if(!confirm(`Klasse „${cls.name}" wirklich an ${nm} übergeben? ${nm} wird Eigentümer:in mit allen Rechten, du wirst Co-Lehrkraft.`)) return; try{ await api.transferClass(classId, sel.value); closeModal(); toast("Klasse übergeben ✓","ok"); teacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } }; }
+  { const tb=document.getElementById("ctTransfer"); if(tb) tb.onclick=async()=>{ const sel=document.getElementById("ctTransferSel"); if(!sel.value) return; const nm=(sel.options[sel.selectedIndex]||{}).text||"diese Lehrkraft"; if(!confirm(`Klasse „${cls.name}" wirklich an ${nm} übergeben? ${nm} wird Eigentümer:in mit allen Rechten, du wirst Co-Lehrkraft.`)) return; try{ await api.transferClass(classId, sel.value); closeModal(); toast("Klasse übergeben ✓","ok"); (((cls&&cls.tool)||ACTIVE_TOOL)==="sql"?sqlTeacherClassView:teacherClassView)(classId); }catch(e){ toast(e.message||"Fehler","err"); } }; }
   refresh();
 }
 
@@ -1763,11 +1763,13 @@ async function sqlTeacherClassView(classId){
   // Abgabe-Matrix ist Zusatz -> eigener, nicht-fataler Block: ein Fehler hier reißt Aufgaben-/Schülerliste nicht herunter
   if(asgs.length){ const ids=asgs.map(a=>a.id); try{ subs = await api.sqlClassSubmissions(ids); subtaskRows = await api.sqlSubtaskIds(ids); }catch(e){ subs=[]; subtaskRows=[]; } }
   const canTeam=(cls.teacher_id===ME.id||ME.is_admin);
+  let teachers=[]; try{ teachers=await api.classTeachersNamed(classId); }catch(e){ teachers=[]; }
+  const iAmCoTeacher = !canTeam && teachers.some(t=>t.id===ME.id && !t.is_owner);
   const subtasksByAsg=new Map(); asgs.forEach(a=>subtasksByAsg.set(a.id,[])); subtaskRows.forEach(r=>{ const arr=subtasksByAsg.get(r.assignment_id); if(arr) arr.push(r.id); });
   const rosterHtml = roster.length ? `<div class="list">${roster.map(m=>{ const p=m.profiles||{}; const nm=p.display_name||p.username||"?"; return `<div class="row"><span class="chip"><span class="av">${esc(initials(nm))}</span>${esc(nm)}</span><div class="grow"></div><span class="muted" style="font-size:11.5px">${fmtDate(m.joined_at)}</span></div>`; }).join("")}</div>`
     : `<div class="empty"><span class="ic">🎒</span>Noch keine Schüler:innen. Teile den Code <b>${esc(cls.code)}</b>!</div>`;
   const asgHtml = asgs.length ? `<div class="list">${asgs.map(a=>`
-      <div class="row"><span class="grow"><span class="t clickable" data-edit="${a.id}" title="Aufgabe bearbeiten">${esc(a.title)} ${a.published?"":'<span class="badge gold">Entwurf</span>'}${a.released?' <span class="badge" title="Musterlösungen für Schüler:innen sichtbar">🏆 Lösung frei</span>':''}</span><span class="s">${esc(fmtDateTime(a.created_at))}</span></span>
+      <div class="row"><span class="grow"><span style="display:flex;align-items:center;gap:6px;flex-wrap:wrap"><span class="t clickable" data-edit="${a.id}" title="Aufgabe bearbeiten">${esc(a.title)}</span>${a.published?"":'<span class="badge gold">Entwurf</span>'}${a.released?'<span class="badge" title="Musterlösungen für Schüler:innen sichtbar">🏆 Lösung frei</span>':''}</span><span class="s">${esc(fmtDateTime(a.created_at))}</span></span>
         <span class="acts">
           <button class="abtn" data-up="${a.id}" title="nach oben">↑</button>
           <button class="abtn" data-down="${a.id}" title="nach unten">↓</button>
@@ -1779,22 +1781,30 @@ async function sqlTeacherClassView(classId){
     : `<div class="empty" style="padding:16px"><span class="ic">📝</span>Noch keine Aufgaben.</div>`;
   document.getElementById("view").innerHTML = `
     <div class="page-head"><button class="crumb" id="back">${viewFromAdmin?"← Admin-Bereich":"← Meine Klassen"}</button></div>
-    <div class="page-head" style="margin-top:0"><h2>${esc(cls.name)}</h2><div class="spacer"></div>
-      <span class="codechip" title="Einlade-Code">🔑 ${esc(cls.code)} <button class="btn btn-sm btn-ghost" id="copyCode" style="margin-left:4px">Kopieren</button></span>
-      ${canTeam?`<button class="btn btn-ghost btn-sm" id="btnDeleteClass" style="margin-left:8px;color:var(--red-d)" title="Klasse löschen">🗑️ Löschen</button>`:""}</div>
+    <div class="page-head" style="margin-top:0"><h2>${esc(cls.name)}${canTeam?` <button class="btn btn-ghost btn-sm" id="btnRename" title="Klasse umbenennen" style="vertical-align:middle">✏️</button>`:""}</h2><div class="spacer"></div>
+      <span class="codechip" title="Einlade-Code" style="${cls.join_open===false?'opacity:.55;':''}">🔑 ${esc(cls.code)}${cls.join_open===false?' <span class="badge gray" title="Beitritt mit diesem Code ist deaktiviert">aus</span>':''} <button class="btn btn-sm btn-ghost" id="copyCode" style="margin-left:4px">Kopieren</button></span>
+      ${canTeam?`<button class="btn btn-ghost btn-sm" id="btnCodeToggle" style="margin-left:8px" title="${cls.join_open===false?'Beitritt mit diesem Code wieder erlauben':'Beitritt mit diesem Code deaktivieren'}">${cls.join_open===false?'🔓 Aktivieren':'🚫 Code deaktivieren'}</button><button class="btn btn-ghost btn-sm" id="btnCodeNew" style="margin-left:6px" title="Neuen Code erzeugen – der alte wird ungültig">🔄 Neuer Code</button>`:''}
+      ${canTeam?`<button class="btn btn-ghost btn-sm" id="btnDeleteClass" style="margin-left:8px;color:var(--red-d)" title="Klasse löschen">🗑️ Löschen</button>`:(iAmCoTeacher?`<button class="btn btn-ghost btn-sm" id="btnLeaveClass" style="margin-left:8px;color:var(--red-d)" title="Klasse verlassen">🚪 Klasse verlassen</button>`:"")}</div>
     <div class="card" style="margin-bottom:14px">
       <div style="display:flex;align-items:center;gap:8px"><h3 style="margin:0">📝 Aufgaben <span class="badge gray">${asgs.length}</span></h3><div style="flex:1"></div><button class="btn btn-ghost btn-sm" id="btnSqlFromTpl">📋 aus Vorlage</button><button class="btn btn-blue btn-sm" id="btnNewSqlAssign" style="margin-left:8px">+ Aufgabe stellen</button></div>
       <div style="margin-top:12px">${asgHtml}</div></div>
     <div class="card" style="margin-bottom:14px">
       <div style="display:flex;align-items:center;gap:8px"><h3 style="margin:0">📊 Abgabe-Matrix</h3><div style="flex:1"></div></div>
       <div style="margin-top:12px">
-        ${(asgs.length&&roster.length)?'<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap"><span class="muted" style="font-size:12.5px">je Zelle: 🟩 richtig · 🟧 bearbeitet · ⬜ offen · ★ = alles richtig</span><div style="flex:1"></div><input class="input" id="sqlMatrixSearch" placeholder="🔍 Schüler:in suchen" style="max-width:240px"></div>':''}
+        ${(asgs.length&&roster.length)?'<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap"><span class="muted" style="font-size:12.5px">🟩 richtig · 🟧 bearbeitet · ⬜ offen · ★ = alles richtig</span><div style="flex:1"></div><input class="input" id="sqlMatrixSearch" placeholder="🔍 Schüler:in suchen" style="max-width:240px"></div>':''}
         <div id="sqlMatrixHost"></div>
       </div></div>
-    <div class="card" style="margin-bottom:14px"><h3 style="margin:0">🎒 Schüler:innen <span class="badge gray">${roster.length}</span></h3><div style="margin-top:12px">${rosterHtml}</div></div>`;
+    <div class="card" style="margin-bottom:14px"><h3 style="margin:0">🎒 Schüler:innen <span class="badge gray">${roster.length}</span></h3><div style="margin-top:12px">${rosterHtml}</div></div>
+    <div class="card" style="margin-bottom:16px"><div style="display:flex;align-items:center;gap:8px"><h3 style="margin:0">👩‍🏫 Lehrkräfte <span class="badge gray">${teachers.length}</span></h3><div style="flex:1"></div>${canTeam?'<button class="btn btn-ghost btn-sm" id="btnTeachers">+ verwalten</button>':''}</div>
+      <div class="list" style="margin-top:12px">${teachers.length?teachers.map(t=>`<div class="row"><span class="chip"><span class="av">${esc(initials(t.display_name||t.username))}</span>${esc(t.display_name||t.username)}</span><div class="grow"></div>${t.is_owner?'<span class="badge blue">Ersteller:in</span>':'<span class="badge gray">Co-Lehrkraft</span>'}</div>`).join(""):'<div class="muted" style="font-size:13px">—</div>'}</div></div>`;
   document.getElementById("back").onclick = ()=> (viewFromAdmin?adminHome():sqlTeacherHome());
   document.getElementById("copyCode").onclick = ()=>{ if(navigator.clipboard) navigator.clipboard.writeText(cls.code); toast("Code kopiert: "+cls.code,"ok"); };
   { const bd=document.getElementById("btnDeleteClass"); if(bd) bd.onclick=async()=>{ if(!confirm(`Klasse „${cls.name}" wirklich löschen? Alle Aufgaben und Zuordnungen werden entfernt.`)) return; try{ await api.deleteClass(classId); toast("Klasse gelöscht","ok"); (viewFromAdmin?adminHome():sqlTeacherHome()); }catch(e){ toast(e.message||"Fehler","err"); } }; }
+  { const br=document.getElementById("btnRename"); if(br) br.onclick=()=> renameClassDialog(classId, cls.name, cls.tool); }
+  { const bt=document.getElementById("btnCodeToggle"); if(bt) bt.onclick=async()=>{ const disabling=(cls.join_open!==false); if(disabling){ if(!confirm(`Beitritt für „${cls.name}" deaktivieren?\n\nMit dem Code ${cls.code} kann danach niemand mehr neu beitreten. Bereits beigetretene Schüler:innen bleiben in der Klasse.`)) return; } try{ await api.setClassJoinOpen(classId, !disabling); toast(disabling?"Beitritt deaktiviert 🚫":"Beitritt wieder aktiv 🔓","ok"); sqlTeacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } }; }
+  { const bn=document.getElementById("btnCodeNew"); if(bn) bn.onclick=async()=>{ if(!confirm(`Neuen Einlade-Code für „${cls.name}" erzeugen?\n\nDer bisherige Code ${cls.code} wird sofort ungültig – verteile danach den neuen Code. Bereits beigetretene Schüler:innen bleiben in der Klasse.`)) return; try{ const nc=await api.regenerateClassCode(classId); toast("Neuer Code: "+nc,"ok"); sqlTeacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } }; }
+  { const bl=document.getElementById("btnLeaveClass"); if(bl) bl.onclick=async()=>{ if(!confirm(`Klasse „${cls.name}" wirklich verlassen? Du bist danach keine Co-Lehrkraft mehr und siehst die Klasse nicht mehr.`)) return; try{ await api.removeClassTeacher(classId, ME.id); toast("Klasse verlassen","ok"); sqlTeacherHome(); }catch(e){ toast(e.message||"Fehler","err"); } }; }
+  { const bt=document.getElementById("btnTeachers"); if(bt) bt.onclick=()=> classTeachersDialog(classId, cls); }
   document.getElementById("btnNewSqlAssign").onclick = ()=> sqlAssignmentEditorPage(classId, null);
   document.getElementById("btnSqlFromTpl").onclick = ()=> sqlPickTemplate(classId);
   document.querySelectorAll("[data-edit]").forEach(b=> b.onclick=()=> sqlAssignmentEditorPage(classId, {id:b.dataset.edit}));
@@ -1852,16 +1862,18 @@ async function sqlTemplatesPage(){
   shell(`<div class="center-load"><span class="spin"></span>Vorlagen…</div>`);
   let list=[]; try{ list=await api.sqlListTemplates(); }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
   const rows = list.length ? `<div class="list">${list.map(t=>`
-      <div class="row"><span class="grow"><span class="t">${esc(t.title)}</span><span class="s">${t.subtask_count} Teilaufgabe(n) · von ${esc(t.owner_name)}${t.mine?" (du)":""} · ${t.shared?"🌍 geteilt":"🔒 privat"} · ${esc(fmtDateTime(t.updated_at))}</span></span>
-        ${(t.mine||ME.is_admin)?`<button class="abtn" data-share="${t.id}" data-on="${t.shared?1:0}" title="${t.shared?'Freigabe zurücknehmen':'für andere Lehrkräfte freigeben'}">${t.shared?'🌍':'🔒'}</button><button class="abtn" data-del="${t.id}" data-nm="${esc(t.title)}" title="löschen">🗑️</button>`:""}
+      <div class="row"><span class="grow"><span class="t${(t.mine||ME.is_admin)?" clickable":""}"${(t.mine||ME.is_admin)?` data-edit="${t.id}" title="bearbeiten"`:""}>${esc(t.title)}</span><span class="s">${t.subtask_count} Teilaufgabe(n) · von ${esc(t.owner_name)}${t.mine?" (du)":""} · ${t.shared?"🌍 geteilt":"🔒 privat"} · ${esc(fmtDateTime(t.updated_at))}</span></span>
+        ${(t.mine||ME.is_admin)?`<button class="abtn" data-edit="${t.id}" title="bearbeiten">✏️</button><button class="abtn" data-share="${t.id}" data-on="${t.shared?1:0}" title="${t.shared?'Freigabe zurücknehmen':'für andere Lehrkräfte freigeben'}">${t.shared?'🌍':'🔒'}</button><button class="abtn" data-del="${t.id}" data-nm="${esc(t.title)}" title="löschen">🗑️</button>`:""}
       </div>`).join("")}</div>`
-    : `<div class="empty"><span class="ic">📋</span>Noch keine Vorlagen. Öffne eine Aufgabe und wähle „⭐ Als Vorlage", um eine anzulegen.</div>`;
+    : `<div class="empty"><span class="ic">📋</span>Noch keine Vorlagen. Lege eine über „+ Neue Vorlage" an – oder wähle in einer Aufgabe „⭐ Als Vorlage".</div>`;
   document.getElementById("view").innerHTML = `
     <div class="page-head"><button class="crumb" id="back">← SQL · Meine Klassen</button></div>
-    <div class="page-head" style="margin-top:0"><h2>📋 Aufgaben-Vorlagen</h2></div>
+    <div class="page-head" style="margin-top:0"><h2>📋 Aufgaben-Vorlagen</h2><div class="spacer"></div><button class="btn btn-primary" id="btnNewTpl">+ Neue Vorlage</button></div>
     <div class="card" style="margin-bottom:12px;padding:12px 16px"><span class="muted" style="font-size:13px">Vorlagen sind wiederverwendbare Aufgaben (mit Datenbank + Teilaufgaben). In einer Klasse legst du über <b>📋 aus Vorlage</b> eine neue Aufgabe daraus an. <b>Geteilte</b> Vorlagen können auch andere Lehrkräfte verwenden.</span></div>
     ${rows}`;
   document.getElementById("back").onclick = sqlTeacherHome;
+  document.getElementById("btnNewTpl").onclick = ()=> sqlTemplateEditorPage(null);
+  document.querySelectorAll("[data-edit]").forEach(b=> b.onclick=()=> sqlTemplateEditorPage({id:b.dataset.edit}));
   document.querySelectorAll("[data-share]").forEach(b=> b.onclick=async()=>{ const on=b.dataset.on==="1"; try{ await api.sqlUpdateTemplate(b.dataset.share,{shared:!on}); toast(on?"Freigabe zurückgenommen":"Vorlage freigegeben 🌍","ok"); sqlTemplatesPage(); }catch(e){ toast(e.message||"Fehler","err"); } });
   document.querySelectorAll("[data-del]").forEach(b=> b.onclick=async()=>{ if(!confirm(`Vorlage „${b.dataset.nm}" wirklich löschen?`)) return; try{ await api.sqlDeleteTemplate(b.dataset.del); toast("Vorlage gelöscht","ok"); sqlTemplatesPage(); }catch(e){ toast(e.message||"Fehler","err"); } });
 }
@@ -1959,15 +1971,17 @@ async function deleteSqlReviewComment(){
 }
 async function sqlStudentClassView(classId){
   shell(`<div class="center-load"><span class="spin"></span>Lädt…</div>`);
-  let cls, asgs=[], subs=[];
+  let cls, asgs=[], subs=[], subIdsBy={};
   try{
     const { data } = await sb.from("classes").select("*").eq("id",classId).single(); cls=data;
     asgs = await api.sqlStudentAssignments(classId);
     subs = await api.sqlMySubmissions(asgs.map(a=>a.id));
+    if(asgs.length){ const arr=await Promise.all(asgs.map(a=> api.sqlSubtasksForStudent(a.id).then(r=>(r||[]).map(x=>x.id)).catch(()=>[]))); asgs.forEach((a,i)=>{ subIdsBy[a.id]=arr[i]; }); }
   }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
   const badge=(a)=>{ const s=subs.find(x=>x.assignment_id===a.id); if(!s) return '<span class="badge gray">offen</span>'; if(s.passed===true) return '<span class="badge">bestanden ✓</span>'; return '<span class="badge gold">in Bearbeitung</span>'; };
+  const progress=(a)=>{ const ids=subIdsBy[a.id]||[], total=ids.length; if(!total) return ""; const sub=subs.find(x=>x.assignment_id===a.id), res=(sub&&sub.results)||{}; let g=0,y=0; for(const id of ids){ const st=res[id]; if(st==="correct")g++; else if(st==="wrong")y++; } const grey=total-g-y; const seg=(n,c)=> n>0?`<div style="flex:${n};background:${c}"></div>`:""; return `<div style="display:flex;align-items:center;gap:8px;margin-top:6px"><div style="display:flex;height:7px;flex:1;max-width:170px;border-radius:4px;overflow:hidden;background:var(--line2)">${seg(g,"var(--green)")}${seg(y,"var(--gold)")}${seg(grey,"var(--line2)")}</div><span class="muted" style="font-size:11.5px;font-weight:800">${g}/${total}</span></div>`; };
   const list = asgs.length ? `<div class="list">${asgs.map(a=>`
-      <div class="row clickrow" data-id="${a.id}" style="cursor:pointer"><span class="grow"><span class="t">${esc(a.title)}</span>${a.description?`<span class="s">${esc(a.description.slice(0,70))}</span>`:""}</span>${badge(a)}<span style="margin-left:8px;color:#7a8aa0">→</span></div>`).join("")}</div>`
+      <div class="row clickrow" data-id="${a.id}" style="cursor:pointer"><span class="grow"><span class="t">${esc(a.title)}</span>${a.description?`<span class="s">${esc(a.description.slice(0,70))}</span>`:""}${progress(a)}</span>${badge(a)}<span style="margin-left:8px;color:#7a8aa0">→</span></div>`).join("")}</div>`
     : `<div class="empty"><span class="ic">📝</span>Noch keine Aufgaben. Schau später wieder rein!</div>`;
   document.getElementById("view").innerHTML = `
     <div class="page-head"><button class="crumb" id="back">← Meine Klassen</button></div>
@@ -1979,7 +1993,7 @@ async function sqlStudentClassView(classId){
 
 /* ---------- SQL-Playground: Aufgabe lösen (Schüler:innen) + Benotung ---------- */
 let sqlSolveState=null;
-function sqlStatusIcon(st){ return st==="correct"?'<b style="color:var(--green-d)">✓</b>':st==="wrong"?'<b style="color:var(--gold-d)">~</b>':'<span style="color:var(--muted)">·</span>'; }
+function sqlStatusIcon(st){ return st==="correct"?'<b style="color:var(--green-d)">✓</b>':st==="wrong"?'<b style="color:var(--gold-d)">~</b>':'<span style="color:var(--muted);font-size:22px;line-height:0;vertical-align:middle">•</span>'; }
 async function sqlSolveAssignment(assignmentId){
   shell(`<div class="center-load"><span class="spin"></span>Aufgabe wird geladen…</div>`);
   let a, subtasks=[], submission=null;
@@ -1993,6 +2007,7 @@ async function sqlSolveAssignment(assignmentId){
     title:a.title, description:a.description||"", subtasks:subtasks,
     answers:(submission&&submission.answers)||{}, results:(submission&&submission.results)||{},
     teacherComment:(comment&&comment.body)||"",
+    schemaOpen:true,
     selected:0, view:null
   };
   try{ SqlEngine.ensureStyles(); }catch(e){}
@@ -2015,6 +2030,7 @@ function renderSqlSolve(){
     </div>`;
   document.getElementById("back").onclick = ()=>{ syncSolve(); sqlStudentClassView(s.classId); };
   document.querySelectorAll("#solveSubList .sqst").forEach(row=> row.onclick=()=>{ syncSolve(); s.selected=+row.dataset.i; renderSqlSolve(); });
+  window.scrollTo(0,0);   // beim Öffnen/Wechsel einer Teilaufgabe nach oben scrollen
   renderSqlSolveRight();
 }
 function renderSqlSolveRight(){
@@ -2028,7 +2044,7 @@ function renderSqlSolveRight(){
     <div id="solveSqlHost"></div>
     <div style="display:flex;align-items:center;gap:10px;margin-top:10px"><button class="btn btn-primary btn-sm" id="solveSave">💾 Lösung speichern</button><span id="solveMsg">${sqlSolveMsg(status)}</span></div>`;
   if(s.view){ try{ s.view.destroy(); }catch(e){} }
-  s.view = new SqlView("#solveSqlHost", { dbText:s.dbText, query: s.answers[st.id]||"", autofill:false });
+  s.view = new SqlView("#solveSqlHost", { dbText:s.dbText, query: s.answers[st.id]||"", autofill:false, schemaOpen:s.schemaOpen, onSchemaToggle:(o)=>{ s.schemaOpen=o; }, autorun:true });
   pageView=s.view;
   document.getElementById("solveSave").onclick = saveSqlAnswer;
 }
@@ -2203,23 +2219,24 @@ function renderSqlAssignEditor(){
   const dbOpts = `${!inList?`<option value="" selected>${s.dbText?"— gespeicherte Datenbank —":(s.dbs.length?"— bitte wählen —":"— erst eine Datenbank anlegen —")}</option>`:""}`
     + s.dbs.map(d=>`<option value="${esc(d.id)}" ${d.id===s.databaseId?"selected":""}>${esc(d.name)}${d.mine?"":" (von "+esc(d.owner_name)+")"}</option>`).join("");
   const subList = s.subtasks.map((st,i)=>`
-      <div class="row sqst" data-i="${i}" style="cursor:pointer;${i===s.selected?'background:var(--line2);border-radius:10px':''}">
-        <span class="grow"><span class="t">Teilaufgabe ${i+1}</span><span class="s">${esc((st.prompt||"").slice(0,38))||"(kein Text)"}</span></span>
-        <button class="abtn" data-up="${i}" title="nach oben">↑</button>
-        <button class="abtn" data-down="${i}" title="nach unten">↓</button>
-        <button class="abtn" data-delsub="${i}" title="löschen">🗑️</button>
+      <div class="sqst" data-i="${i}" style="cursor:pointer;padding:8px 10px;border-radius:10px;${i===s.selected?'background:var(--line2)':''}">
+        <div style="display:flex;align-items:center;gap:4px"><span class="t" style="flex:1">Teilaufgabe ${i+1}</span>
+          <button class="abtn" data-up="${i}" title="nach oben">↑</button>
+          <button class="abtn" data-down="${i}" title="nach unten">↓</button>
+          <button class="abtn" data-delsub="${i}" title="löschen">🗑️</button></div>
+        <div class="s" style="margin-top:3px;white-space:normal;line-height:1.35">${esc((st.prompt||"").slice(0,90))||"(kein Text)"}</div>
       </div>`).join("");
   document.getElementById("view").innerHTML = `
-    <div class="page-head"><button class="crumb" id="back">← Zur Klasse</button></div>
+    <div class="page-head"><button class="crumb" id="back">${s.isTemplate?"← Vorlagen":"← Zur Klasse"}</button></div>
     <div class="card" style="margin-bottom:14px">
-      <div class="page-head" style="margin:0 0 12px"><h2 style="margin:0">${s.id?"SQL-Aufgabe bearbeiten":"Neue SQL-Aufgabe"}</h2><div class="spacer"></div>
+      <div class="page-head" style="margin:0 0 12px"><h2 style="margin:0">${s.isTemplate?(s.templateId?"Vorlage bearbeiten":"Neue Vorlage"):(s.id?"SQL-Aufgabe bearbeiten":"Neue SQL-Aufgabe")}</h2><div class="spacer"></div>
         <label class="muted" style="font-size:13px;font-weight:800;align-self:center">Datenbank:</label>
         <select class="input" id="saDb" style="max-width:260px;margin-left:8px;width:auto">${dbOpts}</select>
-        <button class="btn btn-ghost btn-sm" id="saTpl" style="margin-left:8px" title="Diese Aufgabe als wiederverwendbare Vorlage speichern">⭐ Als Vorlage</button>
-        <button class="btn btn-primary" id="saSave" style="margin-left:8px">💾 Aufgabe speichern</button></div>
-      <div class="field"><label>Titel der Aufgabe</label><input class="input" id="saTitle" maxlength="120" value="${esc(s.title)}"></div>
-      <div class="field" style="margin-bottom:10px"><label>Beschreibung (optional)</label><textarea class="input" id="saDesc" style="min-height:54px">${esc(s.description)}</textarea></div>
-      <label style="display:flex;align-items:center;gap:8px;font-weight:700;font-size:14px;cursor:pointer"><input type="checkbox" id="saPub" ${s.published?"checked":""}> 🚀 Veröffentlicht (für Schüler:innen sichtbar)</label>
+        ${s.isTemplate?"":`<button class="btn btn-ghost btn-sm" id="saTpl" style="margin-left:8px" title="Diese Aufgabe als wiederverwendbare Vorlage speichern">⭐ Als Vorlage</button>`}
+        <button class="btn btn-primary" id="saSave" style="margin-left:8px">${s.isTemplate?"💾 Vorlage speichern":"💾 Aufgabe speichern"}</button></div>
+      <div class="field"><label>${s.isTemplate?"Titel der Vorlage":"Titel der Aufgabe"}</label><input class="input" id="saTitle" maxlength="120" value="${esc(s.title)}"></div>
+      <div class="field" style="margin-bottom:${s.isTemplate?"0":"10px"}"><label>Beschreibung (optional)</label><textarea class="input" id="saDesc" style="min-height:54px">${esc(s.description)}</textarea></div>
+      ${s.isTemplate?"":`<label style="display:flex;align-items:center;gap:8px;font-weight:700;font-size:14px;cursor:pointer"><input type="checkbox" id="saPub" ${s.published?"checked":""}> 🚀 Veröffentlicht (für Schüler:innen sichtbar)</label>`}
     </div>
     <div class="grid" style="grid-template-columns:250px 1fr;gap:14px;align-items:start">
       <div class="card">
@@ -2229,13 +2246,13 @@ function renderSqlAssignEditor(){
       </div>
       <div class="card" id="saRight"></div>
     </div>`;
-  document.getElementById("back").onclick = ()=>{ syncSqlSubtask(); sqlTeacherClassView(s.classId); };
+  document.getElementById("back").onclick = ()=>{ syncSqlSubtask(); s.isTemplate?sqlTemplatesPage():sqlTeacherClassView(s.classId); };
   document.getElementById("saTitle").oninput = (e)=>{ s.title=e.target.value; };
   document.getElementById("saDesc").oninput = (e)=>{ s.description=e.target.value; };
-  document.getElementById("saPub").onchange = (e)=>{ s.published=e.target.checked; };
+  { const pb=document.getElementById("saPub"); if(pb) pb.onchange=(e)=>{ s.published=e.target.checked; }; }
   document.getElementById("saDb").onchange = async (e)=>{ syncSqlSubtask(); const v=e.target.value; if(!v){ s.databaseId=null; renderSqlSubtaskPane(); return; } s.databaseId=v; try{ const d=await api.sqlGetDatabase(v); s.dbText=d.sql_text||""; }catch(err){} renderSqlSubtaskPane(); };
-  document.getElementById("saSave").onclick = saveSqlAssignment;
-  document.getElementById("saTpl").onclick = saveSqlTemplate;
+  document.getElementById("saSave").onclick = s.isTemplate?saveSqlTemplateFromEditor:saveSqlAssignment;
+  { const tb=document.getElementById("saTpl"); if(tb) tb.onclick=saveSqlTemplate; }
   document.getElementById("saAddSub").onclick = ()=>{ syncSqlSubtask(); s.subtasks.push({ prompt:"", solution_sql:"", compare:true, ordered:false }); s.selected=s.subtasks.length-1; renderSqlAssignEditor(); };
   document.querySelectorAll("#saSubList .sqst").forEach(row=> row.onclick=(e)=>{ if(e.target.closest("[data-up],[data-down],[data-delsub]")) return; selectSqlSubtask(+row.dataset.i); });
   document.querySelectorAll("#saSubList [data-up]").forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); const i=+b.dataset.up; if(i<=0) return; syncSqlSubtask(); const a=s.subtasks; [a[i-1],a[i]]=[a[i],a[i-1]]; s.selected=i-1; renderSqlAssignEditor(); });
@@ -2253,11 +2270,11 @@ function renderSqlSubtaskPane(){
     <label style="display:flex;align-items:center;gap:8px;font-weight:700;font-size:13px;cursor:pointer;margin-bottom:12px;${st.compare?'':'opacity:.45'}"><input type="checkbox" id="stOrdered" ${st.ordered?"checked":""} ${st.compare?'':'disabled'}> Zeilen-Reihenfolge muss stimmen (bei <code>ORDER BY</code>)</label>
     <div class="muted" style="font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Musterlösung (SQL)</div>
     <div id="stSqlHost"></div>`;
-  document.getElementById("stPrompt").oninput = (e)=>{ st.prompt=e.target.value; const li=document.querySelector(`#saSubList .sqst[data-i="${s.selected}"] .s`); if(li) li.textContent=(st.prompt||"").slice(0,38)||"(kein Text)"; };
+  document.getElementById("stPrompt").oninput = (e)=>{ st.prompt=e.target.value; const li=document.querySelector(`#saSubList .sqst[data-i="${s.selected}"] .s`); if(li) li.textContent=(st.prompt||"").slice(0,90)||"(kein Text)"; };
   document.getElementById("stCompare").onchange = (e)=>{ syncSqlSubtask(); st.compare=e.target.checked; renderSqlSubtaskPane(); };
   document.getElementById("stOrdered").onchange = (e)=>{ st.ordered=e.target.checked; };
   if(s.view){ try{ s.view.destroy(); }catch(e){} }
-  s.view = new SqlView("#stSqlHost", { dbText:s.dbText, query: st.solution_sql||"", autofill:false });
+  s.view = new SqlView("#stSqlHost", { dbText:s.dbText, query: st.solution_sql||"", autofill:false, schemaOpen:true });
   pageView = s.view;
 }
 function syncSqlSubtask(){
@@ -2295,6 +2312,39 @@ async function saveSqlTemplate(){
     toast("Als Vorlage gespeichert ⭐","ok");
   }catch(e){ toast(e.message||"Fehler","err"); }
   finally{ if(btn){ btn.disabled=false; btn.textContent="⭐ Als Vorlage"; } }
+}
+async function saveSqlTemplateFromEditor(){
+  const s=sqlAssignState; syncSqlSubtask();
+  const title=(s.title||"").trim();
+  if(!title){ toast("Bitte einen Titel eingeben.","err"); return; }
+  if(!s.dbText){ toast("Bitte eine Datenbank wählen.","err"); return; }
+  if(!s.subtasks.length){ toast("Bitte mindestens eine Teilaufgabe anlegen.","err"); return; }
+  const btn=document.getElementById("saSave"); if(btn){ btn.disabled=true; btn.textContent="Prüfe…"; }
+  try{ await computeSqlExpected(s); }
+  catch(e){ if(btn){ btn.disabled=false; btn.textContent="💾 Vorlage speichern"; } toast(e.message||"Fehler","err"); return; }
+  if(btn) btn.textContent="Speichere…";
+  const subtasks=s.subtasks.map(st=>({ prompt:(st.prompt||"").trim(), solution_sql:st.solution_sql||"", compare:!!st.compare, ordered:!!st.ordered, expected:st.expected||null }));
+  const payload={ title, description:(s.description||"").trim()||null, db_snapshot:s.dbText, subtasks };
+  try{ if(s.templateId){ await api.sqlUpdateTemplate(s.templateId, payload); } else { const t=await api.sqlCreateTemplate(payload); s.templateId=t.id; }
+    toast("Vorlage gespeichert ⭐","ok"); sqlTemplatesPage();
+  }catch(e){ if(btn){ btn.disabled=false; btn.textContent="💾 Vorlage speichern"; } toast(e.message||"Fehler","err"); }
+}
+async function sqlTemplateEditorPage(existing){
+  shell(`<div class="center-load"><span class="spin"></span>Lädt…</div>`);
+  let dbs=[]; try{ dbs=await api.sqlListDatabases(); }catch(e){ dbs=[]; }
+  let tpl=null;
+  if(existing && existing.id){ try{ tpl=await api.sqlGetTemplate(existing.id); }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; } }
+  sqlAssignState = {
+    classId:null, id:null, isTemplate:true, templateId: tpl?tpl.id:null,
+    title: tpl?(tpl.title||""):"", description: tpl?(tpl.description||""):"", published:false,
+    databaseId:null, dbText: tpl?(tpl.db_snapshot||""):"", dbs,
+    subtasks: (tpl&&tpl.subtasks&&tpl.subtasks.length)
+      ? tpl.subtasks.map(st=>({ prompt:st.prompt||"", solution_sql:st.solution_sql||"", compare:!!st.compare, ordered:!!st.ordered, expected:st.expected||null }))
+      : [{ prompt:"", solution_sql:"", compare:true, ordered:false }],
+    selected:0, deletedIds:[], view:null
+  };
+  try{ SqlEngine.ensureStyles(); }catch(e){}
+  renderSqlAssignEditor();
 }
 async function saveSqlAssignment(){
   const s=sqlAssignState; syncSqlSubtask();
@@ -2405,6 +2455,15 @@ function fmtDate(s){ try{ const d=new Date(s); return d.toLocaleDateString("de-D
    Neueste Version zuerst. Bei jedem Deploy oben einen Eintrag ergänzen.
    ============================================================================ */
 const PATCH_NOTES = [
+  { v:"2.18", date:"30. Juni 2026", title:"Politur: SQL-Bedienung, Klassen-Funktionen, Vorlagen", items:[
+    `<b>Datenbank-Schema standardmäßig offen</b> – beim Aufgaben-Erstellen und beim Lösen. Klappst du es beim Lösen zu (oder auf), gilt das für <b>alle Teilaufgaben</b> der Aufgabe.`,
+    `<b>Ergebnis bleibt sichtbar:</b> Öffnest du eine schon gespeicherte Teilaufgabe, wird deine Abfrage <b>automatisch ausgeführt</b> und das Ergebnis direkt angezeigt.`,
+    `<b>Fortschrittsbalken</b> je Aufgabe in der Schüler-Aufgabenübersicht (🟩 richtig · 🟧 bearbeitet · ⬜ offen); größerer Status-Punkt; beim Öffnen einer Teilaufgabe wird nach oben gescrollt.`,
+    `<b>Aufgaben-Editor:</b> in der Teilaufgaben-Liste stehen oben Nummer + Schaltflächen, darunter der Vorschautext über die ganze Breite.`,
+    `<b>SQL-Klassen können jetzt alles wie Hamster-Klassen:</b> Klasse an eine andere Lehrkraft <b>übergeben</b>, als Co-Lehrkraft <b>verlassen</b>, Einlade-<b>Code deaktivieren</b> bzw. <b>neu erzeugen</b> (jeweils mit Rückfrage) und umbenennen; eigene Lehrkräfte-Liste.`,
+    `<b>Vorlagen bearbeiten:</b> in der 📋 Vorlagen-Übersicht gibt es jetzt <b>+ Neue Vorlage</b> und du kannst bestehende Vorlagen <b>bearbeiten</b>.`,
+    `<b>Allgemein:</b> neuer <b>🏠-Knopf</b> in der Titelleiste führt zur Tool-Auswahl (dafür ist „Tool wechseln" aus dem Konto-Menü entfernt); im <b>Dark-Mode</b> ist der Benutzername jetzt hell; „je Zelle" aus der Abgabe-Matrix entfernt; in der Aufgabenliste wird beim Überfahren nur der <b>Titel</b> unterstrichen.`,
+  ]},
   { v:"2.17", date:"28. Juni 2026", title:"SQL-Playground: Aufgaben-Vorlagen", items:[
     `<b>Aufgabe als Vorlage speichern:</b> Im Aufgaben-Editor gibt es jetzt <b>⭐ Als Vorlage</b> – die komplette Aufgabe (Datenbank + alle Teilaufgaben + Musterlösungen) wird als wiederverwendbare Vorlage gespeichert.`,
     `<b>Aus Vorlage erstellen:</b> In einer Klasse legst du über <b>📋 aus Vorlage</b> mit einem Klick eine neue Aufgabe aus einer Vorlage an – du kannst sie vor dem Speichern noch anpassen. So musst du wiederkehrende Aufgaben nicht doppelt bauen.`,
@@ -2582,7 +2641,7 @@ function patchNotesDialog(){
 }
 
 /* ---------- Footer: Versionsnummer (aus den Patch-Notes) + Copyright ---------- */
-const APP_BUILD = "2026-06-28 23:55";   // letztes Update (im Patch-Notes-Dialog angezeigt)
+const APP_BUILD = "2026-06-30 18:00";   // letztes Update (im Patch-Notes-Dialog angezeigt)
 (function(){ const f=document.getElementById("appfoot"); if(f){ const v=(typeof PATCH_NOTES!=="undefined"&&PATCH_NOTES[0])?PATCH_NOTES[0].v:""; f.textContent='© 2026 Laurens Offinger · Version '+v; } })();
 
 boot();

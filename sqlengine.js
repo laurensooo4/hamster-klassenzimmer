@@ -122,6 +122,9 @@
       this.readonly = !!opts.readonly;
       this.onQuery = opts.onQuery||null;
       this.autofill = opts.autofill !== false;   // Standard: leere Abfrage automatisch mit "SELECT * FROM …" vorbelegen
+      this.schemaOpen = !!opts.schemaOpen;        // Schema-Klappbox standardmäßig geöffnet?
+      this.onSchemaToggle = opts.onSchemaToggle||null;  // Callback(open) wenn Nutzer auf-/zuklappt
+      this.autorun = !!opts.autorun;              // gespeicherte Abfrage nach DB-Laden automatisch ausführen
       this.db = null;
       this._build();
     }
@@ -129,7 +132,7 @@
       var ro=this.readonly?" readonly":"";
       this.host.innerHTML =
         '<div class="sqv">'
-        + '<details class="sqv-schema"><summary>🗂️ Datenbank-Schema anzeigen</summary><div class="sqv-schbody">Lade…</div></details>'
+        + '<details class="sqv-schema"'+(this.schemaOpen?" open":"")+'><summary>🗂️ Datenbank-Schema</summary><div class="sqv-schbody">Lade…</div></details>'
         + '<textarea class="sqv-input" spellcheck="false" placeholder="SQL-Abfrage, z. B. SELECT * FROM …  (Strg+Enter führt aus)"'+ro+"></textarea>"
         + '<div class="sqv-bar"><button class="btn btn-primary btn-sm sqv-run">▶ Ausführen</button><span class="sqv-msg"></span></div>'
         + '<div class="sqv-result"></div>'
@@ -138,6 +141,8 @@
       this.input=this.$(".sqv-input"); this.input.value=this.query;
       this.$(".sqv-run").onclick=()=> this.runQuery();
       this.input.addEventListener("keydown",(e)=>{ if((e.ctrlKey||e.metaKey)&&e.key==="Enter"){ e.preventDefault(); this.runQuery(); } });
+      this.details=this.$(".sqv-schema");
+      if(this.details && this.onSchemaToggle) this.details.addEventListener("toggle",()=>{ this.onSchemaToggle(this.details.open); });
       this._init();
     }
     async _init(){
@@ -148,6 +153,7 @@
         if(sb) sb.innerHTML=schemaHtml(this.db);
         if(this.autofill && !this.getQuery().trim()){ var s=SqlEngine.schema(this.db); if(s.length) this.setQuery("SELECT * FROM "+s[0].name+";"); }
         if(msg) msg.textContent="";
+        if(this.autorun && this.getQuery().trim()) this.runQuery();   // gespeicherte Abfrage direkt anzeigen
       }catch(e){
         if(sb) sb.textContent="Fehler beim Laden der Datenbank: "+(e.message||e);
         if(msg) msg.innerHTML='<span style="color:var(--red-d)">⚠ Datenbank konnte nicht geladen werden.</span>';
