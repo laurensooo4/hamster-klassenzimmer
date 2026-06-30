@@ -170,15 +170,17 @@
   .cell.none{background:var(--line2);color:#c4cdd9}
 
   /* ---------- SQL Aufgaben-Editor: Teilaufgaben-Liste ---------- */
-  .sqedit{cursor:pointer;border:1.5px solid var(--line);border-radius:12px;padding:9px 11px;margin-bottom:8px;background:var(--card);transition:border-color .12s,background .12s,box-shadow .12s}
+  .sqedit{cursor:pointer;border:1.5px solid var(--line);border-radius:12px;padding:10px 13px;margin-bottom:8px;background:var(--card);transition:border-color .12s,background .12s,box-shadow .12s}
   .sqedit:hover{border-color:var(--green-l)}
   .sqedit.sel{border-color:var(--green);background:var(--green-l);box-shadow:0 2px 8px rgba(88,204,2,.10)}
+  .sqedit-row{display:flex;align-items:center;gap:10px}
+  .sqedit-main{flex:1;min-width:0}
   .sqedit-h{display:flex;align-items:center;gap:7px}
   .sqedit-no{flex:none;display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:var(--line2);color:var(--muted);font-weight:900;font-size:12px}
   .sqedit.sel .sqedit-no{background:var(--green);color:#fff}
-  .sqedit-t{flex:1;min-width:0;font-weight:800;font-size:13.5px;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .sqedit-acts{flex:none;display:flex;gap:2px}
-  .sqedit-prev{margin-top:5px;font-size:12.5px;color:var(--muted);line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .sqedit-t{font-weight:800;font-size:13.5px;color:var(--ink);white-space:nowrap}
+  .sqedit-acts{flex:none;display:flex;gap:3px}
+  .sqedit-prev{margin-top:4px;font-size:12.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .sqedit-prev.empty{font-style:italic;opacity:.7}
 
   /* ---------- Modal ---------- */
@@ -251,6 +253,6 @@
   <script src="config.js"></script>
   <script src="engine.js?v=h14"></script>
   <script src="sqlengine.js?v=h23"></script>
-  <script src="app.js?v=h25"></script>
+  <script src="app.js?v=h26"></script>
 </body>
 </html>

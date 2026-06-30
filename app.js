@@ -2274,9 +2274,13 @@ function renderSqlAssignEditor(){
     + s.dbs.map(d=>`<option value="${esc(d.id)}" ${d.id===s.databaseId?"selected":""}>${esc(d.name)}${d.mine?"":" (von "+esc(d.owner_name)+")"}</option>`).join("");
   const subList = s.subtasks.map((st,i)=>{ const txt=(st.prompt||"").trim(); return `
       <div class="sqedit${i===s.selected?' sel':''}" data-i="${i}">
-        <div class="sqedit-h"><span class="sqedit-no">${i+1}</span><span class="sqedit-t">Teilaufgabe ${i+1}</span>
-          <span class="sqedit-acts"><button class="abtn" data-up="${i}" title="nach oben">↑</button><button class="abtn" data-down="${i}" title="nach unten">↓</button><button class="abtn" data-delsub="${i}" title="löschen">🗑️</button></span></div>
-        <div class="sqedit-prev${txt?"":" empty"}">${txt?esc(txt.slice(0,120)):"(noch kein Text)"}</div>
+        <div class="sqedit-row">
+          <div class="sqedit-main">
+            <div class="sqedit-h"><span class="sqedit-no">${i+1}</span><span class="sqedit-t">Teilaufgabe ${i+1}</span></div>
+            <div class="sqedit-prev${txt?"":" empty"}">${txt?esc(txt.slice(0,200)):"(noch kein Text)"}</div>
+          </div>
+          <div class="sqedit-acts"><button class="abtn" data-up="${i}" title="nach oben">↑</button><button class="abtn" data-down="${i}" title="nach unten">↓</button><button class="abtn" data-delsub="${i}" title="löschen">🗑️</button></div>
+        </div>
       </div>`; }).join("");
   document.getElementById("view").innerHTML = `
     <div class="page-head"><button class="crumb" id="back">${s.isTemplate?"← Vorlagen":"← Zur Klasse"}</button></div>
@@ -2290,14 +2294,12 @@ function renderSqlAssignEditor(){
       <div class="field" style="margin-bottom:${s.isTemplate?"0":"10px"}"><label>Beschreibung (optional)</label><textarea class="input" id="saDesc" style="min-height:54px">${esc(s.description)}</textarea></div>
       ${s.isTemplate?"":`<label style="display:flex;align-items:center;gap:8px;font-weight:700;font-size:14px;cursor:pointer"><input type="checkbox" id="saPub" ${s.published?"checked":""}> 🚀 Veröffentlicht (für Schüler:innen sichtbar)</label>`}
     </div>
-    <div class="grid" style="grid-template-columns:250px 1fr;gap:14px;align-items:start">
-      <div class="card">
-        <h3 style="margin:0 0 10px">Teilaufgaben</h3>
-        <div class="list" id="saSubList">${subList}</div>
-        <button class="btn btn-ghost btn-sm" id="saAddSub" style="margin-top:10px;width:100%">+ Teilaufgabe</button>
-      </div>
-      <div class="card" id="saRight"></div>
-    </div>`;
+    <div class="card" style="margin-bottom:14px">
+      <h3 style="margin:0 0 10px">Teilaufgaben</h3>
+      <div id="saSubList">${subList}</div>
+      <button class="btn btn-ghost btn-sm" id="saAddSub" style="margin-top:4px;width:100%">+ Teilaufgabe</button>
+    </div>
+    <div class="card" id="saRight"></div>`;
   document.getElementById("back").onclick = ()=>{ syncSqlSubtask(); s.isTemplate?sqlTemplatesPage():sqlTeacherClassView(s.classId); };
   document.getElementById("saTitle").oninput = (e)=>{ s.title=e.target.value; };
   document.getElementById("saDesc").oninput = (e)=>{ s.description=e.target.value; };
@@ -2336,7 +2338,7 @@ function syncSqlSubtask(){
   const o=document.getElementById("stOrdered"); if(o) st.ordered=o.checked;
   if(s.view) st.solution_sql=s.view.getQuery();
 }
-function selectSqlSubtask(i){ syncSqlSubtask(); sqlAssignState.selected=i; renderSqlAssignEditor(); }
+function selectSqlSubtask(i){ syncSqlSubtask(); sqlAssignState.selected=i; renderSqlAssignEditor(); const r=document.getElementById("saRight"); if(r) r.scrollIntoView({behavior:"smooth",block:"start"}); }
 // Validiert Teilaufgaben (Aufgabentext + Musterlösung) und füllt st.expected; wirft bei Fehler.
 async function computeSqlExpected(s){
   for(let i=0;i<s.subtasks.length;i++){ const st=s.subtasks[i];
@@ -2507,6 +2509,10 @@ function fmtDate(s){ try{ const d=new Date(s); return d.toLocaleDateString("de-D
    Neueste Version zuerst. Bei jedem Deploy oben einen Eintrag ergänzen.
    ============================================================================ */
 const PATCH_NOTES = [
+  { v:"2.22", date:"1. Juli 2026", title:"SQL-Aufgaben-Editor: Teilaufgaben über die volle Breite", items:[
+    `Der Aufgaben-Editor ist jetzt <b>untereinander</b> aufgebaut: zuerst die <b>Teilaufgaben-Liste über die volle Breite</b> (jede als Karte mit Nummer, Vorschau und den Schaltflächen ↑ ↓ 🗑 rechts), darunter der <b>Editierbereich</b> der gewählten Teilaufgabe (Aufgabentext, Musterlösung, Ausführen).`,
+    `Beim Klick auf eine Teilaufgabe springt die Ansicht automatisch zum Editierbereich.`,
+  ]},
   { v:"2.21", date:"1. Juli 2026", title:"SQL-Aufgaben-Editor: schönere Teilaufgaben-Liste", items:[
     `Die <b>Teilaufgaben-Liste</b> im Aufgaben-Editor ist jetzt deutlich übersichtlicher: jede Teilaufgabe ist eine eigene <b>Karte</b> mit <b>Nummern-Marke</b>, klar erkennbarer Auswahl (grün hervorgehoben) und einer auf zwei Zeilen begrenzten <b>Vorschau</b> des Aufgabentexts.`,
   ]},
@@ -2709,7 +2715,7 @@ function patchNotesDialog(){
 }
 
 /* ---------- Footer: Versionsnummer (aus den Patch-Notes) + Copyright ---------- */
-const APP_BUILD = "2026-07-01 12:00";   // letztes Update (im Patch-Notes-Dialog angezeigt)
+const APP_BUILD = "2026-07-01 13:30";   // letztes Update (im Patch-Notes-Dialog angezeigt)
 (function(){ const f=document.getElementById("appfoot"); if(f){ const v=(typeof PATCH_NOTES!=="undefined"&&PATCH_NOTES[0])?PATCH_NOTES[0].v:""; f.textContent='© 2026 Laurens Offinger · Version '+v; } })();
 
 boot();
