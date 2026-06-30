@@ -24,7 +24,6 @@
       if(loadingP) return loadingP;
       loadingP = (async function(){
         if(typeof initSqlJs==="undefined") await loadScript("sql-wasm.js");          // immutable, ohne Cache-Buster
-        if(!window.SQL_SAMPLE_DBS){ try{ await loadScript("sqldata.js"+VER); }catch(e){} }
         SQLMOD = await initSqlJs({ locateFile: function(){ return "sql-wasm.wasm"; } });
         return SQLMOD;
       })();

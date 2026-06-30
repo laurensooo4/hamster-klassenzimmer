@@ -351,6 +351,7 @@ api.adminSetRole = async (userId, role)=>{ const {error}=await sb.rpc("admin_set
 api.adminSetDisplayName = async (userId, name)=>{ const {error}=await sb.rpc("admin_set_display_name",{p_user:userId, p_display:name}); if(error) throw error; };
 /* ===== SQL-Playground: Datenbank-Bibliothek ===== */
 api.sqlListDatabases = async ()=>{ const {data,error}=await sb.rpc("shared_sql_databases"); if(error) throw error; return data||[]; };
+api.sandboxSqlDatabases = async ()=>{ const {data,error}=await sb.rpc("sandbox_sql_databases"); if(error) throw error; return data||[]; };   // Sandbox: geteilte + eigene (Lehrer) + Aufgaben-DBs (Schüler)
 api.sqlGetDatabase = async (id)=>{ const {data,error}=await sb.from("sql_databases").select("*").eq("id",id).single(); if(error) throw error; return data; };
 api.sqlCreateDatabase = async (d)=>{ const {data,error}=await sb.from("sql_databases").insert(Object.assign({owner_id:ME.id},d)).select().single(); if(error) throw error; return data; };
 api.sqlUpdateDatabase = async (id,patch)=>{ const {data,error}=await sb.from("sql_databases").update(Object.assign({updated_at:new Date().toISOString()},patch)).eq("id",id).select().single(); if(error) throw error; return data; };
@@ -1482,8 +1483,8 @@ async function doImport(list, classCode, classId, onDone){
     const uid=res.data.user.id;
     const pe = await imp.from("profiles").insert({ id:uid, username:uname, role:"student", display_name:stu.name });
     if(pe.error){ results.push({name:stu.name, username:uname, password:pass, status:"✗ Profil: "+pe.error.message}); try{await imp.auth.signOut();}catch(e){} setCount(i+1); continue; }
-    const je = await imp.from("memberships").insert({ class_id:classId, student_id:uid });   // Lehrer-Import trägt direkt ein (unabhängig von join_open)
     try{ await imp.auth.signOut(); }catch(e){}
+    const je = await sb.rpc("teacher_enroll_student", { p_class:classId, p_student:uid });   // Lehrer (sb) trägt via definer-RPC ein; prüft is_class_teacher (kein offenes memberships-Insert mehr)
     used.add(uname);
     results.push({ name:stu.name, username:uname, password:pass, status: je.error? "⚠ Konto ok, Klasse: "+je.error.message : "✓" });
     setCount(i+1);
@@ -2081,17 +2082,17 @@ async function sqlSandbox(){
   shell(`<div class="page-head"><button class="crumb" id="back">← Zurück</button></div>
     <div class="page-head" style="margin-top:0"><h2>🧪 SQL-Sandbox</h2><div class="spacer"></div>
       <label class="muted" style="font-size:13px;font-weight:800;align-self:center">Datenbank:</label>
-      <select class="input" id="sqlSbxDb" style="max-width:200px;margin-left:8px;width:auto"></select>
+      <select class="input" id="sqlSbxDb" style="max-width:260px;margin-left:8px;width:auto"></select>
       <button class="btn btn-ghost btn-sm" id="sqlSbxReset" style="margin-left:8px" title="Datenbank in den Ausgangszustand zurücksetzen">↺ Zurücksetzen</button></div>
     <div class="card" style="margin-bottom:12px;padding:12px 16px"><span class="muted" style="font-size:13px">Probiere SQL frei aus: Datenbank wählen, Abfrage schreiben und mit ▶ (oder Strg+Enter) ausführen. Hier wird nichts gespeichert.</span></div>
     <div id="sqlSbxHost"><div class="center-load"><span class="spin"></span>SQL-Engine wird geladen…</div></div>`);
   document.getElementById("back").onclick = ()=> (ME.role==="teacher"?sqlTeacherHome():sqlStudentHome());
+  let dbs=[]; try{ dbs=await api.sandboxSqlDatabases(); }catch(e){}
   try{ await SqlEngine.ensure(); }
   catch(e){ const h=document.getElementById("sqlSbxHost"); if(h) h.innerHTML=errBox({message:"SQL-Engine konnte nicht geladen werden: "+(e.message||e)}); return; }
   const sel=document.getElementById("sqlSbxDb"); if(!sel) return;   // Nutzer hat während des Ladens weggeklickt
-  const samples=SqlEngine.samples();
-  sel.innerHTML = samples.map(s=>`<option value="${esc(s.id)}">${esc(s.name)}</option>`).join("") + `<option value="__empty">(leere Datenbank)</option>`;
-  const dbTextFor = id=>{ if(id==="__empty") return ""; const s=samples.find(x=>x.id===id); return s?s.sql:""; };
+  sel.innerHTML = dbs.map(d=>`<option value="${esc(d.id)}">${esc(d.name)}${d.mine?"":" (von "+esc(d.owner_name)+")"}</option>`).join("") + `<option value="__empty">(leere Datenbank)</option>`;
+  const dbTextFor = id=>{ if(id==="__empty") return ""; const d=dbs.find(x=>x.id===id); return d?(d.sql_text||""):""; };
   let view=null;
   const build = (id)=>{ if(view){ try{ view.destroy(); }catch(e){} } view=new SqlView("#sqlSbxHost",{ dbText:dbTextFor(id) }); pageView=view; };
   build(sel.value);
@@ -2113,7 +2114,7 @@ async function sqlDatabasesPage(){
     <div class="page-head"><button class="crumb" id="back">← SQL · Meine Klassen</button></div>
     <div class="page-head" style="margin-top:0"><h2>🗄️ Datenbanken</h2><div class="spacer"></div>
       <button class="btn btn-primary" id="btnNewDb">+ Neue Datenbank</button></div>
-    <div class="card" style="margin-bottom:12px;padding:12px 16px"><span class="muted" style="font-size:13px">Datenbanken für SQL-Aufgaben. <b>Geteilte</b> Datenbanken können auch andere Lehrkräfte verwenden; <b>private</b> nur du.</span></div>
+    <div class="card" style="margin-bottom:12px;padding:12px 16px"><span class="muted" style="font-size:13px">Datenbanken für SQL-Aufgaben. <b>Geteilte</b> Datenbanken können andere Lehrkräfte verwenden und stehen <b>allen in der 🧪 Sandbox</b> zur Verfügung; <b>private</b> nur dir (auch in deiner Sandbox). Schüler:innen sehen in der Sandbox zusätzlich alle DBs, zu denen sie eine Aufgabe haben.</span></div>
     ${rows}`;
   document.getElementById("back").onclick = sqlTeacherHome;
   document.getElementById("btnNewDb").onclick = ()=> sqlDatabaseEditorPage(null);
@@ -2135,7 +2136,7 @@ async function sqlDatabaseEditorPage(meta){
     <div class="page-head" style="margin-top:0"><h2>🗄️ ${title}</h2>${(!canEdit&&meta)?`<span class="badge gray" style="margin-left:8px;align-self:center">von ${esc(meta.owner_name)} · nur ansehen</span>`:""}</div>
     <div class="card" style="margin-bottom:14px">
       <div class="field" style="margin-bottom:${canEdit?"14px":"0"}"><label>Name</label><input class="input" id="dbName" maxlength="80" value="${esc(name)}" ${canEdit?"":"disabled"}></div>
-      ${canEdit?`<label style="display:flex;align-items:center;gap:8px;font-weight:700;font-size:14px;cursor:pointer"><input type="checkbox" id="dbShared" ${shared?"checked":""}> 🌍 Für andere Lehrkräfte freigeben</label>`:""}
+      ${canEdit?`<label style="display:flex;align-items:center;gap:8px;font-weight:700;font-size:14px;cursor:pointer"><input type="checkbox" id="dbShared" ${shared?"checked":""}> 🌍 Freigeben – andere Lehrkräfte können sie nutzen und sie steht allen in der 🧪 Sandbox zur Verfügung</label>`:""}
     </div>
     <div class="page-head" style="margin:0 0 8px"><h3 style="margin:0">SQL-Code (erstellt die Datenbank)</h3><div class="spacer"></div>
       ${canEdit?`<input type="file" id="dbFile" accept=".sql,.txt" style="display:none"><button class="btn btn-ghost btn-sm" id="dbOpen" title="SQL-Datei öffnen">📂 Datei öffnen</button>`:""}
@@ -2455,6 +2456,13 @@ function fmtDate(s){ try{ const d=new Date(s); return d.toLocaleDateString("de-D
    Neueste Version zuerst. Bei jedem Deploy oben einen Eintrag ergänzen.
    ============================================================================ */
 const PATCH_NOTES = [
+  { v:"2.19", date:"30. Juni 2026", title:"SQL-Sandbox: echte Datenbanken", items:[
+    `Die <b>Standard-Datenbanken</b> in der 🧪 Sandbox sind entfernt. Stattdessen arbeitest du mit <b>echten Datenbanken</b>.`,
+    `<b>Lehrkräfte</b> sehen in der Sandbox alle <b>geteilten</b> Datenbanken <i>und ihre eigenen</i> (auch private). Beim Anlegen einer Datenbank legst du mit dem Schalter <b>🌍 Freigeben</b> fest, ob sie allen (auch Schüler:innen) in der Sandbox zur Verfügung steht.`,
+    `<b>Schüler:innen</b> sehen in der Sandbox die geteilten Datenbanken sowie alle, zu denen ihnen eine <b>Aufgabe</b> gestellt wurde – so können sie gezielt üben.`,
+    `Nebenbei lädt das SQL-Tool etwas schneller (die alten Beispieldaten werden nicht mehr geladen).`,
+    `<b>Sicherheit:</b> Der Beitritt zu einer Klasse ist jetzt fest an den <b>Klassencode</b> (bzw. den Lehrer-Import) gebunden – ein Eintragen in fremde Klassen über Umwege ist nicht mehr möglich.`,
+  ]},
   { v:"2.18", date:"30. Juni 2026", title:"Politur: SQL-Bedienung, Klassen-Funktionen, Vorlagen", items:[
     `<b>Datenbank-Schema standardmäßig offen</b> – beim Aufgaben-Erstellen und beim Lösen. Klappst du es beim Lösen zu (oder auf), gilt das für <b>alle Teilaufgaben</b> der Aufgabe.`,
     `<b>Ergebnis bleibt sichtbar:</b> Öffnest du eine schon gespeicherte Teilaufgabe, wird deine Abfrage <b>automatisch ausgeführt</b> und das Ergebnis direkt angezeigt.`,
@@ -2641,7 +2649,7 @@ function patchNotesDialog(){
 }
 
 /* ---------- Footer: Versionsnummer (aus den Patch-Notes) + Copyright ---------- */
-const APP_BUILD = "2026-06-30 18:00";   // letztes Update (im Patch-Notes-Dialog angezeigt)
+const APP_BUILD = "2026-06-30 18:40";   // letztes Update (im Patch-Notes-Dialog angezeigt)
 (function(){ const f=document.getElementById("appfoot"); if(f){ const v=(typeof PATCH_NOTES!=="undefined"&&PATCH_NOTES[0])?PATCH_NOTES[0].v:""; f.textContent='© 2026 Laurens Offinger · Version '+v; } })();
 
 boot();
