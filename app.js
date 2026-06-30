@@ -254,8 +254,8 @@ const api = {
     return [...map.values()].sort((a,b)=> new Date(b.created_at)-new Date(a.created_at));
   },
   async deleteClass(id){ const { error } = await sb.from("classes").delete().eq("id", id); if(error) throw error; },
-  async createClass(name){
-    const tool = ACTIVE_TOOL||"hamster";
+  async createClass(name, toolArg){
+    const tool = toolArg || ACTIVE_TOOL || "hamster";
     for(let tries=0; tries<5; tries++){
       const code = genCode(6);
       const { data, error } = await sb.from("classes").insert({ name, code, teacher_id:ME.id, tool }).select().single();
@@ -959,7 +959,7 @@ async function adminHome(){
         <button class="btn btn-ghost btn-sm" id="admImport" style="margin-right:8px">📥 Importieren</button><input class="input" id="admUsrSearch" placeholder="🔍 Name · Benutzername" style="max-width:260px"></div>
       <div id="admUsers" style="margin-top:12px"></div></div>`;
   document.getElementById("admBack").onclick = ()=> route();   // zurück ins aktive Tool (nicht hart Hamster)
-  document.getElementById("btnNewClass").onclick = newClassDialog;
+  document.getElementById("btnNewClass").onclick = ()=> newClassDialog({pickTool:true});
   const cs=document.getElementById("admClsSearch"), us=document.getElementById("admUsrSearch");
   cs.oninput=()=> renderAdminClasses(cs.value); us.oninput=()=> renderAdminUsers(us.value);
   document.getElementById("admImport").onclick = ()=> adminImportDialog();
@@ -1149,15 +1149,19 @@ async function teacherHome(){
       </div>`, id=>{ viewFromAdmin=false; teacherClassView(id); },
     `<div class="empty"><span class="ic">📚</span>Noch keine Klassen. Erstelle deine erste Klasse!</div>`);
 }
-function newClassDialog(){
+function newClassDialog(opts){
+  opts=opts||{};
+  const toolField = opts.pickTool ? `<div class="field"><label>Tool</label><select class="input" id="clTool"><option value="hamster">🐹 Hamster-Simulator</option><option value="sql">🗄️ SQL-Playground</option></select></div>` : "";
   openModal(`<button class="x" onclick="closeModal()">✕</button>
     <h3>Neue Klasse</h3><p class="muted" style="margin:2px 0 16px">Gib der Klasse einen Namen – der Einlade-Code wird automatisch erzeugt.</p>
+    ${toolField}
     <div class="field"><label>Klassenname</label><input class="input" id="clName" placeholder="z. B. Informatik 9b" maxlength="60"></div>
     <button class="btn btn-primary btn-lg" id="clCreate">Klasse erstellen</button>`);
   const inp=document.getElementById("clName"); inp.focus();
   const go=async()=>{ const name=inp.value.trim(); if(!name){ inp.focus(); return; }
+    const tool = opts.pickTool ? (document.getElementById("clTool").value||"hamster") : (ACTIVE_TOOL||"hamster");
     const btn=document.getElementById("clCreate"); btn.disabled=true; btn.textContent="Erstelle…";
-    try{ const c=await api.createClass(name); closeModal(); toast('Klasse "'+name+'" erstellt 🎉',"ok"); (ACTIVE_TOOL==="sql"?sqlTeacherClassView:teacherClassView)(c.id); }
+    try{ const c=await api.createClass(name, tool); closeModal(); toast('Klasse "'+name+'" erstellt 🎉',"ok"); viewFromAdmin = !!opts.pickTool; (tool==="sql"?sqlTeacherClassView:teacherClassView)(c.id); }
     catch(e){ btn.disabled=false; btn.textContent="Klasse erstellen"; toast(e.message||"Fehler","err"); } };
   document.getElementById("clCreate").onclick=go;
   inp.addEventListener("keydown",e=>{ if(e.key==="Enter") go(); });
@@ -1709,7 +1713,7 @@ async function sqlTeacherHome(){
       <button class="btn btn-ghost" id="btnSqlTemplates" style="margin-left:8px">📋 Vorlagen</button>
       <button class="btn btn-ghost" id="btnSqlSandbox" style="margin-left:8px">🧪 Sandbox</button>
       <button class="btn btn-primary" id="btnNewClass" style="margin-left:8px">+ Neue Klasse</button></div>
-    ${classes.length>1?`<div class="page-head" style="margin:0 0 12px">${classSearchSortControls()}</div>`:""}
+    ${classes.length?`<div class="page-head" style="margin:0 0 12px">${classSearchSortControls()}</div>`:""}
     <div id="clsHost"></div>`;
   document.getElementById("btnSqlDatabases").onclick = ()=> sqlDatabasesPage();
   document.getElementById("btnSqlTemplates").onclick = ()=> sqlTemplatesPage();
@@ -1742,7 +1746,7 @@ async function sqlStudentHome(){
     <div class="page-head"><h2>🗄️ SQL · Meine Klassen</h2><div class="spacer"></div>
       <button class="btn btn-ghost" id="btnSqlSandbox">🧪 Sandbox</button>
       <button class="btn btn-ghost" id="btnJoinMore" style="margin-left:8px">+ Klasse beitreten</button></div>
-    ${classes.length>1?`<div class="page-head" style="margin:0 0 12px">${classSearchSortControls()}</div>`:""}
+    ${classes.length?`<div class="page-head" style="margin:0 0 12px">${classSearchSortControls()}</div>`:""}
     <div id="clsHost"></div>`;
   document.getElementById("btnSqlSandbox").onclick = ()=> sqlSandbox();
   document.getElementById("btnJoinMore").onclick = joinDialog;
@@ -1767,7 +1771,7 @@ async function sqlTeacherClassView(classId){
   let teachers=[]; try{ teachers=await api.classTeachersNamed(classId); }catch(e){ teachers=[]; }
   const iAmCoTeacher = !canTeam && teachers.some(t=>t.id===ME.id && !t.is_owner);
   const subtasksByAsg=new Map(); asgs.forEach(a=>subtasksByAsg.set(a.id,[])); subtaskRows.forEach(r=>{ const arr=subtasksByAsg.get(r.assignment_id); if(arr) arr.push(r.id); });
-  const rosterHtml = roster.length ? `<div class="list">${roster.map(m=>{ const p=m.profiles||{}; const nm=p.display_name||p.username||"?"; return `<div class="row"><span class="chip"><span class="av">${esc(initials(nm))}</span>${esc(nm)}</span><div class="grow"></div><span class="muted" style="font-size:11.5px">${fmtDate(m.joined_at)}</span></div>`; }).join("")}</div>`
+  const rosterHtml = roster.length ? `<div class="list">${roster.map(m=>{ const p=m.profiles||{}; const nm=p.display_name||p.username||"?"; return `<div class="row"><span class="chip clickable" data-prof="${m.student_id}" title="Profil ansehen" style="cursor:pointer"><span class="av">${esc(initials(nm))}</span>${esc(nm)}</span><div class="grow"></div><span class="muted" style="font-size:11.5px;margin-right:8px">${fmtDate(m.joined_at)}</span>${canTeam?`<button class="abtn" data-stu="${m.student_id}" data-nm="${esc(nm)}" title="Passwort zurücksetzen">🔑</button><button class="abtn" data-rmstu="${m.student_id}" data-nm="${esc(nm)}" title="aus Klasse entfernen">🗑️</button>`:""}</div>`; }).join("")}</div>`
     : `<div class="empty"><span class="ic">🎒</span>Noch keine Schüler:innen. Teile den Code <b>${esc(cls.code)}</b>!</div>`;
   const asgHtml = asgs.length ? `<div class="list">${asgs.map(a=>`
       <div class="row"><span class="grow"><span style="display:flex;align-items:center;gap:6px;flex-wrap:wrap"><span class="t clickable" data-edit="${a.id}" title="Aufgabe bearbeiten">${esc(a.title)}</span>${a.published?"":'<span class="badge gold">Entwurf</span>'}${a.released?'<span class="badge" title="Musterlösungen für Schüler:innen sichtbar">🏆 Lösung frei</span>':''}</span><span class="s">${esc(fmtDateTime(a.created_at))}</span></span>
@@ -1781,7 +1785,7 @@ async function sqlTeacherClassView(classId){
         </span></div>`).join("")}</div>`
     : `<div class="empty" style="padding:16px"><span class="ic">📝</span>Noch keine Aufgaben.</div>`;
   document.getElementById("view").innerHTML = `
-    <div class="page-head"><button class="crumb" id="back">${viewFromAdmin?"← Admin-Bereich":"← Meine Klassen"}</button></div>
+    <div class="page-head"><button class="crumb" id="back">${viewFromAdmin?"← Admin-Bereich":"← Meine Klassen"}</button><div class="spacer"></div><button class="btn btn-ghost btn-sm" id="btnSqlDbs2">🗄️ Datenbanken</button><button class="btn btn-ghost btn-sm" id="btnSqlTpl2" style="margin-left:8px">📋 Vorlagen</button></div>
     <div class="page-head" style="margin-top:0"><h2>${esc(cls.name)}${canTeam?` <button class="btn btn-ghost btn-sm" id="btnRename" title="Klasse umbenennen" style="vertical-align:middle">✏️</button>`:""}</h2><div class="spacer"></div>
       <span class="codechip" title="Einlade-Code" style="${cls.join_open===false?'opacity:.55;':''}">🔑 ${esc(cls.code)}${cls.join_open===false?' <span class="badge gray" title="Beitritt mit diesem Code ist deaktiviert">aus</span>':''} <button class="btn btn-sm btn-ghost" id="copyCode" style="margin-left:4px">Kopieren</button></span>
       ${canTeam?`<button class="btn btn-ghost btn-sm" id="btnCodeToggle" style="margin-left:8px" title="${cls.join_open===false?'Beitritt mit diesem Code wieder erlauben':'Beitritt mit diesem Code deaktivieren'}">${cls.join_open===false?'🔓 Aktivieren':'🚫 Code deaktivieren'}</button><button class="btn btn-ghost btn-sm" id="btnCodeNew" style="margin-left:6px" title="Neuen Code erzeugen – der alte wird ungültig">🔄 Neuer Code</button>`:''}
@@ -1795,7 +1799,7 @@ async function sqlTeacherClassView(classId){
         ${(asgs.length&&roster.length)?'<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap"><span class="muted" style="font-size:12.5px">🟩 richtig · 🟧 bearbeitet · ⬜ offen · ★ = alles richtig</span><div style="flex:1"></div><input class="input" id="sqlMatrixSearch" placeholder="🔍 Schüler:in suchen" style="max-width:240px"></div>':''}
         <div id="sqlMatrixHost"></div>
       </div></div>
-    <div class="card" style="margin-bottom:14px"><h3 style="margin:0">🎒 Schüler:innen <span class="badge gray">${roster.length}</span></h3><div style="margin-top:12px">${rosterHtml}</div></div>
+    <div class="card" style="margin-bottom:14px"><div style="display:flex;align-items:center;gap:8px"><h3 style="margin:0">🎒 Schüler:innen <span class="badge gray">${roster.length}</span></h3><div style="flex:1"></div>${canTeam?'<button class="btn btn-ghost btn-sm" id="btnSqlImport">📥 Importieren</button>':''}</div><div style="margin-top:12px">${rosterHtml}</div></div>
     <div class="card" style="margin-bottom:16px"><div style="display:flex;align-items:center;gap:8px"><h3 style="margin:0">👩‍🏫 Lehrkräfte <span class="badge gray">${teachers.length}</span></h3><div style="flex:1"></div>${canTeam?'<button class="btn btn-ghost btn-sm" id="btnTeachers">+ verwalten</button>':''}</div>
       <div class="list" style="margin-top:12px">${teachers.length?teachers.map(t=>`<div class="row"><span class="chip"><span class="av">${esc(initials(t.display_name||t.username))}</span>${esc(t.display_name||t.username)}</span><div class="grow"></div>${t.is_owner?'<span class="badge blue">Ersteller:in</span>':'<span class="badge gray">Co-Lehrkraft</span>'}</div>`).join(""):'<div class="muted" style="font-size:13px">—</div>'}</div></div>`;
   document.getElementById("back").onclick = ()=> (viewFromAdmin?adminHome():sqlTeacherHome());
@@ -1806,6 +1810,12 @@ async function sqlTeacherClassView(classId){
   { const bn=document.getElementById("btnCodeNew"); if(bn) bn.onclick=async()=>{ if(!confirm(`Neuen Einlade-Code für „${cls.name}" erzeugen?\n\nDer bisherige Code ${cls.code} wird sofort ungültig – verteile danach den neuen Code. Bereits beigetretene Schüler:innen bleiben in der Klasse.`)) return; try{ const nc=await api.regenerateClassCode(classId); toast("Neuer Code: "+nc,"ok"); sqlTeacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } }; }
   { const bl=document.getElementById("btnLeaveClass"); if(bl) bl.onclick=async()=>{ if(!confirm(`Klasse „${cls.name}" wirklich verlassen? Du bist danach keine Co-Lehrkraft mehr und siehst die Klasse nicht mehr.`)) return; try{ await api.removeClassTeacher(classId, ME.id); toast("Klasse verlassen","ok"); sqlTeacherHome(); }catch(e){ toast(e.message||"Fehler","err"); } }; }
   { const bt=document.getElementById("btnTeachers"); if(bt) bt.onclick=()=> classTeachersDialog(classId, cls); }
+  document.getElementById("btnSqlDbs2").onclick = ()=> sqlDatabasesPage();
+  document.getElementById("btnSqlTpl2").onclick = ()=> sqlTemplatesPage();
+  { const bi=document.getElementById("btnSqlImport"); if(bi) bi.onclick=()=> importStudentsDialog(classId, cls.code, ()=>sqlTeacherClassView(classId)); }
+  document.querySelectorAll(".chip[data-prof]").forEach(b=> b.onclick=()=>{ const m=roster.find(r=>r.student_id===b.dataset.prof); const p=(m&&m.profiles)||{}; sqlStudentProfilePage(classId, b.dataset.prof, p.display_name||p.username||"?", p.username||""); });
+  document.querySelectorAll("[data-stu]").forEach(b=> b.onclick=()=> resetStudentPw(b.dataset.stu, b.dataset.nm));
+  document.querySelectorAll("[data-rmstu]").forEach(b=> b.onclick=async()=>{ if(!confirm(b.dataset.nm+" aus dieser Klasse entfernen? (Der Account bleibt bestehen.)")) return; try{ await api.removeMembership(classId, b.dataset.rmstu); toast("Entfernt","ok"); sqlTeacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } });
   document.getElementById("btnNewSqlAssign").onclick = ()=> sqlAssignmentEditorPage(classId, null);
   document.getElementById("btnSqlFromTpl").onclick = ()=> sqlPickTemplate(classId);
   document.querySelectorAll("[data-edit]").forEach(b=> b.onclick=()=> sqlAssignmentEditorPage(classId, {id:b.dataset.edit}));
@@ -1877,6 +1887,49 @@ async function sqlTemplatesPage(){
   document.querySelectorAll("[data-edit]").forEach(b=> b.onclick=()=> sqlTemplateEditorPage({id:b.dataset.edit}));
   document.querySelectorAll("[data-share]").forEach(b=> b.onclick=async()=>{ const on=b.dataset.on==="1"; try{ await api.sqlUpdateTemplate(b.dataset.share,{shared:!on}); toast(on?"Freigabe zurückgenommen":"Vorlage freigegeben 🌍","ok"); sqlTemplatesPage(); }catch(e){ toast(e.message||"Fehler","err"); } });
   document.querySelectorAll("[data-del]").forEach(b=> b.onclick=async()=>{ if(!confirm(`Vorlage „${b.dataset.nm}" wirklich löschen?`)) return; try{ await api.sqlDeleteTemplate(b.dataset.del); toast("Vorlage gelöscht","ok"); sqlTemplatesPage(); }catch(e){ toast(e.message||"Fehler","err"); } });
+}
+/* ---------- SQL-Playground: Schüler-Profil (Lehrer-Ansicht) ---------- */
+async function sqlStudentProfilePage(classId, studentId, studentName, username){
+  shell(`<div class="center-load"><span class="spin"></span>Profil…</div>`);
+  let asgs=[], subs=[], subIdsBy={}, note=null, overview=null;
+  try{
+    asgs = await api.sqlListAssignments(classId);
+    if(asgs.length){ const ids=asgs.map(a=>a.id);
+      subs = (await api.sqlClassSubmissions(ids)).filter(s=>s.student_id===studentId);
+      const rows = await api.sqlSubtaskIds(ids); asgs.forEach(a=>subIdsBy[a.id]=[]); rows.forEach(r=>{ const arr=subIdsBy[r.assignment_id]; if(arr) arr.push(r.id); });
+    }
+    try{ note = await api.getStudentNote(classId, studentId); }catch(e){}
+    try{ overview = await api.studentOverview(studentId); }catch(e){}
+  }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
+  const lastLogin = (overview&&overview.last_login)?fmtDateTime(overview.last_login):"—";
+  const subByA = id=> subs.find(s=>s.assignment_id===id);
+  const passCount = asgs.filter(a=>{ const s=subByA(a.id); return s&&s.passed===true; }).length;
+  const doneCount = asgs.filter(a=> !!subByA(a.id)).length;
+  const _ts = subs.map(s=>s.updated_at).filter(Boolean).sort(); const lastAct = _ts.length ? fmtDateTime(_ts[_ts.length-1]) : "—";
+  const aRows = asgs.length ? asgs.map(a=>{
+    const ids=subIdsBy[a.id]||[], total=ids.length, s=subByA(a.id), res=(s&&s.results)||{};
+    let g=0; for(const id of ids){ if(res[id]==="correct") g++; }
+    const badge = !s ? '<span class="badge gray">offen</span>' : (s.passed===true?'<span class="badge">bestanden ✓</span>':'<span class="badge gold">in Bearbeitung</span>');
+    const quote = total?` <span class="muted" style="font-size:12px">${g}/${total}</span>`:"";
+    const open = s?`<button class="btn btn-sm btn-ghost" data-aopen="${a.id}">ansehen</button>`:"";
+    return `<div class="row"><span class="grow"><span class="t">${esc(a.title)}${quote}</span></span>${badge}${open}</div>`;
+  }).join("") : `<div class="muted" style="font-size:13px">Keine Aufgaben.</div>`;
+  document.getElementById("view").innerHTML = `
+    <div class="page-head"><button class="crumb" id="back">← zurück zur Klasse</button></div>
+    <div class="page-head" style="margin-top:0"><h2><span class="chip" style="font-size:16px"><span class="av">${esc(initials(studentName))}</span>${esc(studentName)}</span></h2></div>
+    <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(220px,1fr));margin-bottom:14px">
+      <div class="card"><div class="meta">🪪 Benutzername</div><div style="font-weight:900;margin-top:4px"><code>${esc(username||"—")}</code></div></div>
+      <div class="card"><div class="meta">🕐 Zuletzt eingeloggt</div><div style="font-weight:900;margin-top:4px">${esc(lastLogin)}</div></div>
+      <div class="card"><div class="meta">⚡ Letzte SQL-Abgabe</div><div style="font-weight:900;margin-top:4px">${esc(lastAct)}</div></div>
+      <div class="card"><div class="meta">✅ Fortschritt</div><div style="font-weight:900;margin-top:4px">${passCount} bestanden · ${doneCount}/${asgs.length} bearbeitet</div></div>
+    </div>
+    <div class="card" style="margin-bottom:14px"><h3 style="margin:0 0 10px">📋 Aufgaben</h3><div class="list">${aRows}</div></div>
+    <div class="card"><h3 style="margin:0 0 8px">📝 Notizen zu ${esc(studentName)} <span class="muted" style="font-weight:600;font-size:12px">(privat – nur Lehrkräfte)</span></h3>
+      <textarea class="input" id="snNote" style="min-height:90px" placeholder="Notizen zu ${esc(studentName)}…">${esc(note?note.body:"")}</textarea>
+      <div style="display:flex;gap:10px;align-items:center;margin-top:10px"><button class="btn btn-primary" id="snSave">Notiz speichern</button><span id="snMsg" class="muted" style="font-size:13px">${note&&note.updated_at?("zuletzt: "+esc(fmtDateTime(note.updated_at))):""}</span></div></div>`;
+  document.getElementById("back").onclick = ()=> sqlTeacherClassView(classId);
+  document.querySelectorAll("[data-aopen]").forEach(b=> b.onclick=()=> sqlReviewSubmission(b.dataset.aopen, studentId, studentName, classId));
+  document.getElementById("snSave").onclick=async()=>{ const body=document.getElementById("snNote").value; const btn=document.getElementById("snSave"); btn.disabled=true; btn.textContent="Speichere…"; try{ await api.saveStudentNote(classId, studentId, body); document.getElementById("snMsg").textContent="gespeichert ✓"; toast("Notiz gespeichert ✓","ok"); }catch(e){ toast(e.message||"Fehler","err"); } finally{ btn.disabled=false; btn.textContent="Notiz speichern"; } };
 }
 /* ---------- SQL-Playground: Lehrer-Einsicht in eine Schüler-Abgabe (read-only) ---------- */
 let sqlReviewState=null;
@@ -2456,6 +2509,12 @@ function fmtDate(s){ try{ const d=new Date(s); return d.toLocaleDateString("de-D
    Neueste Version zuerst. Bei jedem Deploy oben einen Eintrag ergänzen.
    ============================================================================ */
 const PATCH_NOTES = [
+  { v:"2.20", date:"30. Juni 2026", title:"SQL-Klassen: volle Verwaltung wie beim Hamster", items:[
+    `In einer SQL-Klasse gibt es jetzt oben Schnellzugriffe auf <b>🗄️ Datenbanken</b> und <b>📋 Vorlagen</b>.`,
+    `<b>Schüler:innen-Verwaltung</b> wie im Hamster-Tool: <b>📥 Importieren</b>, einzelne entfernen, Passwort zurücksetzen und ein Klick auf den Namen öffnet das <b>Schüler-Profil</b> (Fortschritt je Aufgabe + private Notizen).`,
+    `<b>Klassen suchen</b> funktioniert jetzt auch im SQL-Tool zuverlässig (Suche + Sortierung über der Klassenliste).`,
+    `<b>Admin:</b> beim Anlegen einer Klasse lässt sich jetzt das <b>Tool</b> (Hamster oder SQL) auswählen.`,
+  ]},
   { v:"2.19", date:"30. Juni 2026", title:"SQL-Sandbox: echte Datenbanken", items:[
     `Die <b>Standard-Datenbanken</b> in der 🧪 Sandbox sind entfernt. Stattdessen arbeitest du mit <b>echten Datenbanken</b>.`,
     `<b>Lehrkräfte</b> sehen in der Sandbox alle <b>geteilten</b> Datenbanken <i>und ihre eigenen</i> (auch private). Beim Anlegen einer Datenbank legst du mit dem Schalter <b>🌍 Freigeben</b> fest, ob sie allen (auch Schüler:innen) in der Sandbox zur Verfügung steht.`,
@@ -2649,7 +2708,7 @@ function patchNotesDialog(){
 }
 
 /* ---------- Footer: Versionsnummer (aus den Patch-Notes) + Copyright ---------- */
-const APP_BUILD = "2026-06-30 18:40";   // letztes Update (im Patch-Notes-Dialog angezeigt)
+const APP_BUILD = "2026-06-30 19:30";   // letztes Update (im Patch-Notes-Dialog angezeigt)
 (function(){ const f=document.getElementById("appfoot"); if(f){ const v=(typeof PATCH_NOTES!=="undefined"&&PATCH_NOTES[0])?PATCH_NOTES[0].v:""; f.textContent='© 2026 Laurens Offinger · Version '+v; } })();
 
 boot();
