@@ -204,6 +204,7 @@ function shell(inner){
     <div class="topbar">
       <div class="brand"><span class="h">${HAMSTER}</span> Informatik am Gymnasium Wesermünde</div>
       <button class="btn btn-ghost btn-sm" id="homeBtn" title="Zur Tool-Auswahl" style="margin-left:8px">🏠</button>
+      ${ACTIVE_TOOL?`<span style="margin-left:9px;font-weight:800;font-size:13.5px;color:var(--muted)">${esc((TOOLS.find(t=>t.id===ACTIVE_TOOL)||{}).name||"")}</span>`:""}
       <div class="spacer"></div>
       <button class="btn btn-ghost btn-sm" id="themeBtn" title="Design wechseln" style="margin-right:8px">🌗</button>
       ${roleBadge}
@@ -1708,7 +1709,7 @@ async function sqlTeacherHome(){
   let classes=[];
   try{ classes = await api.myTeacherClasses(); }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
   document.getElementById("view").innerHTML = `
-    <div class="page-head"><h2>🗄️ SQL · Meine Klassen</h2><div class="spacer"></div>
+    <div class="page-head"><h2>Meine Klassen</h2><div class="spacer"></div>
       <button class="btn btn-ghost" id="btnSqlDatabases">🗄️ Datenbanken</button>
       <button class="btn btn-ghost" id="btnSqlTemplates" style="margin-left:8px">📋 Vorlagen</button>
       <button class="btn btn-ghost" id="btnSqlSandbox" style="margin-left:8px">🧪 Sandbox</button>
@@ -1743,7 +1744,7 @@ async function sqlStudentHome(){
     wireJoin(); { const sx=document.getElementById("btnSqlSandbox"); if(sx) sx.onclick=()=> sqlSandbox(); } return;
   }
   document.getElementById("view").innerHTML = `
-    <div class="page-head"><h2>🗄️ SQL · Meine Klassen</h2><div class="spacer"></div>
+    <div class="page-head"><h2>Meine Klassen</h2><div class="spacer"></div>
       <button class="btn btn-ghost" id="btnSqlSandbox">🧪 Sandbox</button>
       <button class="btn btn-ghost" id="btnJoinMore" style="margin-left:8px">+ Klasse beitreten</button></div>
     ${classes.length?`<div class="page-head" style="margin:0 0 12px">${classSearchSortControls()}</div>`:""}
@@ -1955,7 +1956,7 @@ async function sqlReviewSubmission(assignmentId, studentId, studentName, classId
 function renderSqlReview(){
   const s=sqlReviewState;
   const subList = s.subtasks.map((st,i)=>`
-      <div class="row sqst" data-i="${i}" style="cursor:pointer;${i===s.selected?'background:var(--line2);border-radius:10px':''}">
+      <div class="row sqst" data-i="${i}" style="cursor:pointer;border-radius:10px;${i===s.selected?'background:var(--green-l);box-shadow:inset 0 0 0 1.5px var(--green)':''}">
         <span class="sicon" style="width:18px;text-align:center">${sqlStatusIcon(s.results[st.id])}</span>
         <span class="grow"><span class="t">Teilaufgabe ${i+1}</span></span></div>`).join("");
   const statusBadge = s.passed===true?'<span class="badge">bestanden ✓</span>':(s.updatedAt?'<span class="badge gold">in Bearbeitung</span>':'<span class="badge gray">keine Abgabe</span>');
@@ -2070,7 +2071,7 @@ async function sqlSolveAssignment(assignmentId){
 function renderSqlSolve(){
   const s=sqlSolveState;
   const subList = s.subtasks.map((st,i)=>`
-      <div class="row sqst" data-i="${i}" style="cursor:pointer;${i===s.selected?'background:var(--line2);border-radius:10px':''}">
+      <div class="row sqst" data-i="${i}" style="cursor:pointer;border-radius:10px;${i===s.selected?'background:var(--green-l);box-shadow:inset 0 0 0 1.5px var(--green)':''}">
         <span class="sicon" style="width:18px;text-align:center">${sqlStatusIcon(s.results[st.id])}</span>
         <span class="grow"><span class="t">Teilaufgabe ${i+1}</span></span></div>`).join("");
   document.getElementById("view").innerHTML = `
@@ -2507,6 +2508,11 @@ function fmtDate(s){ try{ const d=new Date(s); return d.toLocaleDateString("de-D
    Neueste Version zuerst. Bei jedem Deploy oben einen Eintrag ergänzen.
    ============================================================================ */
 const PATCH_NOTES = [
+  { v:"2.24", date:"1. Juli 2026", title:"Kleinigkeiten: Auswahl, Titel, Tool-Name", items:[
+    `In der Schüler-Ansicht ist die <b>aktuell gewählte Teilaufgabe</b> jetzt <b>grün</b> hervorgehoben (statt grau).`,
+    `Die Klassen-Übersicht im SQL-Tool heißt jetzt schlicht <b>„Meine Klassen"</b> (ohne Icon), wie beim Hamster.`,
+    `In der Titelleiste steht neben dem 🏠 jetzt der <b>Name des aktuellen Tools</b>.`,
+  ]},
   { v:"2.23", date:"1. Juli 2026", title:"SQL-Editor: Aufgabentext direkt in der Teilaufgaben-Liste", items:[
     `In der Teilaufgaben-Liste steht jetzt direkt der <b>Aufgabentext</b> neben der Nummer (die Zwischenüberschrift „Teilaufgabe N" entfällt) – so erkennst du jede Teilaufgabe sofort am Inhalt.`,
   ]},
@@ -2716,7 +2722,7 @@ function patchNotesDialog(){
 }
 
 /* ---------- Footer: Versionsnummer (aus den Patch-Notes) + Copyright ---------- */
-const APP_BUILD = "2026-07-01 14:15";   // letztes Update (im Patch-Notes-Dialog angezeigt)
+const APP_BUILD = "2026-07-01 15:00";   // letztes Update (im Patch-Notes-Dialog angezeigt)
 (function(){ const f=document.getElementById("appfoot"); if(f){ const v=(typeof PATCH_NOTES!=="undefined"&&PATCH_NOTES[0])?PATCH_NOTES[0].v:""; f.textContent='© 2026 Laurens Offinger · Version '+v; } })();
 
 boot();
