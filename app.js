@@ -3252,6 +3252,15 @@ function fmtDate(s){ try{ const d=new Date(s); return d.toLocaleDateString("de-D
    Neueste Version zuerst. Bei jedem Deploy oben einen Eintrag ergänzen.
    ============================================================================ */
 const PATCH_NOTES = [
+  { v:"2.27", date:"1. Juli 2026", title:"🌐 Filius Welle 1: Netzwerk sichtbar machen", items:[
+    `<b>Fix vorab:</b> Filius-Klassen ließen sich zunächst nicht anlegen (DB-Regel). Nach Einspielen von <code>schema_update_phaseW.sql</code> funktioniert das Anlegen von Filius-Klassen.`,
+    `<b>MAC-Adressen:</b> Jede Netzwerkkarte hat jetzt eine feste <b>physische Adresse (MAC)</b> – sichtbar in der Rechner-/Router-Konfiguration und im Befehl <code>ipconfig</code>.`,
+    `<b>Datenaustausch-Fenster (Paket-Trace):</b> Im Simulationsmodus hat jeder Rechner den neuen Reiter <b>📊 Datenaustausch</b> – nach einem <code>ping</code> siehst du die einzelnen <b>Rahmen</b> (ARP „Wer hat …?" + Antwort, dann die ICMP Echo-Anfragen/-Antworten) mit Quelle, Ziel, Protokoll und Schicht.`,
+    `<b>Schichtenmodell:</b> Klick auf einen Rahmen zeigt die <b>4 Schichten</b> (Anwendung · Transport · Vermittlung/IP · Netzzugang/Ethernet) mit MAC- und IP-Adressen – so wird die Kapselung sichtbar.`,
+    `<b>Switch lernt mit (SAT):</b> Ein Klick auf einen <b>Switch</b> (im Simulationsmodus) zeigt seine <b>Source-Address-Table</b> – welche MAC-Adresse an welchem Port zuletzt gesehen wurde; füllt sich automatisch beim Datenverkehr, „Tabelle leeren" möglich.`,
+    `<b>Weiterleitungstabelle:</b> Ein Klick auf einen <b>Router</b> (im Simulationsmodus) zeigt seine <b>Weiterleitungstabelle</b> (Ziel · Netzmaske · nächstes Gateway · Schnittstelle) inklusive der MAC je Schnittstelle.`,
+    `<b>ping</b> gibt jetzt originalgetreuere Ausgaben (TTL, Paketstatistik). Das ist Welle 1 des großen Filius-Ausbaus – weitere Wellen (Betriebssystem/Befehlszeile, Routen-UI, E-Mail, Gnutella, Firewall …) folgen.`,
+  ]},
   { v:"2.26", date:"1. Juli 2026", title:"🌐 Neues Tool: Filius – Netzwerksimulator", items:[
     `<b>Filius ist da!</b> Nach 🐹 Hamster und 🗄️ SQL gibt es jetzt als drittes Lern-Tool den <b>🌐 Netzwerksimulator</b> (nach dem Vorbild von FILIUS) – direkt im Browser, ohne Installation, im gleichen Design.`,
     `<b>Netzwerke bauen (Entwurfsmodus):</b> Komponenten per Klick platzieren – <b>Notebook, Rechner, Switch, Router</b> und Textfelder –, mit dem <b>🔌 Kabel</b>-Werkzeug verbinden und per Doppelklick konfigurieren (IP-Adresse, Subnetzmaske, Gateway, DNS, DHCP).`,
@@ -3478,7 +3487,7 @@ function patchNotesDialog(){
 }
 
 /* ---------- Footer: Versionsnummer (aus den Patch-Notes) + Copyright ---------- */
-const APP_BUILD = "2026-07-01 18:45";   // letztes Update (im Patch-Notes-Dialog angezeigt)
+const APP_BUILD = "2026-07-01 20:30";   // letztes Update (im Patch-Notes-Dialog angezeigt)
 (function(){ const f=document.getElementById("appfoot"); if(f){ const v=(typeof PATCH_NOTES!=="undefined"&&PATCH_NOTES[0])?PATCH_NOTES[0].v:""; f.textContent='© 2026 Laurens Offinger · Version '+v; } })();
 
 boot();

@@ -49,6 +49,12 @@
     return ((a&m)>>>0)===((b&m)>>>0);
   }
   function netAddr(ip, mask){ var a=ipToInt(ip), m=parseMask(mask); if(a===null||m===null) return null; return (a&m)>>>0; }
+  var BROADCAST_MAC="FF:FF:FF:FF:FF:FF";
+  // Deterministische MAC-Adresse aus einer Kennung (stabil, unicast, lokal verwaltet)
+  function macFor(id){ id=String(id); var h=2166136261>>>0; for(var i=0;i<id.length;i++){ h^=id.charCodeAt(i); h=Math.imul(h,16777619)>>>0; }
+    var out=[]; for(var b=0;b<6;b++){ out.push(h&0xff); h=Math.imul(h^(h>>>13),16777619)>>>0; }
+    out[0]=(out[0]&0xfe)|0x02;
+    return out.map(function(x){ return ("0"+x.toString(16)).slice(-2).toUpperCase(); }).join(":"); }
 
   /* ---------------- DSU (Union-Find) für Broadcast-Domänen ---------------- */
   function DSU(){ this.p={}; }
@@ -72,17 +78,18 @@
     var routerLinks={};   // routerId -> [linkId,...]
     links.forEach(function(l){ [l.a,l.b].forEach(function(id){ var n=byId[id]; if(n&&n.type==="router"){ (routerLinks[id]=routerLinks[id]||[]).push(l.id); } }); });
 
-    var A={ net:net, byId:byId, links:links, hostDomain:{}, domHosts:{}, domRifs:{}, routerIfDom:{}, host:{}, routerLinks:routerLinks };
+    var A={ net:net, byId:byId, links:links, hostDomain:{}, domHosts:{}, domRifs:{}, routerIfDom:{}, host:{}, routerLinks:routerLinks, mac:{}, rmac:{} };
 
     // statische Host-Konfiguration
     nodes.forEach(function(n){ if(!isHost(n.type)) return;
       A.host[n.id]={ ip:(n.ip&&validIp(n.ip))?n.ip:null, mask:n.mask||"255.255.255.0", gateway:n.gateway||null, dns:n.dns||null, dhcp:!!n.useDhcp };
+      A.mac[n.id]=macFor(n.id);
       var d=dsu.find("n:"+n.id); A.hostDomain[n.id]=d; (A.domHosts[d]=A.domHosts[d]||[]).push(n.id);
     });
     // Router-Interfaces den Domänen zuordnen
     Object.keys(routerLinks).forEach(function(rid){ var r=byId[rid]; var ifs=r.ifs||{};
-      A.routerIfDom[rid]={};
-      routerLinks[rid].forEach(function(linkId){ var d=dsu.find("r:"+rid+":"+linkId); A.routerIfDom[rid][linkId]=d;
+      A.routerIfDom[rid]={}; A.rmac[rid]={};
+      routerLinks[rid].forEach(function(linkId){ var d=dsu.find("r:"+rid+":"+linkId); A.routerIfDom[rid][linkId]=d; A.rmac[rid][linkId]=macFor(rid+":"+linkId);
         var cfg=ifs[linkId]||{}; if(cfg.ip&&validIp(cfg.ip)) (A.domRifs[d]=A.domRifs[d]||[]).push({router:rid, linkId:linkId, ip:cfg.ip, mask:cfg.mask||"255.255.255.0"});
       });
     });
@@ -121,7 +128,8 @@
   function findHostInDomain(A, dom, ip){ var arr=A.domHosts[dom]||[]; for(var i=0;i<arr.length;i++){ if(A.host[arr[i]].ip===ip) return arr[i]; } return null; }
   function findRifInDomain(A, dom, ip, exclude){ var arr=A.domRifs[dom]||[]; for(var i=0;i<arr.length;i++){ if(arr[i].ip===ip && arr[i].router!==exclude) return arr[i]; } return null; }
   // Ziel-Endpunkt in einer Domäne: Host ODER Router-Interface (Router antwortet auf seine Interface-IP)
-  function findEndpointInDomain(A, dom, ip){ var h=findHostInDomain(A,dom,ip); if(h) return {id:h, isRouter:false}; var arr=A.domRifs[dom]||[]; for(var i=0;i<arr.length;i++){ if(arr[i].ip===ip) return {id:arr[i].router, isRouter:true}; } return null; }
+  function findEndpointInDomain(A, dom, ip){ var h=findHostInDomain(A,dom,ip); if(h) return {id:h, isRouter:false}; var arr=A.domRifs[dom]||[]; for(var i=0;i<arr.length;i++){ if(arr[i].ip===ip) return {id:arr[i].router, isRouter:true, rlink:arr[i].linkId}; } return null; }
+  function macOfEndpoint(A, ep){ return ep.isRouter ? ((A.rmac[ep.id]||{})[ep.rlink]) : A.mac[ep.id]; }
   function routerHasNet(A, rid, dstIp){ var m=A.routerIfDom[rid]||{}, r=A.byId[rid], ifs=(r&&r.ifs)||{}; for(var lk in m){ var cfg=ifs[lk]; if(cfg&&cfg.ip&&sameNet(cfg.ip,dstIp,cfg.mask||"255.255.255.0")) return lk; } return null; }
 
   function autoNextHop(A, rid, dstIp){
@@ -223,6 +231,98 @@
     return r;
   }
 
+  /* ---- L2-Simulation: Legs, Frames, ARP, SAT, Schichten (für die Sichtbar-Machung) ---- */
+  function normMask(m){ var i=parseMask(m); return i===null?(m||"255.255.255.0"):intToIp(i); }
+  function switchPort(A, switchId, neighborId){ var ls=A.links.filter(function(l){ return l.a===switchId||l.b===switchId; }); for(var i=0;i<ls.length;i++){ if(ls[i].a===neighborId||ls[i].b===neighborId) return i+1; } return 1; }
+  // Physischer Pfad innerhalb EINER Broadcast-Domäne (nicht durch fremde Router)
+  function domainPath(A, fromId, toId){
+    if(fromId===toId) return [fromId];
+    var adj={}; A.links.forEach(function(l){ if(!A.byId[l.a]||!A.byId[l.b])return; if(A.byId[l.a].type==="text"||A.byId[l.b].type==="text")return; (adj[l.a]=adj[l.a]||[]).push(l.b); (adj[l.b]=adj[l.b]||[]).push(l.a); });
+    var prev={}, seen={}; seen[fromId]=true; var q=[fromId];
+    while(q.length){ var c=q.shift(); if(c===toId){ var p=[toId], x=toId; while(prev[x]!==undefined){ x=prev[x]; p.unshift(x); } return p; }
+      if(c!==fromId && c!==toId && A.byId[c] && A.byId[c].type==="router") continue;   // nicht durch fremde Router
+      (adj[c]||[]).forEach(function(nx){ if(!seen[nx]){ seen[nx]=true; prev[nx]=c; q.push(nx); } });
+    }
+    return null;
+  }
+  // Weiterleitungstabelle eines Routers (read-only Ableitung)
+  function forwardingTable(A, rid){
+    var r=A.byId[rid]; if(!r) return []; var ifs=r.ifs||{}; var rows=[];
+    Object.keys(ifs).forEach(function(lk){ var c=ifs[lk]; if(!c.ip||!validIp(c.ip))return; rows.push({ziel:intToIp(netAddr(c.ip,c.mask||"255.255.255.0")), maske:normMask(c.mask), gateway:c.ip+" (direkt)", iface:c.ip, kind:"direkt"}); });
+    (r.routes||[]).forEach(function(ro){ if(ro.dest&&ro.nextHop) rows.push({ziel:ro.dest, maske:normMask(ro.mask), gateway:ro.nextHop, iface:ro.nextHop, kind:"statisch"}); });
+    rows.push({ziel:"127.0.0.0", maske:"255.0.0.0", gateway:"127.0.0.1 (Loopback)", iface:"127.0.0.1", kind:"lokal"});
+    if(r.autoRoute!==false) rows.push({ziel:"alle anderen Netze", maske:"— (RIP)", gateway:"automatisch (RIP)", iface:"—", kind:"auto"});
+    return rows;
+  }
+  // Zerlegt den L3-Weg in L2-Legs (je Broadcast-Domäne ein Frame-Abschnitt mit eigenen MAC-Endpunkten)
+  function l3legs(A, srcId, dstIp){
+    var src=A.host[srcId]; if(!src||!src.ip) return {ok:false, error:"Quelle hat keine IP-Adresse"};
+    function ep(nodeId, ip, mac, linkId){ return {nodeId:nodeId, ip:ip, mac:mac, linkId:linkId}; }
+    var srcEp=ep(srcId, src.ip, A.mac[srcId]);
+    if(dstIp===src.ip) return {ok:true, legs:[], dstNodeId:srcId, self:true};
+    var dom=A.hostDomain[srcId], legs=[];
+    if(sameNet(src.ip, dstIp, src.mask)){
+      var t=findEndpointInDomain(A, dom, dstIp); if(!t) return {ok:false, error:"Ziel im eigenen Netz nicht erreichbar"};
+      legs.push({domain:dom, from:srcEp, to:ep(t.id, dstIp, macOfEndpoint(A,t), t.rlink)});
+      return {ok:true, legs:legs, dstNodeId:t.id};
+    }
+    if(!src.gateway) return {ok:false, error:"Kein Gateway gesetzt"};
+    if(!sameNet(src.ip, src.gateway, src.mask)) return {ok:false, error:"Gateway nicht im eigenen Netz"};
+    var gw=findRifInDomain(A, dom, src.gateway, null); if(!gw) return {ok:false, error:"Gateway nicht erreichbar"};
+    legs.push({domain:dom, from:srcEp, to:ep(gw.router, src.gateway, A.rmac[gw.router][gw.linkId], gw.linkId)});
+    var rid=gw.router, visited={}, depth=0;
+    while(true){
+      if(depth++>32 || visited[rid]) return {ok:false, error:"Routing-Schleife"}; visited[rid]=true;
+      var m=A.routerIfDom[rid]||{}, ifs=(A.byId[rid].ifs)||{};
+      var direct=routerHasNet(A, rid, dstIp);
+      if(direct){ var d2=m[direct], t2=findEndpointInDomain(A, d2, dstIp); if(!t2) return {ok:false, error:"Ziel im Zielnetz nicht gefunden"};
+        legs.push({domain:d2, from:ep(rid, ifs[direct].ip, A.rmac[rid][direct], direct), to:ep(t2.id, dstIp, macOfEndpoint(A,t2), t2.rlink)});
+        return {ok:true, legs:legs, dstNodeId:t2.id};
+      }
+      var nextHop=null;
+      if(A.byId[rid].autoRoute!==false) nextHop=autoNextHop(A, rid, dstIp);
+      else { var routes=A.byId[rid].routes||[]; for(var i=0;i<routes.length;i++){ var ro=routes[i]; if(ro.dest&&ro.mask&&ro.nextHop&&sameNet(ro.dest,dstIp,ro.mask)){ nextHop=ro.nextHop; break; } } }
+      if(!nextHop) return {ok:false, error:"Keine Route zum Zielnetz"};
+      var found=null, outLink=null;
+      for(var lk in m){ var nb=findRifInDomain(A, m[lk], nextHop, rid); if(nb){ found=nb; outLink=lk; break; } }
+      if(!found) return {ok:false, error:"Next-Hop nicht erreichbar"};
+      legs.push({domain:m[outLink], from:ep(rid, ifs[outLink].ip, A.rmac[rid][outLink], outLink), to:ep(found.router, nextHop, A.rmac[found.router][found.linkId], found.linkId)});
+      rid=found.router;
+    }
+  }
+  // Vollständige Ping-Simulation auf Frame-Ebene: {ok, error, dstIp, hops, sat[], logs{node:[..]}, layers[], path[]}
+  function pingSim(net, srcId, target){
+    var A=analyze(net);
+    var dstIp = validIp(target)? target : resolveName(A, srcId, target);
+    if(!dstIp) return {ok:false, error:"Name konnte nicht aufgelöst werden", sat:[], logs:{}, layers:null, path:null };
+    var r=ping(A, srcId, dstIp), leg=l3legs(A, srcId, dstIp);
+    var sat=[], logs={}, layers=null, path=[srcId];
+    var srcMac=A.mac[srcId], srcIp=A.host[srcId]?A.host[srcId].ip:null;
+    function log(id,row){ (logs[id]=logs[id]||[]).push(row); }
+    if(leg.ok && leg.legs.length){
+      var l0=leg.legs[0];
+      log(srcId,{proto:"ARP",schicht:"Netzzugang",quelle:srcMac,ziel:BROADCAST_MAC,bemerkung:"Wer hat "+l0.to.ip+"? Bitte an "+srcMac});
+      if(r.ok) log(srcId,{proto:"ARP",schicht:"Netzzugang",quelle:l0.to.mac,ziel:srcMac,bemerkung:l0.to.ip+" liegt bei "+l0.to.mac});
+      for(var k=0;k<4;k++){ log(srcId,{proto:"ICMP",schicht:"Vermittlung",quelle:srcIp,ziel:dstIp,bemerkung:"Echo-Anfrage (ping) icmp_seq="+(k+1)});
+        if(r.ok) log(srcId,{proto:"ICMP",schicht:"Vermittlung",quelle:dstIp,ziel:srcIp,bemerkung:"Echo-Antwort (pong) icmp_seq="+(k+1)}); }
+      if(!r.ok) log(srcId,{proto:"ICMP",schicht:"Vermittlung",quelle:"(keine)",ziel:srcIp,bemerkung:"Zeitüberschreitung – keine Antwort ("+(r.error||"nicht erreichbar")+")"});
+      leg.legs.forEach(function(lg){ var pp=domainPath(A, lg.from.nodeId, lg.to.nodeId)||[lg.from.nodeId, lg.to.nodeId];
+        pp.forEach(function(id){ if(path[path.length-1]!==id) path.push(id); });
+        for(var i=0;i<pp.length;i++){ var nd=A.byId[pp[i]]; if(!nd||nd.type!=="switch") continue;
+          if(pp[i-1]) sat.push({switchId:pp[i], mac:lg.from.mac, port:switchPort(A,pp[i],pp[i-1])});
+          if(pp[i+1] && r.ok) sat.push({switchId:pp[i], mac:lg.to.mac, port:switchPort(A,pp[i],pp[i+1])});
+        }
+      });
+      layers=[ {schicht:"Anwendung", felder:"ICMP Echo-Anfrage („ping“)"},
+               {schicht:"Transport", felder:"— (ICMP nutzt keine Ports)"},
+               {schicht:"Vermittlung (IP)", felder:"Quelle "+srcIp+" → Ziel "+dstIp+" · TTL 64"},
+               {schicht:"Netzzugang (Ethernet)", felder:"Quelle "+srcMac+" → Ziel "+l0.to.mac+(l0.to.ip!==dstIp?" (nächster Halt: Gateway "+l0.to.ip+")":"")} ];
+      if(r.ok && leg.dstNodeId && A.byId[leg.dstNodeId] && isHost(A.byId[leg.dstNodeId].type)){ var dId=leg.dstNodeId;
+        for(var k2=0;k2<4;k2++){ log(dId,{proto:"ICMP",schicht:"Vermittlung",quelle:srcIp,ziel:dstIp,bemerkung:"Echo-Anfrage empfangen"}); log(dId,{proto:"ICMP",schicht:"Vermittlung",quelle:dstIp,ziel:srcIp,bemerkung:"Echo-Antwort gesendet"}); } }
+    } else if(leg.self){ log(srcId,{proto:"ICMP",schicht:"Vermittlung",quelle:srcIp,ziel:dstIp,bemerkung:"Echo an sich selbst (Loopback)"}); }
+    return { ok:r.ok, error:r.error, dstIp:dstIp, hops:r.hops||[], sat:sat, logs:logs, layers:layers, path:(r.ok?path:(r.path||null)) };
+  }
+
   // Webseite abrufen: {ok, html, error}
   function fetchWeb(A, srcId, url){
     var m=String(url||"").trim().replace(/^https?:\/\//i,"");
@@ -284,7 +384,8 @@
   var FiliusEngine={
     blank:function(){ return {nodes:[], links:[]}; },
     ipToInt:ipToInt, intToIp:intToIp, validIp:validIp, parseMask:parseMask, maskLen:maskLen, sameNet:sameNet, netAddr:netAddr,
-    analyze:analyze, l3:l3, ping:ping, resolveName:resolveName, fetchWeb:fetchWeb,
+    analyze:analyze, l3:l3, ping:ping, pingSim:pingSim, resolveName:resolveName, fetchWeb:fetchWeb,
+    macFor:macFor, forwardingTable:forwardingTable, BROADCAST_MAC:BROADCAST_MAC,
     CHECK_TYPES:CHECK_TYPES, checkLabel:checkLabel, evalCheck:function(net,c){ return evalCheck(net, analyze(net||{}), c); }, evalChecks:evalChecks,
     isHost:isHost,
     summary:function(net){ net=net||{}; var t={notebook:0,rechner:0,switch:0,router:0}; (net.nodes||[]).forEach(function(n){ if(t[n.type]!=null) t[n.type]++; }); return t; }
@@ -381,6 +482,8 @@
     this.selNode=null; this.selLink=null; this.pending=null;
     this.consoleHost=null;
     this._anim=null;
+    this.sim=null;   // Sim-Sitzung: {sat, log, no, start, layers}
+    this._pingTimer=null;
     this._build();
   }
   function normalizeNet(d){ d=d||{}; if(typeof d==="string"){ try{ d=JSON.parse(d); }catch(e){ d={}; } } return { nodes:(d.nodes||[]).map(function(n){ return n; }), links:(d.links||[]).slice() }; }
@@ -432,8 +535,10 @@
     this.host.querySelectorAll("[data-mode]").forEach(function(b){ b.classList.toggle("on", b.dataset.mode===m); });
     this.$(".fv-palette").style.display = (m==="design"&&!this.readonly)?"flex":"none";
     this.canvas.classList.toggle("sim", m==="sim");
+    if(this._pingTimer){ clearInterval(this._pingTimer); this._pingTimer=null; }
+    if(m==="sim") this._resetSim();
     if(m!=="sim"){ this.consoleHost=null; this.$(".fv-consolewrap").innerHTML=""; }
-    this._setStatus(m==="sim"?"Simulation – klicke einen Rechner an, um seine Konsole/Programme zu öffnen.":"");
+    this._setStatus(m==="sim"?"Simulation – Rechner: Konsole/Programme · Switch: SAT-Tabelle · Router: Weiterleitungstabelle.":"");
     this.paint();
   };
   FiliusView.prototype.setTool=function(t){ this.tool=t; this.pending=null; this._applyToolUI(); this._setStatus(this._toolHint(t)); this.paint(); };
@@ -527,7 +632,7 @@
   FiliusView.prototype._wireNode=function(el, n){
     var self=this;
     el.addEventListener("mousedown", function(e){ e.stopPropagation();
-      if(self.mode==="sim"){ if(FiliusEngine.isHost(n.type)) self._openConsole(n.id); return; }
+      if(self.mode==="sim"){ if(FiliusEngine.isHost(n.type)) self._openConsole(n.id); else if(n.type==="switch") self._satDialog(n); else if(n.type==="router") self._routerInfoDialog(n); return; }
       if(self.readonly) return;
       if(self.tool==="cable"){ self._cableClick(n.id); return; }
       if(self.tool==="delete"){ self._removeNode(n.id); return; }
@@ -535,7 +640,7 @@
       self._select(n.id, null);
       self._startDrag(el, n, e);
     });
-    el.addEventListener("dblclick", function(e){ e.stopPropagation(); if(self.mode==="sim"){ if(FiliusEngine.isHost(n.type)) self._openConsole(n.id); return; } if(!self.readonly) self._configNode(n.id); });
+    el.addEventListener("dblclick", function(e){ e.stopPropagation(); if(self.mode==="sim"){ if(FiliusEngine.isHost(n.type)) self._openConsole(n.id); else if(n.type==="switch") self._satDialog(n); else if(n.type==="router") self._routerInfoDialog(n); return; } if(!self.readonly) self._configNode(n.id); });
     el.addEventListener("contextmenu", function(e){ e.preventDefault(); if(self.readonly||self.mode!=="design") return; if(confirm("„"+(n.name||TYPES[n.type].label)+"“ entfernen?")) self._removeNode(n.id); });
   };
   FiliusView.prototype._cableClick=function(id){
@@ -601,6 +706,7 @@
     var a=n.apps;
     var html='<h3>'+(TYPES[n.type].icon)+' '+esc(TYPES[n.type].label)+'</h3>'
       +'<div class="field"><label>Name</label><input class="input" id="fvNm" value="'+esc(n.name||"")+'"></div>'
+      +'<div class="fv-hint" style="margin:-8px 0 10px">Physische Adresse (MAC): <b style="font-family:monospace">'+esc(FiliusEngine.macFor(n.id))+'</b></div>'
       +'<label style="display:flex;gap:8px;align-items:center;font-weight:700;margin-bottom:10px;cursor:pointer"><input type="checkbox" id="fvIpName" '+(n.ipAsName?"checked":"")+'> IP-Adresse als Name verwenden</label>'
       +'<label style="display:flex;gap:8px;align-items:center;font-weight:700;margin-bottom:10px;cursor:pointer"><input type="checkbox" id="fvDhcp" '+(n.useDhcp?"checked":"")+'> Konfiguration per DHCP beziehen</label>'
       +'<div id="fvNetBox" class="'+(n.useDhcp?"":"")+'" style="'+(n.useDhcp?"opacity:.5;pointer-events:none":"")+'">'
@@ -650,7 +756,7 @@
     var self=this; n.ifs=n.ifs||{}; if(n.autoRoute===undefined) n.autoRoute=true;
     var myLinks=this.data.links.filter(function(l){ return l.a===n.id||l.b===n.id; });
     var rows=myLinks.map(function(l, i){ var other=self._node(l.a===n.id?l.b:l.a); var cfg=n.ifs[l.id]||{}; var oname=other?(other.name||TYPES[other.type].label):"?";
-      return '<div class="fv-row2" style="align-items:flex-end"><div class="field" style="flex:0 0 100%;margin-bottom:2px"><label style="margin-bottom:2px">Schnittstelle '+(i+1)+' → '+esc(oname)+'</label></div>'
+      return '<div class="fv-row2" style="align-items:flex-end"><div class="field" style="flex:0 0 100%;margin-bottom:2px"><label style="margin-bottom:2px">Schnittstelle '+(i+1)+' → '+esc(oname)+' · MAC <span style="font-family:monospace;font-weight:600">'+esc(FiliusEngine.macFor(n.id+":"+l.id))+'</span></label></div>'
         +'<div class="field"><input class="input" data-if-ip="'+l.id+'" placeholder="IP z. B. 192.168.0.1" value="'+esc(cfg.ip||"")+'"></div>'
         +'<div class="field"><input class="input" data-if-mask="'+l.id+'" placeholder="255.255.255.0" value="'+esc(cfg.mask||"255.255.255.0")+'"></div></div>';
     }).join("");
@@ -671,6 +777,45 @@
     });
   };
 
+  /* --------- Simulation: Sitzungszustand (SAT / Frame-Log) --------- */
+  FiliusView.prototype._resetSim=function(){ this.sim={ sat:{}, log:{}, no:0, start:Date.now(), layers:null }; };
+  FiliusView.prototype._recordSim=function(sim){
+    var self=this; if(!this.sim) this._resetSim();
+    var t=Math.max(0, Date.now()-(this.sim.start||Date.now()));
+    Object.keys(sim.logs||{}).forEach(function(nid){ (sim.logs[nid]||[]).forEach(function(row){ self.sim.no++; var rec={no:self.sim.no, zeit:(t/1000).toFixed(2)+"s", proto:row.proto, schicht:row.schicht, quelle:row.quelle, ziel:row.ziel, bemerkung:row.bemerkung}; (self.sim.log[nid]=self.sim.log[nid]||[]).push(rec); if(self.sim.log[nid].length>300) self.sim.log[nid]=self.sim.log[nid].slice(-300); }); });
+    (sim.sat||[]).forEach(function(e){ var m=self.sim.sat[e.switchId]=self.sim.sat[e.switchId]||{}; m[e.mac]={port:e.port, updated:(t/1000).toFixed(2)+"s"}; });
+    if(sim.layers) this.sim.layers=sim.layers;
+  };
+
+  /* --------- Simulation: Switch-SAT (Source-Address-Table) --------- */
+  FiliusView.prototype._satDialog=function(n){
+    var self=this; if(!this.sim) this._resetSim();
+    var entries=this.sim.sat[n.id]||{};
+    var keys=Object.keys(entries);
+    var rows=keys.length ? keys.map(function(mac){ return '<tr><td style="font-family:monospace">'+esc(mac)+'</td><td style="text-align:center">'+entries[mac].port+'</td><td style="text-align:center;color:var(--muted)">'+esc(entries[mac].updated)+'</td></tr>'; }).join("")
+      : '<tr><td colspan="3" style="color:var(--muted);padding:10px">Noch leer – die Tabelle füllt sich, sobald Datenverkehr (z. B. ein Ping) über diesen Switch läuft.</td></tr>';
+    this._dialog('<h3>🔀 '+esc(n.name||"Switch")+' – SAT (Source Address Table)</h3>'
+      +'<p class="fv-hint">Der Switch merkt sich, über welchen <b>Port</b> (Anschluss) er welche <b>MAC-Adresse</b> zuletzt gesehen hat, und leitet Rahmen danach gezielt weiter.</p>'
+      +'<table style="width:100%;border-collapse:collapse;font-size:13px;margin-top:6px"><thead><tr style="text-align:left;color:var(--muted)"><th style="padding:4px 6px">MAC-Adresse</th><th style="text-align:center">Port</th><th style="text-align:center">Aktualisiert</th></tr></thead><tbody>'+rows+'</tbody></table>'
+      +'<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px"><button class="btn btn-ghost" id="fvSatClear">Tabelle leeren</button><button class="btn btn-primary" id="fvX">Schließen</button></div>', function(bg,close){
+        bg.querySelector("#fvX").onclick=close;
+        bg.querySelector("#fvSatClear").onclick=function(){ delete self.sim.sat[n.id]; close(); self._satDialog(n); };
+    });
+  };
+
+  /* --------- Simulation: Router-Weiterleitungstabelle (read-only) --------- */
+  FiliusView.prototype._routerInfoDialog=function(n){
+    var A=FiliusEngine.analyze(this.data); var rows=FiliusEngine.forwardingTable(A, n.id);
+    var body=rows.length ? rows.map(function(r){ return '<tr><td style="font-family:monospace">'+esc(r.ziel)+'</td><td style="font-family:monospace">'+esc(r.maske)+'</td><td style="font-family:monospace">'+esc(r.gateway)+'</td><td style="font-family:monospace">'+esc(r.iface)+'</td></tr>'; }).join("")
+      : '<tr><td colspan="4" style="color:var(--muted);padding:10px">Keine Schnittstellen konfiguriert.</td></tr>';
+    var ifs=(n.ifs)||{}; var ifRows=Object.keys(ifs).map(function(lk,i){ return '<div style="font-size:12.5px"><b>Schnittstelle '+(i+1)+':</b> '+esc(ifs[lk].ip||"")+" / "+esc(ifs[lk].mask||"")+' · MAC '+esc((A.rmac[n.id]||{})[lk]||"—")+'</div>'; }).join("");
+    this._dialog('<h3>🌐 '+esc(n.name||"Router")+' – Weiterleitungstabelle</h3>'
+      +'<p class="fv-hint">'+(n.autoRoute!==false?'Automatisches Routing (RIP) ist aktiv – der Router kennt fremde Netze automatisch.':'Statisches Routing – nur die eingetragenen Netze sind bekannt.')+'</p>'
+      +(ifRows?'<div style="margin-bottom:8px">'+ifRows+'</div>':"")
+      +'<table style="width:100%;border-collapse:collapse;font-size:12.5px"><thead><tr style="text-align:left;color:var(--muted)"><th style="padding:4px 6px">Ziel</th><th>Netzmaske</th><th>Nächstes Gateway</th><th>Schnittstelle</th></tr></thead><tbody>'+body+'</tbody></table>'
+      +'<div style="display:flex;justify-content:flex-end;margin-top:12px"><button class="btn btn-primary" id="fvX">Schließen</button></div>', function(bg,close){ bg.querySelector("#fvX").onclick=close; });
+  };
+
   /* --------- Simulation: Host-Konsole --------- */
   FiliusView.prototype._openConsole=function(id){
     this.consoleHost=id; this._renderConsole();
@@ -678,9 +823,10 @@
   };
   FiliusView.prototype._renderConsole=function(){
     var self=this, n=this._node(this.consoleHost); var w=this.$(".fv-consolewrap"); if(!w) return;
+    if(this._pingTimer){ clearInterval(this._pingTimer); this._pingTimer=null; }   // laufenden Ping-Timer beim Neu-Rendern/Schließen/Tab-Wechsel stoppen
     if(!n){ w.innerHTML=""; return; }
     var a=n.apps||{};
-    var tabs=[{k:"term",label:"⌨️ Befehlszeile"}];
+    var tabs=[{k:"term",label:"⌨️ Befehlszeile"},{k:"trace",label:"📊 Datenaustausch"}];
     if(a.webbrowser) tabs.push({k:"web",label:"🌎 Webbrowser"});
     var services=[]; if(a.webserver)services.push("🌐 Webserver"); if(a.dns)services.push("🧭 DNS-Server"); if(a.dhcp)services.push("📡 DHCP-Server"); if(a.echo)services.push("🔁 Echo-Server");
     if(services.length) tabs.push({k:"srv",label:"⚙️ Dienste"});
@@ -693,8 +839,29 @@
     w.querySelectorAll("[data-ct]").forEach(function(b){ b.onclick=function(){ self._conTab=b.dataset.ct; self._renderConsole(); }; });
     var body=w.querySelector("#fvTabBody");
     if(this._conTab==="term") this._renderTerminal(body, n);
+    else if(this._conTab==="trace") this._renderTrace(body, n);
     else if(this._conTab==="web") this._renderBrowser(body, n);
     else this._renderServices(body, n, services);
+  };
+  FiliusView.prototype._renderTrace=function(body, n){
+    var self=this; if(!this.sim) this._resetSim();
+    var A=FiliusEngine.analyze(this.data); var mac=A.mac[n.id]||"—", ip=(A.host[n.id]&&A.host[n.id].ip)||"(keine)";
+    var rows=this.sim.log[n.id]||[];
+    // ARP-Tabelle aus beobachteten ARP-Antworten ableiten
+    var arp={}; rows.forEach(function(r){ if(r.proto==="ARP" && r.quelle!==mac && r.ziel===mac && /liegt bei/.test(r.bemerkung||"")){ var mm=(r.bemerkung.match(/^(\S+) liegt bei (\S+)/)); if(mm) arp[mm[1]]=mm[2]; } });
+    var arpKeys=Object.keys(arp);
+    var tbl = rows.length ? rows.map(function(r,i){ return '<tr class="fvtr" data-i="'+i+'" style="cursor:pointer"><td style="text-align:right;color:var(--muted)">'+r.no+'</td><td style="color:var(--muted)">'+esc(r.zeit)+'</td><td style="font-family:monospace;font-size:11px">'+esc(r.quelle)+'</td><td style="font-family:monospace;font-size:11px">'+esc(r.ziel)+'</td><td><b>'+esc(r.proto)+'</b></td><td>'+esc(r.schicht)+'</td><td>'+esc(r.bemerkung)+'</td></tr>'; }).join("")
+      : '<tr><td colspan="7" style="color:var(--muted);padding:10px">Noch kein Datenverkehr. Öffne die ⌨️ Befehlszeile und sende z. B. einen <b>ping</b> – die gesendeten/empfangenen Rahmen erscheinen hier.</td></tr>';
+    body.innerHTML='<div class="fv-hint" style="margin-bottom:6px">MAC (physische Adresse): <b style="font-family:monospace">'+esc(mac)+'</b> · IP: <b style="font-family:monospace">'+esc(ip)+'</b></div>'
+      +'<div style="overflow:auto;max-height:200px;border:1px solid var(--line);border-radius:8px"><table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="text-align:left;color:var(--muted);position:sticky;top:0;background:var(--card)"><th style="padding:4px 6px">Nr.</th><th>Zeit</th><th>Quelle</th><th>Ziel</th><th>Protokoll</th><th>Schicht</th><th>Bemerkung</th></tr></thead><tbody>'+tbl+'</tbody></table></div>'
+      +(arpKeys.length?'<div class="fv-hint" style="margin-top:8px"><b>ARP-Tabelle:</b> '+arpKeys.map(function(k){return esc(k)+" → "+esc(arp[k]);}).join(" · ")+'</div>':"")
+      +'<div id="fvLayers" style="margin-top:8px"></div>';
+    function showLayers(){ var box=body.querySelector("#fvLayers"); var L=self.sim.layers; if(!L){ box.innerHTML=""; return; }
+      box.innerHTML='<div style="border:1px solid var(--line);border-radius:8px;overflow:hidden"><div style="background:var(--line2);padding:5px 10px;font-weight:800;font-size:12px">🧅 Schichtenmodell (letztes ICMP-Paket)</div>'
+        +L.map(function(s,i){ var col=["#eef6ff","#eaffe9","#fff7e6","#f3e9ff"][i]||"#f5f5f5"; return '<div style="display:flex;gap:8px;padding:6px 10px;border-top:1px solid var(--line);background:'+col+'"><b style="min-width:170px;color:#333">'+esc(s.schicht)+'</b><span style="color:#333;font-size:12.5px">'+esc(s.felder)+'</span></div>'; }).join("")+'</div>';
+    }
+    body.querySelectorAll(".fvtr").forEach(function(tr){ tr.onclick=function(){ showLayers(); }; });
+    if(rows.length) showLayers();
   };
   FiliusView.prototype._renderServices=function(body, n, services){
     body.innerHTML='<p class="fv-hint">Auf diesem Rechner laufende Server (im Simulationsmodus automatisch aktiv):</p><ul style="margin:6px 0 0;padding-left:20px">'+services.map(function(s){return '<li style="font-weight:700;margin-bottom:3px">'+s+' <span style="color:var(--green-d)">● läuft</span></li>';}).join("")+'</ul><p class="fv-hint" style="margin-top:8px">Einstellungen (IP, Webseite, DNS-Einträge, DHCP-Bereich) im Entwurfsmodus per Doppelklick auf den Rechner.</p>';
@@ -723,7 +890,7 @@
       var A=FiliusEngine.analyze(self.data), me=A.host[n.id]||{};
       if(c==="help"){ out("Befehle: ping <ziel>, ipconfig, host <name>, traceroute <ziel>, clear, help"); }
       else if(c==="clear"){ buf=[]; paintTerm(); }
-      else if(c==="ipconfig"||c==="ifconfig"){ out("  IP-Adresse . . . : "+(me.ip||"(keine)")); out("  Subnetzmaske . . : "+(me.mask||"-")); out("  Gateway  . . . . : "+(me.gateway||"(keins)")); out("  DNS-Server . . . : "+(me.dns||"(keiner)")+(n.useDhcp?"  [per DHCP]":"")); }
+      else if(c==="ipconfig"||c==="ifconfig"){ out("  Physische Adresse (MAC) : "+(A.mac[n.id]||"—")); out("  IP-Adresse . . . . . . . : "+(me.ip||"(keine)")); out("  Subnetzmaske . . . . . . : "+(me.mask||"-")); out("  Standardgateway  . . . . : "+(me.gateway||"(keins)")); out("  DNS-Server . . . . . . . : "+(me.dns||"(keiner)")+(n.useDhcp?"  [per DHCP]":"")); }
       else if(c==="host"||c==="nslookup"){ if(!arg){ out("Aufruf: host <name>"); } else { var ip=FiliusEngine.resolveName(A, n.id, arg); out(ip? (arg+" hat die Adresse "+ip) : (arg+": konnte nicht aufgelöst werden")); } }
       else if(c==="ping"){ if(!arg){ out("Aufruf: ping <ziel>"); } else { self._doPing(A, n.id, arg, out); return; } }
       else if(c==="traceroute"||c==="tracert"){ if(!arg){ out("Aufruf: traceroute <ziel>"); } else { var r=FiliusEngine.ping(A, n.id, arg); if(!r.ok){ out("Ziel nicht erreichbar: "+(r.error||"")); } else { out("Route zu "+r.target+":"); (r.hops||[]).forEach(function(h,i){ out("  "+(i+1)+"  "+h); }); } } }
@@ -734,11 +901,13 @@
     cmd.focus();
   };
   FiliusView.prototype._doPing=function(A, srcId, target, out){
-    var self=this; var r=FiliusEngine.ping(A, srcId, target);
-    out("Ping wird ausgeführt für "+(r.target||target)+" …");
-    if(!r.ok){ out("  Fehler: "+(r.error||"nicht erreichbar")); if(r.path) self._animate(r.path); return; }
-    self._animate(r.path);
-    var i=0; var timer=setInterval(function(){ i++; out("  Antwort von "+r.target+": Zeit"+(i)+" ≈ "+(8+Math.round(i*1.7))+" ms"); if(i>=4){ clearInterval(timer); out("  4 gesendet, 4 empfangen, 0 verloren ✓"); } }, 420);
+    var self=this; var sim=FiliusEngine.pingSim(this.data, srcId, target);
+    self._recordSim(sim);   // Frames + SAT der Sim-Sitzung hinzufügen (im 📊 Datenaustausch / Switch-SAT sichtbar)
+    out("Ping wird ausgeführt für "+(sim.dstIp||target)+" …");
+    if(!sim.ok){ out("  Fehler: "+(sim.error||"nicht erreichbar")); if(sim.path) self._animate(sim.path); return; }
+    self._animate(sim.path);
+    if(self._pingTimer){ clearInterval(self._pingTimer); self._pingTimer=null; }
+    var i=0; self._pingTimer=setInterval(function(){ i++; out("  Antwort von "+sim.dstIp+": Bytes=32 Zeit≈"+(8+Math.round(i*1.7))+" ms TTL=64"); if(i>=4){ clearInterval(self._pingTimer); self._pingTimer=null; out("  Statistik: 4 gesendet, 4 empfangen, 0 verloren (0% Verlust) ✓"); out("  Tipp: Rahmen im Reiter „📊 Datenaustausch“ ansehen."); } }, 380);
   };
   FiliusView.prototype._animate=function(path){
     if(!path||path.length<1) return; var self=this;
@@ -758,7 +927,7 @@
   FiliusView.prototype.getData=function(){ return { nodes:this.data.nodes, links:this.data.links }; };
   FiliusView.prototype.setData=function(d){ this.data=normalizeNet(d); this.selNode=this.selLink=this.pending=null; this.consoleHost=null; this._renderConsole&&this.$(".fv-consolewrap")&&(this.$(".fv-consolewrap").innerHTML=""); this.paint(); };
   FiliusView.prototype.setReadonly=function(ro){ this.readonly=!!ro; this._build(); };
-  FiliusView.prototype.destroy=function(){ try{ if(this._anim) clearInterval(this._anim); }catch(e){} try{ document.removeEventListener("keydown", this._keyh); }catch(e){} if(this.host) this.host.innerHTML=""; };
+  FiliusView.prototype.destroy=function(){ try{ if(this._anim) clearInterval(this._anim); }catch(e){} try{ if(this._pingTimer) clearInterval(this._pingTimer); }catch(e){} this._pingTimer=null; try{ document.removeEventListener("keydown", this._keyh); }catch(e){} if(this.host) this.host.innerHTML=""; };
 
   FiliusView.ensureStyles=injectStyles;
   window.FiliusView=FiliusView;
