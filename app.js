@@ -3252,6 +3252,15 @@ function fmtDate(s){ try{ const d=new Date(s); return d.toLocaleDateString("de-D
    Neueste Version zuerst. Bei jedem Deploy oben einen Eintrag ergänzen.
    ============================================================================ */
 const PATCH_NOTES = [
+  { v:"2.28", date:"1. Juli 2026", title:"🌐 Filius Wellen 2+3: Betriebssystem, Routing & Anwendungen", items:[
+    `<b>Virtuelles Dateisystem + Datei-Explorer + Text-Editor:</b> Jeder Rechner hat jetzt Ordner & Dateien (Reiter <b>📁 Dateien</b> im Simulationsmodus) – anlegen, bearbeiten, löschen, importieren, herunterladen. Der <b>Webserver</b> liefert die Seite aus <code>/webserver/index.html</code>, die du im Editor bearbeiten kannst.`,
+    `<b>Komplette Befehlszeile:</b> zusätzlich zu ping/ipconfig/host/traceroute jetzt <code>ls, cd, pwd, mkdir, touch, cat, echo … > datei, cp, mv, rm</code> sowie <code>arp</code> (ARP-Tabelle) und <code>route</code> (Weiterleitungstabelle). <code>help</code> listet alles auf.`,
+    `<b>E-Mail (SMTP/POP3):</b> Richte einen <b>E-Mail-Server</b> mit Maildomain und Konten ein und auf den Rechnern das <b>E-Mail-Programm</b> – dann <b>Mails senden und abrufen</b> (Reiter ✉️ E-Mail). Neue Aufgaben-Prüfung „E-Mail zustellbar".`,
+    `<b>Gnutella (Peer-to-Peer):</b> Dateien im Ordner <code>/peer2peer</code> teilen, im Netz <b>suchen und herunterladen</b> (Reiter 🔗 Gnutella).`,
+    `<b>Echo-Server + Einfacher Client:</b> Verbindung testen und eine Nachricht zurückspiegeln lassen (Reiter 🔌 Client).`,
+    `<b>Firewall:</b> pro Rechner aktivierbar – eingehende <b>Pings (ICMP)</b> oder bestimmte <b>Ports</b> (z. B. 80) blockieren. Passt perfekt zu „NICHT erreichbar"-Prüfungen.`,
+    `<b>Statische Routen:</b> Am Router lassen sich jetzt <b>manuelle Weiterleitungs-Einträge</b> (Ziel · Netzmaske · nächster Hop) eintragen – für Routing-Aufgaben ohne automatisches Routing.`,
+  ]},
   { v:"2.27", date:"1. Juli 2026", title:"🌐 Filius Welle 1: Netzwerk sichtbar machen", items:[
     `<b>Fix vorab:</b> Filius-Klassen ließen sich zunächst nicht anlegen (DB-Regel). Nach Einspielen von <code>schema_update_phaseW.sql</code> funktioniert das Anlegen von Filius-Klassen.`,
     `<b>MAC-Adressen:</b> Jede Netzwerkkarte hat jetzt eine feste <b>physische Adresse (MAC)</b> – sichtbar in der Rechner-/Router-Konfiguration und im Befehl <code>ipconfig</code>.`,
@@ -3487,7 +3496,7 @@ function patchNotesDialog(){
 }
 
 /* ---------- Footer: Versionsnummer (aus den Patch-Notes) + Copyright ---------- */
-const APP_BUILD = "2026-07-01 20:30";   // letztes Update (im Patch-Notes-Dialog angezeigt)
+const APP_BUILD = "2026-07-01 22:15";   // letztes Update (im Patch-Notes-Dialog angezeigt)
 (function(){ const f=document.getElementById("appfoot"); if(f){ const v=(typeof PATCH_NOTES!=="undefined"&&PATCH_NOTES[0])?PATCH_NOTES[0].v:""; f.textContent='© 2026 Laurens Offinger · Version '+v; } })();
 
 boot();

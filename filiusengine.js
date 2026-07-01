@@ -63,6 +63,26 @@
 
   function isHost(t){ return t==="notebook"||t==="rechner"; }
 
+  /* ---------------- Virtuelles Dateisystem (je Host) ----------------
+     Flache Map: absolute Pfade -> {dir:true} | {content:"..."} ; Wurzel "/" implizit. */
+  function FS_default(){ return { "/eigene Dateien":{dir:true} }; }
+  // Legacy-Netze: alte node.web.pages beim ersten Zugriff ins Dateisystem übernehmen (kein Shadowing/Verlust)
+  function fsMigrate(node){ var fs=FS_default(); var pg=node.web&&node.web.pages; if(pg){ Object.keys(pg).forEach(function(k){ var rel=(k==="/"||k==="")?"/index.html":k; fsWrite(fs, "/webserver"+fsNorm(rel), pg[k]); }); } return fs; }
+  function fsOf(node){ if(!node.fs || typeof node.fs!=="object"){ node.fs=(node.web&&node.web.pages)?fsMigrate(node):FS_default(); } return node.fs; }
+  function fsEnsure(fs,p){ var parts=fsNorm(p).split("/").slice(1,-1); var cur=""; for(var i=0;i<parts.length;i++){ cur+="/"+parts[i]; if(!fs[cur]||!fs[cur].dir) fs[cur]={dir:true}; } }
+  function fsNorm(p){ if(!p) return "/"; p=String(p).replace(/\\/g,"/"); if(p[0]!=="/") p="/"+p; p=p.replace(/\/+/g,"/"); if(p.length>1) p=p.replace(/\/$/,""); return p; }
+  function fsResolve(cwd, arg){ if(!arg) return fsNorm(cwd); arg=String(arg).replace(/\\/g,"/"); var base=(arg[0]==="/")?"":fsNorm(cwd); var parts=(base+"/"+arg).split("/"); var st=[]; parts.forEach(function(s){ if(!s||s===".")return; if(s===".."){ st.pop(); } else st.push(s); }); return "/"+st.join("/"); }
+  function fsParent(p){ p=fsNorm(p); if(p==="/")return "/"; var i=p.lastIndexOf("/"); return i<=0?"/":p.slice(0,i); }
+  function fsBase(p){ p=fsNorm(p); return p.slice(p.lastIndexOf("/")+1); }
+  function fsExists(fs,p){ p=fsNorm(p); return p==="/"||!!fs[p]; }
+  function fsIsDir(fs,p){ p=fsNorm(p); return p==="/"||!!(fs[p]&&fs[p].dir); }
+  function fsRead(fs,p){ p=fsNorm(p); return (fs[p]&&!fs[p].dir)?(fs[p].content||""):null; }
+  function fsWrite(fs,p,c){ p=fsNorm(p); if(p==="/")return false; fsEnsure(fs,p); fs[p]={content:c==null?"":String(c)}; return true; }
+  function fsMkdir(fs,p){ p=fsNorm(p); if(p==="/"||fs[p])return false; fsEnsure(fs,p); fs[p]={dir:true}; return true; }
+  function fsRm(fs,p){ p=fsNorm(p); if(p==="/")return false; var did=false; Object.keys(fs).forEach(function(k){ if(k===p||k.indexOf(p+"/")===0){ delete fs[k]; did=true; } }); return did; }
+  function fsList(fs,dir){ dir=fsNorm(dir); var out=[]; Object.keys(fs||{}).forEach(function(k){ if(fsParent(k)===dir) out.push({path:k, name:fsBase(k), dir:!!fs[k].dir, size:(fs[k].content||"").length}); }); return out.sort(function(a,b){ return (b.dir-a.dir)||a.name.localeCompare(b.name,"de"); }); }
+  function fileTypeOf(name){ var e=(name.split(".").pop()||"").toLowerCase(); if(["txt","html","htm","css","js","md","xml","json","csv"].indexOf(e)>=0) return "text"; if(["png","jpg","jpeg","gif","bmp","svg","webp"].indexOf(e)>=0) return "image"; if(["wav","mp3","ogg"].indexOf(e)>=0) return "sound"; return "text"; }
+
   /* ---------------- Netz analysieren (Topologie, Domänen, DHCP) ---------------- */
   function analyze(net){
     net=net||{}; var nodes=net.nodes||[], links=net.links||[];
@@ -146,6 +166,8 @@
     return null;
   }
 
+  // Longest-Prefix-Match unter den statischen Routen (spezifischste Maske gewinnt)
+  function bestStaticRoute(node, dstIp){ var best=null, bestLen=-1; (node.routes||[]).forEach(function(ro){ if(ro.dest&&ro.mask&&ro.nextHop&&sameNet(ro.dest,dstIp,ro.mask)){ var len=maskLen(parseMask(ro.mask)); if(len>bestLen){ bestLen=len; best=ro; } } }); return best; }
   function routerForward(A, rid, dstIp, hops, visited, depth){
     if(depth>32) return {ok:false, error:"Routing-Schleife"};
     if(visited[rid]) return {ok:false, error:"Routing-Schleife"};
@@ -157,7 +179,7 @@
     // Route bestimmen
     var nextHop=null;
     if(r.autoRoute!==false){ nextHop=autoNextHop(A, rid, dstIp); }
-    else { var routes=r.routes||[]; for(var i=0;i<routes.length;i++){ var ro=routes[i]; if(ro.dest&&ro.mask&&ro.nextHop&&sameNet(ro.dest,dstIp,ro.mask)){ nextHop=ro.nextHop; break; } } }
+    else { var ro=bestStaticRoute(r, dstIp); if(ro) nextHop=ro.nextHop; }
     if(!nextHop) return {ok:false, error:"Keine Route zum Zielnetz"};
     for(var lk in m){ var nb=findRifInDomain(A, m[lk], nextHop, rid); if(nb){ hops.push(nextHop); return routerForward(A, nb.router, dstIp, hops, visited, depth+1); } }
     return {ok:false, error:"Next-Hop nicht erreichbar"};
@@ -227,6 +249,7 @@
     if(!dstIp) return {ok:false, error:"Name konnte nicht aufgelöst werden", path:null, hops:[]};
     var r=reach2(A, srcId, dstIp);
     r.target=dstIp;
+    if(r.ok){ var dn=A.byId[r.dstNodeId]; if(dn && fwBlocks(dn,"icmp")){ r.ok=false; r.error="Ziel antwortet nicht (Firewall blockiert ICMP)"; } }
     if(r.ok) r.path=physicalPath(A, srcId, r.dstNodeId)||[srcId, r.dstNodeId];
     return r;
   }
@@ -281,7 +304,7 @@
       }
       var nextHop=null;
       if(A.byId[rid].autoRoute!==false) nextHop=autoNextHop(A, rid, dstIp);
-      else { var routes=A.byId[rid].routes||[]; for(var i=0;i<routes.length;i++){ var ro=routes[i]; if(ro.dest&&ro.mask&&ro.nextHop&&sameNet(ro.dest,dstIp,ro.mask)){ nextHop=ro.nextHop; break; } } }
+      else { var ro=bestStaticRoute(A.byId[rid], dstIp); if(ro) nextHop=ro.nextHop; }
       if(!nextHop) return {ok:false, error:"Keine Route zum Zielnetz"};
       var found=null, outLink=null;
       for(var lk in m){ var nb=findRifInDomain(A, m[lk], nextHop, rid); if(nb){ found=nb; outLink=lk; break; } }
@@ -333,10 +356,46 @@
     var r=reach2(A, srcId, ip); if(!r.ok) return {ok:false, error:"Server nicht erreichbar ("+r.error+")"};
     var srv=A.byId[r.dstNodeId];
     if(!srv||!(srv.apps&&srv.apps.webserver)) return {ok:false, error:"Auf dem Zielrechner läuft kein Webserver"};
-    var pages=(srv.web&&srv.web.pages)||{}; var page=pages[path]||pages[path.replace(/\/$/,"")]||pages["/"]||pages["/index.html"];
+    if(fwBlocks(srv,"tcp",80)) return {ok:false, error:"Port 80 durch Firewall blockiert"};
+    var fs=fsOf(srv); var rel=(path==="/"||path==="")?"/index.html":path; var page=fsRead(fs, "/webserver"+rel);
+    if(page==null && (srv.web&&srv.web.pages)) page=srv.web.pages[path]||srv.web.pages["/"];   // Rückwärtskompatibilität (alte Netze)
     if(page==null) return {ok:false, error:"Seite nicht gefunden (404)"};
     return {ok:true, html:page, ip:ip, server:srv.name};
   }
+
+  /* ---------------- Dienste: Firewall, Echo/Client, E-Mail (SMTP/POP3), Gnutella (P2P) ---------------- */
+  function fwBlocks(node, proto, port){ var f=node&&node.firewall; if(!f||!f.on) return false;
+    if(proto==="icmp") return !!f.blockPing;
+    var deny=(f.denyPorts||[]).map(String); return deny.indexOf(String(port))>=0; }
+  // Dienst-Erreichbarkeit: L3 hin+zurück UND Ziel-Firewall erlaubt proto/port
+  function serviceReach(A, srcId, dstIp, proto, port){ var r=reach2(A, srcId, dstIp); if(!r.ok) return r;
+    var dn=A.byId[r.dstNodeId]; if(dn && fwBlocks(dn, proto, port)) return {ok:false, error:"durch Firewall blockiert (Port "+(proto==="icmp"?"ICMP":port)+")", dstNodeId:r.dstNodeId};
+    return r; }
+  // E-Mail: Mailserver für eine Domain finden (im gesamten Netz)
+  function mailServerFor(net, domain){ domain=String(domain||"").toLowerCase(); var ns=net.nodes||[]; for(var i=0;i<ns.length;i++){ var n=ns[i]; if(n.apps&&n.apps.mailserver && String(n.maildomain||"").toLowerCase()===domain) return n; } return null; }
+  function parseAddr(a){ var m=String(a||"").trim().match(/^([^@\s]+)@([^@\s]+)$/); return m?{user:m[1], domain:m[2]}:null; }
+  function mailAccount(server, user){ return (server.mailAccounts||[]).find(function(x){ return String(x.user||"").toLowerCase()===String(user||"").toLowerCase(); }); }
+  // Kann die/der Client-Rechner eine Mail an toAddr zustellen? (Server existiert, Konto existiert, erreichbar)
+  function mailCanDeliver(net, A, clientNode, toAddr){ var to=parseAddr(toAddr); if(!to) return {ok:false, error:"Ungültige Adresse"};
+    var srv=mailServerFor(net, to.domain); if(!srv) return {ok:false, error:"Maildomain unbekannt (kein Mailserver)"};
+    if(!mailAccount(srv, to.user)) return {ok:false, error:"Konto "+toAddr+" existiert nicht"};
+    var srvIp=hostIp(A, srv); if(!srvIp) return {ok:false, error:"Mailserver hat keine IP"};
+    var r=serviceReach(A, clientNode.id, srvIp, "tcp", 25); if(!r.ok) return {ok:false, error:"Mailserver nicht erreichbar ("+r.error+")"};
+    return {ok:true, server:srv, to:to}; }
+  function mailSend(net, clientNode, toAddr, subject, body){ var A=analyze(net); var chk=mailCanDeliver(net, A, clientNode, toAddr); if(!chk.ok) return chk;
+    var srv=chk.server; srv.mailboxes=srv.mailboxes||{}; var key=String(chk.to.user).toLowerCase(); var box=srv.mailboxes[key]=srv.mailboxes[key]||[];
+    var from=(clientNode.emailAccount&&clientNode.emailAccount.address)||"unbekannt";
+    box.push({from:from, to:toAddr, subject:subject||"(kein Betreff)", body:body||"", ts:Date.now()}); return {ok:true}; }
+  function mailFetch(net, clientNode){ var A=analyze(net); var acc=clientNode.emailAccount; if(!acc||!acc.address) return {ok:false, error:"Kein E-Mail-Konto eingerichtet", msgs:[]};
+    var to=parseAddr(acc.address); if(!to) return {ok:false, error:"Konto-Adresse ungültig", msgs:[]};
+    var srv=mailServerFor(net, to.domain); if(!srv) return {ok:false, error:"Eigener Mailserver nicht gefunden", msgs:[]};
+    var srvIp=hostIp(A, srv); var r=serviceReach(A, clientNode.id, srvIp, "tcp", 110); if(!r.ok) return {ok:false, error:"Mailserver nicht erreichbar", msgs:[]};
+    return {ok:true, msgs:((srv.mailboxes||{})[String(to.user).toLowerCase()])||[]}; }
+  // Gnutella: erreichbare Peers mit einer Datei im Ordner /peer2peer
+  function gnutellaSearch(net, nodeId, filename){ var A=analyze(net); var out=[]; (net.nodes||[]).forEach(function(n){ if(n.id===nodeId||!(n.apps&&n.apps.gnutella))return; var ip=hostIp(A,n); if(!ip)return; if(!serviceReach(A,nodeId,ip,"tcp",6346).ok)return;
+    (fsList(fsOf(n),"/peer2peer")||[]).forEach(function(it){ if(!it.dir && (!filename || it.name.toLowerCase().indexOf(String(filename).toLowerCase())>=0)) out.push({id:n.id, peer:n.name, ip:ip, name:it.name, path:it.path}); }); }); return out; }
+  function echoTest(net, clientId, target){ var A=analyze(net); var dstIp=validIp(target)?target:hostIp(A,nodeByName(net,target)); if(!dstIp) dstIp=resolveName(A,clientId,target); if(!dstIp) return {ok:false, error:"Ziel unbekannt"};
+    var r=serviceReach(A, clientId, dstIp, "tcp", 7); if(!r.ok) return r; var dn=A.byId[r.dstNodeId]; if(!dn||!(dn.apps&&dn.apps.echo)) return {ok:false, error:"Auf dem Ziel läuft kein Echo-Server"}; return {ok:true, dstIp:dstIp}; }
 
   /* ---------------- Prüfungen / Checks ---------------- */
   var CHECK_TYPES={
@@ -351,7 +410,9 @@
     web:    { label:"Webseite erreichbar", desc:"Browser erreicht die Webseite",
       fields:[{k:"from",label:"Browser auf (Name)",ph:"z. B. PC1"},{k:"url",label:"URL",ph:"z. B. http://www.filius.de"}] },
     dns:    { label:"DNS löst auf", desc:"DNS-Server löst Namen zu IP auf",
-      fields:[{k:"server",label:"DNS-Server (Name)",ph:"z. B. DNS"},{k:"name",label:"Domainname",ph:"z. B. www.filius.de"},{k:"ip",label:"soll-IP",ph:"z. B. 192.168.0.12"}] }
+      fields:[{k:"server",label:"DNS-Server (Name)",ph:"z. B. DNS"},{k:"name",label:"Domainname",ph:"z. B. www.filius.de"},{k:"ip",label:"soll-IP",ph:"z. B. 192.168.0.12"}] },
+    email:  { label:"E-Mail zustellbar", desc:"Von einem E-Mail-Programm ist eine Mail an die Adresse zustellbar",
+      fields:[{k:"from",label:"E-Mail-Programm auf (Name)",ph:"z. B. PC1"},{k:"to",label:"Empfänger-Adresse",ph:"z. B. bob@filius.de"}] }
   };
   function checkLabel(c){
     var t=CHECK_TYPES[c.type]; var p=c.params||{};
@@ -362,6 +423,7 @@
     if(c.type==="ip_in_net") return (p.node||"?")+" hat IP in "+(p.net||"?");
     if(c.type==="web") return "Webseite "+(p.url||"?")+" (von "+(p.from||"?")+")";
     if(c.type==="dns") return "DNS: "+(p.name||"?")+" → "+(p.ip||"?");
+    if(c.type==="email") return "E-Mail: "+(p.from||"?")+" → "+(p.to||"?");
     return t.label;
   }
   function evalCheck(net, A, c){
@@ -372,6 +434,7 @@
       if(c.type==="ping"||c.type==="noping"){ var from=nodeByName(net,p.from); if(!from||!isHost(from.type)) return c.type==="noping"; var toIp=validIp(p.to)?p.to:hostIp(A,nodeByName(net,p.to)); if(!toIp){ toIp=resolveName(A, from.id, p.to); } if(!toIp) return c.type==="noping"; var r=ping(A, from.id, toIp); return c.type==="ping"? !!r.ok : !r.ok; }
       if(c.type==="web"){ var b=nodeByName(net,p.from); if(!b||!isHost(b.type)||!(b.apps&&b.apps.webbrowser)) return false; var w=fetchWeb(A, b.id, p.url); return !!w.ok; }
       if(c.type==="dns"){ var s=nodeByName(net,p.server); if(!s||!(s.apps&&s.apps.dns)) return false; var recs=s.dnsRecords||[]; for(var i=0;i<recs.length;i++){ if(String(recs[i].name||"").toLowerCase()===String(p.name||"").toLowerCase() && recs[i].ip===p.ip) return true; } return false; }
+      if(c.type==="email"){ var eb=nodeByName(net,p.from); if(!eb||!(eb.apps&&eb.apps.emailclient)) return false; return !!mailCanDeliver(net, A, eb, p.to).ok; }
     }catch(e){ return false; }
     return false;
   }
@@ -386,6 +449,8 @@
     ipToInt:ipToInt, intToIp:intToIp, validIp:validIp, parseMask:parseMask, maskLen:maskLen, sameNet:sameNet, netAddr:netAddr,
     analyze:analyze, l3:l3, ping:ping, pingSim:pingSim, resolveName:resolveName, fetchWeb:fetchWeb,
     macFor:macFor, forwardingTable:forwardingTable, BROADCAST_MAC:BROADCAST_MAC,
+    fs:{ of:fsOf, read:fsRead, write:fsWrite, list:fsList, mkdir:fsMkdir, rm:fsRm, resolve:fsResolve, isDir:fsIsDir, exists:fsExists, parent:fsParent, base:fsBase, norm:fsNorm, fileType:fileTypeOf },
+    mailSend:mailSend, mailFetch:mailFetch, mailCanDeliver:function(net,cn,to){ return mailCanDeliver(net, analyze(net), cn, to); }, gnutellaSearch:gnutellaSearch, echoTest:echoTest, fwBlocks:fwBlocks,
     CHECK_TYPES:CHECK_TYPES, checkLabel:checkLabel, evalCheck:function(net,c){ return evalCheck(net, analyze(net||{}), c); }, evalChecks:evalChecks,
     isHost:isHost,
     summary:function(net){ net=net||{}; var t={notebook:0,rechner:0,switch:0,router:0}; (net.nodes||[]).forEach(function(n){ if(t[n.type]!=null) t[n.type]++; }); return t; }
@@ -720,21 +785,42 @@
         +'<label><input type="checkbox" id="fvDnsS" '+(a.dns?"checked":"")+'> 🧭 DNS-Server</label>'
         +'<label><input type="checkbox" id="fvDhcpS" '+(a.dhcp?"checked":"")+'> 📡 DHCP-Server</label>'
         +'<label><input type="checkbox" id="fvEcho" '+(a.echo?"checked":"")+'> 🔁 Echo-Server</label>'
+        +'<label><input type="checkbox" id="fvClient" '+(a.client?"checked":"")+'> 🔌 Einfacher Client</label>'
+        +'<label><input type="checkbox" id="fvMailS" '+(a.mailserver?"checked":"")+'> 📧 E-Mail-Server</label>'
+        +'<label><input type="checkbox" id="fvMailC" '+(a.emailclient?"checked":"")+'> ✉️ E-Mail-Programm</label>'
+        +'<label><input type="checkbox" id="fvGnu" '+(a.gnutella?"checked":"")+'> 🔗 Gnutella</label>'
+        +'<label><input type="checkbox" id="fvFw" '+(a.firewall?"checked":"")+'> 🧱 Firewall</label>'
         +'<label style="opacity:.7"><input type="checkbox" checked disabled> ⌨️ Befehlszeile</label>'
+        +'<label style="opacity:.7"><input type="checkbox" checked disabled> 📁 Datei-Explorer</label>'
       +'</div>'
       +'<div id="fvAppCfg"></div>'
       +'<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px"><button class="btn btn-ghost" id="fvX">Schließen</button><button class="btn btn-primary" id="fvOk">Übernehmen</button></div>';
     this._dialog(html, function(bg,close){
       var dhcp=bg.querySelector("#fvDhcp"), netBox=bg.querySelector("#fvNetBox");
       dhcp.onchange=function(){ netBox.style.opacity=dhcp.checked?".5":""; netBox.style.pointerEvents=dhcp.checked?"none":""; };
+      // Aktuell sichtbare App-Einstellungen ins Modell übernehmen (damit Umschalten nichts verwirft)
+      function harvest(){
+        var wh=bg.querySelector("#fvWebHtml"); if(wh) fsWrite(fsOf(n), "/webserver/index.html", wh.value);
+        var dr=bg.querySelector("#fvDnsRecs"); if(dr) n.dnsRecords=dr.value.split(/\r?\n/).map(function(x){ var p=x.trim().split(/\s+/); return p[0]?{name:p[0],ip:p[1]||""}:null; }).filter(Boolean);
+        var df=bg.querySelector("#fvDhFrom"); if(df) n.dhcpFrom=df.value.trim(); var dt=bg.querySelector("#fvDhTo"); if(dt) n.dhcpTo=dt.value.trim();
+        var dgw=bg.querySelector("#fvDhGw"); if(dgw) n.dhcpGw=dgw.value.trim(); var ddns=bg.querySelector("#fvDhDns"); if(ddns) n.dhcpDns=ddns.value.trim();
+        var mdom=bg.querySelector("#fvMailDom"); if(mdom) n.maildomain=mdom.value.trim();
+        var macc=bg.querySelector("#fvMailAcc"); if(macc) n.mailAccounts=macc.value.split(/\r?\n/).map(function(x){ var p=x.trim().split(/\s+/); return p[0]?{user:p[0],pass:p[1]||""}:null; }).filter(Boolean);
+        var maddr=bg.querySelector("#fvMailAddr"); if(maddr){ n.emailAccount=n.emailAccount||{}; n.emailAccount.address=maddr.value.trim(); }
+        var fwOn=bg.querySelector("#fvFwOn"); if(fwOn) n.firewall={ on:!!fwOn.checked, blockPing:!!(bg.querySelector("#fvFwPing")&&bg.querySelector("#fvFwPing").checked), denyPorts:((bg.querySelector("#fvFwPorts")&&bg.querySelector("#fvFwPorts").value)||"").split(",").map(function(x){return x.trim();}).filter(Boolean) };
+      }
       function renderAppCfg(){
+        harvest();
         var box=bg.querySelector("#fvAppCfg"); var h="";
-        if(bg.querySelector("#fvWeb").checked){ n.web=n.web||{pages:{"/":"<h1>"+esc(n.name||"Webserver")+"</h1>\n<p>Willkommen auf der Startseite.</p>"}}; h+='<div class="field" style="margin-top:8px"><label>🌐 Webserver – index.html (root/webserver)</label><textarea class="input" id="fvWebHtml" style="min-height:80px;font-family:monospace;font-size:12.5px">'+esc((n.web.pages&&n.web.pages["/"])||"")+'</textarea></div>'; }
+        if(bg.querySelector("#fvWeb").checked){ var cur=fsRead(fsOf(n),"/webserver/index.html"); if(cur==null) cur=(n.web&&n.web.pages&&n.web.pages["/"])||("<h1>"+(n.name||"Webserver")+"</h1>\n<p>Willkommen auf der Startseite.</p>"); h+='<div class="field" style="margin-top:8px"><label>🌐 Webserver – /webserver/index.html</label><textarea class="input" id="fvWebHtml" style="min-height:80px;font-family:monospace;font-size:12.5px">'+esc(cur)+'</textarea></div>'; }
         if(bg.querySelector("#fvDnsS").checked){ n.dnsRecords=n.dnsRecords||[]; h+='<div class="field" style="margin-top:8px"><label>🧭 DNS-Einträge (je Zeile: name ip)</label><textarea class="input" id="fvDnsRecs" style="min-height:64px;font-family:monospace;font-size:12.5px" placeholder="www.filius.de 192.168.0.12">'+esc((n.dnsRecords||[]).map(function(r){return (r.name||"")+" "+(r.ip||"");}).join("\n"))+'</textarea></div>'; }
         if(bg.querySelector("#fvDhcpS").checked){ h+='<div class="fv-row2" style="margin-top:8px"><div class="field"><label>📡 DHCP von</label><input class="input" id="fvDhFrom" placeholder="192.168.0.100" value="'+esc(n.dhcpFrom||"")+'"></div><div class="field"><label>bis</label><input class="input" id="fvDhTo" placeholder="192.168.0.200" value="'+esc(n.dhcpTo||"")+'"></div></div><div class="fv-row2"><div class="field"><label>zugeteiltes Gateway</label><input class="input" id="fvDhGw" placeholder="optional (z. B. Router-IP)" value="'+esc(n.dhcpGw||"")+'"></div><div class="field"><label>zugeteilter DNS-Server</label><input class="input" id="fvDhDns" placeholder="optional" value="'+esc(n.dhcpDns||"")+'"></div></div>'; }
+        if(bg.querySelector("#fvMailS").checked){ h+='<div class="field" style="margin-top:8px"><label>📧 E-Mail-Server – Maildomain</label><input class="input" id="fvMailDom" placeholder="z. B. filius.de" value="'+esc(n.maildomain||"")+'"></div><div class="field"><label>Konten (je Zeile: benutzer passwort)</label><textarea class="input" id="fvMailAcc" style="min-height:56px;font-family:monospace;font-size:12.5px" placeholder="bob geheim&#10;bert 1234">'+esc((n.mailAccounts||[]).map(function(x){return (x.user||"")+" "+(x.pass||"");}).join("\n"))+'</textarea></div>'; }
+        if(bg.querySelector("#fvMailC").checked){ var acc=n.emailAccount||{}; h+='<div class="field" style="margin-top:8px"><label>✉️ E-Mail-Programm – eigene Adresse</label><input class="input" id="fvMailAddr" placeholder="z. B. bob@filius.de" value="'+esc(acc.address||"")+'"><div class="fv-hint" style="margin-top:4px">Die Adresse muss zu einem Konto auf einem E-Mail-Server im Netz passen.</div></div>'; }
+        if(bg.querySelector("#fvFw").checked){ var fw=n.firewall||{}; h+='<div style="margin-top:8px;border:1px solid var(--line);border-radius:8px;padding:8px 10px"><label style="display:flex;gap:8px;align-items:center;font-weight:700;font-size:13px;cursor:pointer"><input type="checkbox" id="fvFwOn" '+(fw.on?"checked":"")+'> 🧱 Firewall aktiv</label><label style="display:flex;gap:8px;align-items:center;font-weight:700;font-size:13px;cursor:pointer;margin-top:6px"><input type="checkbox" id="fvFwPing" '+(fw.blockPing?"checked":"")+'> eingehende Pings (ICMP) blockieren</label><div class="field" style="margin:6px 0 0"><label>gesperrte Ports (Komma, z. B. 80,25,110)</label><input class="input" id="fvFwPorts" placeholder="z. B. 80" value="'+esc((fw.denyPorts||[]).join(","))+'"></div></div>'; }
         box.innerHTML=h;
       }
-      ["#fvWeb","#fvDnsS","#fvDhcpS"].forEach(function(s){ bg.querySelector(s).onchange=renderAppCfg; });
+      ["#fvWeb","#fvDnsS","#fvDhcpS","#fvMailS","#fvMailC","#fvFw"].forEach(function(s){ var el=bg.querySelector(s); if(el) el.onchange=renderAppCfg; });
       renderAppCfg();
       bg.querySelector("#fvX").onclick=close;
       bg.querySelector("#fvOk").onclick=function(){
@@ -742,11 +828,9 @@
         n.ipAsName=bg.querySelector("#fvIpName").checked;
         n.ip=bg.querySelector("#fvIp").value.trim(); n.mask=bg.querySelector("#fvMask").value.trim()||"255.255.255.0";
         n.gateway=bg.querySelector("#fvGw").value.trim(); n.dns=bg.querySelector("#fvDns").value.trim();
-        n.apps={ webbrowser:bg.querySelector("#fvBrowser").checked, webserver:bg.querySelector("#fvWeb").checked, dns:bg.querySelector("#fvDnsS").checked, dhcp:bg.querySelector("#fvDhcpS").checked, echo:bg.querySelector("#fvEcho").checked };
-        var wh=bg.querySelector("#fvWebHtml"); if(wh){ n.web=n.web||{pages:{}}; n.web.pages["/"]=wh.value; }
-        var dr=bg.querySelector("#fvDnsRecs"); if(dr){ n.dnsRecords=dr.value.split(/\r?\n/).map(function(x){var p=x.trim().split(/\s+/); return p[0]?{name:p[0],ip:p[1]||""}:null;}).filter(Boolean); }
-        var df=bg.querySelector("#fvDhFrom"), dt=bg.querySelector("#fvDhTo"); if(df) n.dhcpFrom=df.value.trim(); if(dt) n.dhcpTo=dt.value.trim();
-        var dgw=bg.querySelector("#fvDhGw"), ddns=bg.querySelector("#fvDhDns"); if(dgw) n.dhcpGw=dgw.value.trim(); if(ddns) n.dhcpDns=ddns.value.trim();
+        n.apps={ webbrowser:bg.querySelector("#fvBrowser").checked, webserver:bg.querySelector("#fvWeb").checked, dns:bg.querySelector("#fvDnsS").checked, dhcp:bg.querySelector("#fvDhcpS").checked, echo:bg.querySelector("#fvEcho").checked, client:bg.querySelector("#fvClient").checked, mailserver:bg.querySelector("#fvMailS").checked, emailclient:bg.querySelector("#fvMailC").checked, gnutella:bg.querySelector("#fvGnu").checked, firewall:bg.querySelector("#fvFw").checked };
+        harvest();
+        if(!n.apps.firewall) n.firewall={on:false};
         if(n.ipAsName && n.ip) n.name=n.ip;
         self._changed(); self.paint(); close();
       };
@@ -766,12 +850,16 @@
       +'<label style="display:flex;gap:8px;align-items:center;font-weight:700;margin-bottom:10px;cursor:pointer"><input type="checkbox" id="fvAuto" '+(n.autoRoute!==false?"checked":"")+'> Automatisches Routing (RIP) – Router finden den Weg selbst</label>'
       +'<div style="font-weight:800;font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin:6px 0">Schnittstellen</div>'
       +rows
+      +'<div style="font-weight:800;font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin:10px 0 4px">Statische Routen (nur ohne automatisches Routing nötig)</div>'
+      +'<div class="fv-hint" style="margin-bottom:4px">Je Zeile: <code>Zielnetz Netzmaske NächsterHop</code> – z. B. <code>192.168.2.0 255.255.255.0 10.0.0.2</code></div>'
+      +'<textarea class="input" id="fvRoutes" style="min-height:56px;font-family:monospace;font-size:12.5px" placeholder="192.168.2.0 255.255.255.0 10.0.0.2">'+esc((n.routes||[]).map(function(r){ return (r.dest||"")+" "+(r.mask||"")+" "+(r.nextHop||""); }).join("\n"))+'</textarea>'
       +'<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px"><button class="btn btn-ghost" id="fvX">Schließen</button><button class="btn btn-primary" id="fvOk">Übernehmen</button></div>';
     this._dialog(html, function(bg,close){
       bg.querySelector("#fvX").onclick=close;
       bg.querySelector("#fvOk").onclick=function(){
         n.name=bg.querySelector("#fvNm").value.trim()||n.name; n.autoRoute=bg.querySelector("#fvAuto").checked;
         n.ifs={}; bg.querySelectorAll("[data-if-ip]").forEach(function(inp){ var lk=inp.dataset.ifIp; var mk=bg.querySelector('[data-if-mask="'+lk+'"]'); var ip=inp.value.trim(); if(ip) n.ifs[lk]={ip:ip, mask:(mk?mk.value.trim():"")||"255.255.255.0"}; });
+        var rt=bg.querySelector("#fvRoutes"); if(rt){ n.routes=rt.value.split(/\r?\n/).map(function(x){ var p=x.trim().split(/\s+/); return (p[0]&&p[1]&&p[2])?{dest:p[0], mask:p[1], nextHop:p[2]}:null; }).filter(Boolean); }
         self._changed(); self.paint(); close();
       };
     });
@@ -826,8 +914,11 @@
     if(this._pingTimer){ clearInterval(this._pingTimer); this._pingTimer=null; }   // laufenden Ping-Timer beim Neu-Rendern/Schließen/Tab-Wechsel stoppen
     if(!n){ w.innerHTML=""; return; }
     var a=n.apps||{};
-    var tabs=[{k:"term",label:"⌨️ Befehlszeile"},{k:"trace",label:"📊 Datenaustausch"}];
+    var tabs=[{k:"term",label:"⌨️ Befehlszeile"},{k:"files",label:"📁 Dateien"},{k:"trace",label:"📊 Datenaustausch"}];
     if(a.webbrowser) tabs.push({k:"web",label:"🌎 Webbrowser"});
+    if(a.client) tabs.push({k:"client",label:"🔌 Client"});
+    if(a.emailclient) tabs.push({k:"mail",label:"✉️ E-Mail"});
+    if(a.gnutella) tabs.push({k:"gnu",label:"🔗 Gnutella"});
     var services=[]; if(a.webserver)services.push("🌐 Webserver"); if(a.dns)services.push("🧭 DNS-Server"); if(a.dhcp)services.push("📡 DHCP-Server"); if(a.echo)services.push("🔁 Echo-Server");
     if(services.length) tabs.push({k:"srv",label:"⚙️ Dienste"});
     if(this._conTab==null || !tabs.some(function(t){return t.k===self._conTab;})) this._conTab="term";
@@ -839,9 +930,89 @@
     w.querySelectorAll("[data-ct]").forEach(function(b){ b.onclick=function(){ self._conTab=b.dataset.ct; self._renderConsole(); }; });
     var body=w.querySelector("#fvTabBody");
     if(this._conTab==="term") this._renderTerminal(body, n);
+    else if(this._conTab==="files") this._renderFiles(body, n);
     else if(this._conTab==="trace") this._renderTrace(body, n);
     else if(this._conTab==="web") this._renderBrowser(body, n);
+    else if(this._conTab==="client") this._renderClient(body, n);
+    else if(this._conTab==="mail") this._renderMail(body, n);
+    else if(this._conTab==="gnu") this._renderGnu(body, n);
     else this._renderServices(body, n, services);
+  };
+  FiliusView.prototype._renderClient=function(body, n){
+    var self=this;
+    body.innerHTML='<p class="fv-hint">Einfacher Client: verbindet sich mit einem <b>Echo-Server</b> und schickt eine Nachricht zurück.</p>'
+      +'<div class="fv-row2"><input class="input" id="clSrv" placeholder="Server (IP oder Name)"><input class="input" id="clMsg" placeholder="Nachricht" value="Hallo Echo!"></div>'
+      +'<div style="margin-top:8px"><button class="btn btn-primary btn-sm" id="clSend">Senden</button></div>'
+      +'<div class="fv-web" id="clOut" style="margin-top:8px;min-height:70px"><span class="fv-hint">Server + Nachricht eingeben, dann „Senden".</span></div>';
+    body.querySelector("#clSend").onclick=function(){ var srv=body.querySelector("#clSrv").value.trim(), msg=body.querySelector("#clMsg").value; var out=body.querySelector("#clOut");
+      if(!srv){ out.innerHTML='<span style="color:#c0392b">Bitte Server angeben.</span>'; return; }
+      var r=FiliusEngine.echoTest(self.data, n.id, srv);
+      out.innerHTML = r.ok ? '<div>✅ Verbunden mit '+esc(r.dstIp)+'</div><div style="margin-top:4px">→ gesendet: '+esc(msg)+'</div><div style="color:var(--green-d)">← Echo: '+esc(msg)+'</div>' : '<span style="color:#c0392b">⚠ '+esc(r.error||"nicht erreichbar")+'</span>';
+    };
+  };
+  FiliusView.prototype._renderMail=function(body, n){
+    var self=this; var acc=n.emailAccount||{};
+    if(!acc.address){ body.innerHTML='<p class="fv-hint">Noch kein E-Mail-Konto eingerichtet. Wechsle in den 🔨 Entwurfsmodus, öffne diesen Rechner und trage unter „✉️ E-Mail-Programm" deine Adresse ein (z. B. <code>bob@filius.de</code>).</p>'; return; }
+    body.innerHTML='<div class="fv-hint" style="margin-bottom:6px">Konto: <b>'+esc(acc.address)+'</b></div>'
+      +'<div class="fv-row2"><input class="input" id="mlTo" placeholder="An (z. B. bert@filius.de)"><input class="input" id="mlSub" placeholder="Betreff"></div>'
+      +'<textarea class="input" id="mlBody" style="min-height:70px;margin-top:8px" placeholder="Nachricht…"></textarea>'
+      +'<div style="margin-top:8px;display:flex;gap:8px"><button class="btn btn-primary btn-sm" id="mlSend">📤 Senden</button><button class="btn btn-ghost btn-sm" id="mlFetch">📥 Abrufen</button><span id="mlMsg" class="fv-hint"></span></div>'
+      +'<div id="mlInbox" style="margin-top:10px"></div>';
+    body.querySelector("#mlSend").onclick=function(){ var to=body.querySelector("#mlTo").value.trim(), sub=body.querySelector("#mlSub").value, bd=body.querySelector("#mlBody").value; var msg=body.querySelector("#mlMsg");
+      var r=FiliusEngine.mailSend(self.data, n, to, sub, bd); msg.textContent = r.ok ? "✓ gesendet" : ("⚠ "+(r.error||"Fehler")); msg.style.color = r.ok?"var(--green-d)":"#c0392b"; if(r.ok){ if(self.onChange) try{ self.onChange(self.data); }catch(e){} fetchInbox(); } };
+    function fetchInbox(){ var r=FiliusEngine.mailFetch(self.data, n); var box=body.querySelector("#mlInbox");
+      if(!r.ok){ box.innerHTML='<span style="color:#c0392b">⚠ '+esc(r.error)+'</span>'; return; }
+      box.innerHTML='<b style="font-size:13px">📥 Posteingang ('+r.msgs.length+')</b>'+(r.msgs.length?'<div class="list" style="margin-top:6px">'+r.msgs.map(function(m){ return '<div class="row" style="padding:7px 10px;display:block"><div style="font-weight:800;font-size:13px">'+esc(m.subject)+'</div><div class="fv-hint">von '+esc(m.from)+'</div><div style="white-space:pre-wrap;margin-top:3px;font-size:13px">'+esc(m.body)+'</div></div>'; }).join("")+'</div>':'<div class="fv-hint" style="margin-top:4px">(leer)</div>'); }
+    body.querySelector("#mlFetch").onclick=fetchInbox; fetchInbox();
+  };
+  FiliusView.prototype._renderGnu=function(body, n){
+    var self=this, F=FiliusEngine.fs, fs=F.of(n);
+    var mine=F.list(fs,"/peer2peer");
+    body.innerHTML='<p class="fv-hint">Gnutella (Peer-to-Peer): Dateien im Ordner <code>/peer2peer</code> werden geteilt. Suche im Netz und lade herunter.</p>'
+      +'<div style="display:flex;gap:8px"><input class="input" id="gnQ" placeholder="Dateiname suchen (leer = alle)"><button class="btn btn-primary btn-sm" id="gnGo">🔍 Suchen</button></div>'
+      +'<div id="gnRes" style="margin-top:8px"></div>'
+      +'<div class="fv-hint" style="margin-top:10px">Geteilt auf diesem Rechner (/peer2peer): '+(mine.length?mine.map(function(x){return esc(x.name);}).join(", "):"– (nichts) –")+'</div>';
+    body.querySelector("#gnGo").onclick=function(){ var q=body.querySelector("#gnQ").value.trim(); var res=FiliusEngine.gnutellaSearch(self.data, n.id, q); var box=body.querySelector("#gnRes");
+      box.innerHTML = res.length ? '<div class="list">'+res.map(function(r,i){ return '<div class="row" style="padding:7px 10px"><span class="grow"><span class="t">'+esc(r.name)+'</span><span class="s">bei '+esc(r.peer)+' ('+esc(r.ip)+')</span></span><button class="btn btn-ghost btn-sm" data-dlg="'+i+'">⬇️ Laden</button></div>'; }).join("")+'</div>' : '<div class="fv-hint">Nichts gefunden (Peers müssen erreichbar sein und Gnutella installiert haben).</div>';
+      box.querySelectorAll("[data-dlg]").forEach(function(b){ b.onclick=function(){ var r=res[+b.dataset.dlg]; var src=self._node(r.id); var content= src ? F.read(F.of(src), r.path) : null; F.mkdir(fs,"/peer2peer"); if(F.exists(fs,"/peer2peer/"+r.name) && !confirm("„"+r.name+"“ ist lokal schon vorhanden. Überschreiben?")) return; F.write(fs, "/peer2peer/"+r.name, content==null?"":content); if(self.onChange) try{ self.onChange(self.data); }catch(e){} self._renderGnu(body,n); }; });
+    };
+  };
+  FiliusView.prototype._renderFiles=function(body, n){
+    var self=this, F=FiliusEngine.fs, fs=F.of(n);
+    if(!self._filesCwd) self._filesCwd={}; var dir=self._filesCwd[n.id]||"/"; if(!F.isDir(fs,dir)){ dir="/"; self._filesCwd[n.id]="/"; }
+    function setDir(d){ self._filesCwd[n.id]=d; self._renderFiles(body,n); }
+    var items=F.list(fs,dir);
+    var up = dir!=="/" ? '<button class="btn btn-ghost btn-sm" id="fUp">⬆️ zurück</button>' : '';
+    body.innerHTML='<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:8px">'+up
+      +'<span class="fv-hint" style="font-family:monospace">📂 '+esc(dir)+'</span><div style="flex:1"></div>'
+      +'<button class="btn btn-ghost btn-sm" id="fMkdir">📁 Ordner</button><button class="btn btn-ghost btn-sm" id="fNew">📄 Datei</button>'
+      +'<input type="file" id="fImpFile" style="display:none"><button class="btn btn-ghost btn-sm" id="fImp">📥 Import</button></div>'
+      +'<div class="list" id="fList"></div><div id="fEdit" style="margin-top:10px"></div>';
+    var list=body.querySelector("#fList");
+    list.innerHTML = items.length? items.map(function(it){ return '<div class="row" style="padding:7px 10px"><span class="grow"><span class="t clickable" data-open="'+esc(it.path)+'" data-dir="'+(it.dir?1:0)+'" style="cursor:pointer">'+(it.dir?"📁 ":"📄 ")+esc(it.name)+'</span>'+(it.dir?'':'<span class="s">'+it.size+' B · '+esc(F.fileType(it.name))+'</span>')+'</span>'+(it.dir?'':'<button class="abtn" data-dl="'+esc(it.path)+'" title="herunterladen">⬇️</button>')+'<button class="abtn" data-rmf="'+esc(it.path)+'" title="löschen">🗑️</button></div>'; }).join("")
+      : '<div class="muted" style="font-size:13px;padding:6px">(leerer Ordner)</div>';
+    if(up) body.querySelector("#fUp").onclick=function(){ setDir(F.parent(dir)); };
+    body.querySelector("#fMkdir").onclick=function(){ var nm=prompt("Ordnername:"); if(!nm)return; F.mkdir(fs, F.resolve(dir,nm)); setDir(dir); };
+    body.querySelector("#fNew").onclick=function(){ var nm=prompt("Dateiname (z. B. seite.html):"); if(!nm)return; var p=F.resolve(dir,nm); if(!F.exists(fs,p)) F.write(fs,p,""); setDir(dir); };
+    { var fi=body.querySelector("#fImpFile"); body.querySelector("#fImp").onclick=function(){ fi.click(); }; fi.onchange=function(e){ var f=e.target.files[0]; if(!f)return; if(f.size>200000){ alert("Datei zu groß (max. 200 KB)."); return; } var rd=new FileReader(); var isImg=/^image\//.test(f.type)||F.fileType(f.name)==="image"; rd.onload=function(){ F.write(fs, F.resolve(dir,f.name), String(rd.result||"")); setDir(dir); }; if(isImg) rd.readAsDataURL(f); else rd.readAsText(f); }; }
+    list.querySelectorAll("[data-open]").forEach(function(b){ b.onclick=function(){ if(b.dataset.dir==="1") setDir(b.dataset.open); else self._openFile(body,n,b.dataset.open); }; });
+    list.querySelectorAll("[data-rmf]").forEach(function(b){ b.onclick=function(){ if(confirm("„"+F.base(b.dataset.rmf)+"“ löschen?")){ F.rm(fs,b.dataset.rmf); setDir(dir); } }; });
+    list.querySelectorAll("[data-dl]").forEach(function(b){ b.onclick=function(){ var c=F.read(fs,b.dataset.dl)||""; var blob=new Blob([c],{type:"text/plain;charset=utf-8"}); var a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=F.base(b.dataset.dl); a.click(); setTimeout(function(){URL.revokeObjectURL(a.href);},1500); }; });
+  };
+  FiliusView.prototype._openFile=function(body, n, p){
+    var self=this, F=FiliusEngine.fs, fs=F.of(n); var box=body.querySelector("#fEdit"); if(!box)return;
+    var c=F.read(fs,p); if(c==null)return;
+    // Bildbetrachter für Bilddateien (nur echte data:image-URLs, kein data:text/html → kein XSS)
+    if(F.fileType(p)==="image"){
+      var okImg=/^data:image\//i.test(c);
+      box.innerHTML='<div style="border:1px solid var(--line);border-radius:10px;overflow:hidden"><div style="background:var(--line2);padding:6px 10px;font-weight:800;font-size:12.5px">🖼️ Bildbetrachter · '+esc(p)+'</div><div style="padding:12px;text-align:center;background:var(--card)">'+(okImg?'<img alt="" style="max-width:100%;max-height:300px;border-radius:6px">':'<span class="fv-hint">Kein anzeigbares Bild (importiere eine Bilddatei über 📥 Import).</span>')+'</div></div>';
+      if(okImg){ var im=box.querySelector("img"); if(im) im.src=c; }   // src per Property setzen, nicht via innerHTML
+      return;
+    }
+    box.innerHTML='<div style="border:1px solid var(--line);border-radius:10px;overflow:hidden"><div style="background:var(--line2);padding:6px 10px;font-weight:800;font-size:12.5px">📝 Text-Editor · '+esc(p)+'</div><textarea id="fEditTa" spellcheck="false" style="width:100%;min-height:150px;border:none;padding:10px;font-family:monospace;font-size:12.5px;resize:vertical;background:var(--card);color:var(--ink);display:block"></textarea><div style="padding:8px;display:flex;gap:8px;align-items:center;justify-content:flex-end"><span class="fv-hint" id="fSaveMsg"></span><button class="btn btn-primary btn-sm" id="fSave">💾 Speichern</button></div></div>';
+    box.querySelector("#fEditTa").value=c;
+    box.querySelector("#fSave").onclick=function(){ F.write(fs,p, box.querySelector("#fEditTa").value); var m=box.querySelector("#fSaveMsg"); if(m) m.textContent="gespeichert ✓"; if(self.onChange) try{ self.onChange(self.data); }catch(e){} };
+    box.querySelector("#fEditTa").focus();
   };
   FiliusView.prototype._renderTrace=function(body, n){
     var self=this; if(!this.sim) this._resetSim();
@@ -877,7 +1048,8 @@
   };
   FiliusView.prototype._renderTerminal=function(body, n){
     var self=this;
-    body.innerHTML='<div class="fv-term" id="fvTerm"></div><div class="fv-termline"><span style="color:#7fd66a;font-weight:800">&gt;</span><input id="fvCmd" placeholder="ping … · ipconfig · host … · traceroute … · help" autocomplete="off" spellcheck="false"></div>';
+    if(!self._cwd) self._cwd={}; var cwd=function(){ return self._cwd[n.id]||"/"; }, setCwd=function(p){ self._cwd[n.id]=p; };
+    body.innerHTML='<div class="fv-term" id="fvTerm"></div><div class="fv-termline"><span style="color:#7fd66a;font-weight:800">&gt;</span><input id="fvCmd" placeholder="ping · ipconfig · host · traceroute · arp · route · ls · cd · cat · mkdir · help" autocomplete="off" spellcheck="false"></div>';
     var term=body.querySelector("#fvTerm"), cmd=body.querySelector("#fvCmd");
     if(!this._termLines) this._termLines={};
     var buf=this._termLines[n.id]||["Befehlszeile – „help“ für eine Übersicht der Befehle.",""];
@@ -885,17 +1057,32 @@
     paintTerm();
     function out(line){ buf.push(line); if(buf.length>400) buf=buf.slice(-400); paintTerm(); }
     function run(input){
-      out("> "+input);
-      var parts=input.trim().split(/\s+/), c=(parts[0]||"").toLowerCase(), arg=parts[1];
-      var A=FiliusEngine.analyze(self.data), me=A.host[n.id]||{};
-      if(c==="help"){ out("Befehle: ping <ziel>, ipconfig, host <name>, traceroute <ziel>, clear, help"); }
-      else if(c==="clear"){ buf=[]; paintTerm(); }
-      else if(c==="ipconfig"||c==="ifconfig"){ out("  Physische Adresse (MAC) : "+(A.mac[n.id]||"—")); out("  IP-Adresse . . . . . . . : "+(me.ip||"(keine)")); out("  Subnetzmaske . . . . . . : "+(me.mask||"-")); out("  Standardgateway  . . . . : "+(me.gateway||"(keins)")); out("  DNS-Server . . . . . . . : "+(me.dns||"(keiner)")+(n.useDhcp?"  [per DHCP]":"")); }
-      else if(c==="host"||c==="nslookup"){ if(!arg){ out("Aufruf: host <name>"); } else { var ip=FiliusEngine.resolveName(A, n.id, arg); out(ip? (arg+" hat die Adresse "+ip) : (arg+": konnte nicht aufgelöst werden")); } }
-      else if(c==="ping"){ if(!arg){ out("Aufruf: ping <ziel>"); } else { self._doPing(A, n.id, arg, out); return; } }
-      else if(c==="traceroute"||c==="tracert"){ if(!arg){ out("Aufruf: traceroute <ziel>"); } else { var r=FiliusEngine.ping(A, n.id, arg); if(!r.ok){ out("Ziel nicht erreichbar: "+(r.error||"")); } else { out("Route zu "+r.target+":"); (r.hops||[]).forEach(function(h,i){ out("  "+(i+1)+"  "+h); }); } } }
-      else if(c===""){ }
-      else { out("Unbekannter Befehl: "+c+"  (help)"); }
+      var cur=cwd(); out(cur+" > "+input);
+      var raw=input.trim(); if(!raw) return;
+      var parts=raw.split(/\s+/), c=parts[0].toLowerCase(), arg=parts[1], arg2=parts[2];
+      var A=FiliusEngine.analyze(self.data), me=A.host[n.id]||{}, F=FiliusEngine.fs, fs=F.of(n);
+      switch(c){
+        case "help": out("Verfügbare Befehle:"); out("  Netz:   ping <ziel> · ipconfig · host <name> · traceroute <ziel> · arp · route"); out("  Dateien: ls · cd <ordner> · pwd · mkdir <ordner> · touch <datei> · cat <datei> · echo <text> > <datei> · cp <a> <b> · mv <a> <b> · rm <pfad>"); out("  Sonstiges: clear · help"); break;
+        case "clear": buf.length=0; paintTerm(); break;
+        case "ipconfig": case "ifconfig": out("  Physische Adresse (MAC) : "+(A.mac[n.id]||"—")); out("  IP-Adresse . . . . . . . : "+(me.ip||"(keine)")); out("  Subnetzmaske . . . . . . : "+(me.mask||"-")); out("  Standardgateway  . . . . : "+(me.gateway||"(keins)")); out("  DNS-Server . . . . . . . : "+(me.dns||"(keiner)")+(n.useDhcp?"  [per DHCP]":"")); break;
+        case "host": case "nslookup": if(!arg){ out("Aufruf: host <name>"); break; } { var ip=FiliusEngine.resolveName(A, n.id, arg); out(ip? (arg+" hat die Adresse "+ip) : (arg+": konnte nicht aufgelöst werden")); } break;
+        case "ping": if(!arg){ out("Aufruf: ping <ziel>"); break; } self._doPing(A, n.id, arg, out); return;
+        case "traceroute": case "tracert": if(!arg){ out("Aufruf: traceroute <ziel>"); break; } { var r=FiliusEngine.ping(A, n.id, arg); if(!r.ok){ out("Ziel nicht erreichbar: "+(r.error||"")); } else { out("Route zu "+r.target+" (max. 30 Stationen):"); (r.hops||[]).forEach(function(h,i){ out("  "+(i+1)+"   "+h); }); out("Ziel nach "+(r.hops||[]).length+" Sprung/Sprüngen erreicht."); } } break;
+        case "arp": { var tbl=(self.sim&&self.sim.log[n.id])||[]; var arp={}; tbl.forEach(function(x){ if(x.proto==="ARP"&&/liegt bei/.test(x.bemerkung||"")){ var m=x.bemerkung.match(/^(\S+) liegt bei (\S+)/); if(m) arp[m[1]]=m[2]; } }); var ks=Object.keys(arp); if(!ks.length){ out("ARP-Tabelle ist leer. (Zuerst einen ping ausführen.)"); } else { out("  Internetadresse       Physische Adresse"); ks.forEach(function(k){ out("  "+(k+"                    ").slice(0,20)+"  "+arp[k]); }); } } break;
+        case "route": { if(!me.ip){ out("Keine IP-Adresse konfiguriert."); break; } out("Weiterleitungstabelle:"); out("  Ziel             Netzmaske         Gateway           Schnittstelle"); out("  "+(FiliusEngine.intToIp(FiliusEngine.netAddr(me.ip,me.mask))+"                 ").slice(0,17)+(me.mask+"                  ").slice(0,18)+"auf Verbindung    "+me.ip); if(me.gateway) out("  0.0.0.0           0.0.0.0           "+(me.gateway+"                  ").slice(0,18)+me.ip); out("  127.0.0.0         255.0.0.0         127.0.0.1         127.0.0.1"); } break;
+        case "pwd": out(cwd()); break;
+        case "ls": case "dir": { var d=arg?F.resolve(cwd(),arg):cwd(); if(!F.isDir(fs,d)){ out("Kein Verzeichnis: "+arg); break; } var items=F.list(fs, d); if(!items.length){ out("  (leer)"); } items.forEach(function(it){ out("  "+(it.dir?"<ORDNER>  ":"          ")+it.name+(it.dir?"":"   "+it.size+" B")); }); } break;
+        case "cd": { if(!arg){ out(cwd()); break; } var t=(arg==="/")?"/":F.resolve(cwd(),arg); if(F.isDir(fs,t)){ setCwd(t); } else out("Verzeichnis nicht gefunden: "+arg); } break;
+        case "mkdir": if(!arg){ out("Aufruf: mkdir <ordner>"); break; } out(F.mkdir(fs, F.resolve(cwd(),arg))?"Ordner erstellt.":"Konnte Ordner nicht erstellen (existiert bereits?)."); break;
+        case "touch": if(!arg){ out("Aufruf: touch <datei>"); break; } { var p=F.resolve(cwd(),arg); if(F.exists(fs,p)) out("Existiert bereits."); else { F.write(fs,p,""); out("Datei erstellt."); } } break;
+        case "cat": case "type": if(!arg){ out("Aufruf: cat <datei>"); break; } { var cc=F.read(fs, F.resolve(cwd(),arg)); out(cc==null?("Datei nicht gefunden: "+arg):(cc||"(leer)")); } break;
+        case "echo": { var m=raw.match(/^echo\s+(.*?)\s*>\s*(\S+)\s*$/i); if(m){ F.write(fs, F.resolve(cwd(),m[2]), m[1]); out("Geschrieben nach "+m[2]); } else out(raw.replace(/^echo\s?/i,"")); } break;
+        case "rm": case "del": if(!arg){ out("Aufruf: rm <pfad>"); break; } out(F.rm(fs, F.resolve(cwd(),arg))?"Gelöscht.":"Nicht gefunden."); break;
+        case "cp": case "copy": if(!arg||!arg2){ out("Aufruf: cp <quelle> <ziel>"); break; } { var sp=F.resolve(cwd(),arg), s=F.read(fs,sp); if(s==null){ out("Quelle nicht gefunden (oder ist ein Ordner)."); break; } var dp=F.resolve(cwd(),arg2); if(F.isDir(fs,dp)) dp=dp+"/"+F.base(sp); if(dp===sp){ out("Quelle und Ziel sind identisch."); break; } F.write(fs, dp, s); out("Kopiert."); } break;
+        case "mv": case "move": if(!arg||!arg2){ out("Aufruf: mv <quelle> <ziel>"); break; } { var sp=F.resolve(cwd(),arg), s2=F.read(fs,sp); if(s2==null){ out("Quelle nicht gefunden (oder ist ein Ordner)."); break; } var dp=F.resolve(cwd(),arg2); if(F.isDir(fs,dp)) dp=dp+"/"+F.base(sp); if(dp===sp){ out("Quelle und Ziel sind identisch."); break; } F.write(fs, dp, s2); F.rm(fs,sp); out("Verschoben."); } break;
+        case "": break;
+        default: out("Unbekannter Befehl: "+c+"  („help“ für alle Befehle)");
+      }
     }
     cmd.addEventListener("keydown", function(e){ if(e.key==="Enter"){ var v=cmd.value; cmd.value=""; if(v.trim()!=="") run(v); } });
     cmd.focus();
