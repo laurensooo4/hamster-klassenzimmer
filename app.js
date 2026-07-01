@@ -353,6 +353,14 @@ api.adminSetDisplayName = async (userId, name)=>{ const {error}=await sb.rpc("ad
 /* ===== SQL-Playground: Datenbank-Bibliothek ===== */
 api.sqlListDatabases = async ()=>{ const {data,error}=await sb.rpc("shared_sql_databases"); if(error) throw error; return data||[]; };
 api.sandboxSqlDatabases = async ()=>{ const {data,error}=await sb.rpc("sandbox_sql_databases"); if(error) throw error; return data||[]; };   // Sandbox: geteilte + eigene (Lehrer) + Aufgaben-DBs (Schüler)
+/* SQL-Sandbox: private Projekte (phaseU) */
+api.listSqlSandboxProjects = async ()=>{ const {data,error}=await sb.from("sql_sandbox_projects").select("id,title,updated_at").eq("owner_id",ME.id).order("updated_at",{ascending:false}); if(error) throw error; return data||[]; };
+api.getSqlSandboxProject = async (id)=>{ const {data,error}=await sb.from("sql_sandbox_projects").select("*").eq("id",id).single(); if(error) throw error; return data; };
+api.createSqlSandboxProject = async (p)=>{ const {data,error}=await sb.from("sql_sandbox_projects").insert(Object.assign({owner_id:ME.id},p)).select().single(); if(error) throw error; return data; };
+api.updateSqlSandboxProject = async (id,patch)=>{ const {data,error}=await sb.from("sql_sandbox_projects").update(Object.assign({updated_at:new Date().toISOString()},patch)).eq("id",id).select().single(); if(error) throw error; return data; };
+api.deleteSqlSandboxProject = async (id)=>{ const {error}=await sb.from("sql_sandbox_projects").delete().eq("id",id); if(error) throw error; };
+/* Vorhandene:n Schüler:in per Benutzername zur Klasse hinzufügen (phaseU) */
+api.enrollExistingStudent = async (classId, username)=>{ const {data,error}=await sb.rpc("teacher_enroll_student_by_username",{p_class:classId, p_username:username}); if(error) throw error; return data; };
 api.sqlGetDatabase = async (id)=>{ const {data,error}=await sb.from("sql_databases").select("*").eq("id",id).single(); if(error) throw error; return data; };
 api.sqlCreateDatabase = async (d)=>{ const {data,error}=await sb.from("sql_databases").insert(Object.assign({owner_id:ME.id},d)).select().single(); if(error) throw error; return data; };
 api.sqlUpdateDatabase = async (id,patch)=>{ const {data,error}=await sb.from("sql_databases").update(Object.assign({updated_at:new Date().toISOString()},patch)).eq("id",id).select().single(); if(error) throw error; return data; };
@@ -1447,12 +1455,19 @@ function genPass(){ const a="abcdefghijkmnpqrstuvwxyz23456789"; let s=""; const 
 function importStudentsDialog(classId, classCode, onDone){
   openModal(`<button class="x" onclick="closeModal()">✕</button>
     <h3>📥 Schüler:innen importieren</h3>
-    <p class="muted" style="margin:2px 0 12px">Eine Person pro Zeile (Komma oder Tab, z. B. aus Excel):<br><b>Vorname, Nachname</b> – optional zusätzlich <b>Benutzername</b> und <b>Passwort</b>. Leer gelassene Felder werden automatisch erzeugt. Kein E-Mail-Versand.</p>
+    <div class="field" style="border-bottom:1px solid var(--line2);padding-bottom:14px;margin-bottom:14px">
+      <label>Vorhandene:n Schüler:in hinzufügen</label>
+      <div style="display:flex;gap:8px"><input class="input" id="impExisting" placeholder="Benutzername" autocapitalize="none" spellcheck="false" style="flex:1;font-family:monospace"><button class="btn btn-primary" id="impAddExisting" style="flex:none">Hinzufügen</button></div>
+      <div class="muted" style="font-size:12px;margin-top:6px">Fügt eine:n bereits registrierte:n Schüler:in per Benutzername zu dieser Klasse hinzu.</div>
+    </div>
+    <p class="muted" style="margin:2px 0 12px"><b>Oder neu anlegen:</b> Eine Person pro Zeile (Komma oder Tab, z. B. aus Excel):<br><b>Vorname, Nachname</b> – optional zusätzlich <b>Benutzername</b> und <b>Passwort</b>. Leer gelassene Felder werden automatisch erzeugt. Kein E-Mail-Versand.</p>
     <div class="field"><textarea class="input" id="impText" style="min-height:150px;font-family:monospace;font-size:13px" placeholder="Max, Mustermann&#10;Erika, Musterfrau, erika.m&#10;Tom, Klein, tom.k, geheim123"></textarea></div>
     <div id="impMsg" class="auth-msg" style="display:none"></div>
     <div style="display:flex;gap:10px"><button class="btn btn-ghost" id="impCancel" style="flex:none">Abbrechen</button><button class="btn btn-primary" id="impParse" style="flex:1">Weiter</button></div>
     <div id="impStage" style="margin-top:14px"></div>`, true);
   document.getElementById("impCancel").onclick = closeModal;
+  { const be=document.getElementById("impAddExisting"); if(be) be.onclick=async()=>{ const inp=document.getElementById("impExisting"); const u=(inp.value||"").trim(); if(!u){ inp.focus(); return; } be.disabled=true; be.textContent="…"; try{ const nm=await api.enrollExistingStudent(classId, u); toast((nm||u)+" hinzugefügt ✓","ok"); inp.value=""; if(onDone) onDone(); }catch(e){ toast(e.message||"Fehler","err"); } finally{ be.disabled=false; be.textContent="Hinzufügen"; } }; }
+  { const ie=document.getElementById("impExisting"); if(ie) ie.addEventListener("keydown",e=>{ if(e.key==="Enter"){ e.preventDefault(); document.getElementById("impAddExisting").click(); } }); }
   document.getElementById("impText").focus();
   document.getElementById("impParse").onclick = ()=>{
     const list = parseStudents(document.getElementById("impText").value);
@@ -2131,27 +2146,81 @@ async function saveSqlAnswer(){
   toast(status==="correct"?"Richtig! ✓":status==="empty"?"Leer gespeichert":"Gespeichert – noch nicht richtig","ok");
 }
 
-/* ---------- SQL-Sandbox (freies Ausprobieren, nichts wird gespeichert) ---------- */
+/* ---------- SQL-Sandbox: private Projekte (frei ausprobieren + speichern) ---------- */
 async function sqlSandbox(){
-  shell(`<div class="page-head"><button class="crumb" id="back">← Zurück</button></div>
-    <div class="page-head" style="margin-top:0"><h2>🧪 SQL-Sandbox</h2><div class="spacer"></div>
-      <label class="muted" style="font-size:13px;font-weight:800;align-self:center">Datenbank:</label>
-      <select class="input" id="sqlSbxDb" style="max-width:260px;margin-left:8px;width:auto"></select>
-      <button class="btn btn-ghost btn-sm" id="sqlSbxReset" style="margin-left:8px" title="Datenbank in den Ausgangszustand zurücksetzen">↺ Zurücksetzen</button></div>
-    <div class="card" style="margin-bottom:12px;padding:12px 16px"><span class="muted" style="font-size:13px">Probiere SQL frei aus: Datenbank wählen, Abfrage schreiben und mit ▶ (oder Strg+Enter) ausführen. Hier wird nichts gespeichert.</span></div>
-    <div id="sqlSbxHost"><div class="center-load"><span class="spin"></span>SQL-Engine wird geladen…</div></div>`);
+  shell(`<div class="center-load"><span class="spin"></span>Sandbox…</div>`);
+  let projects=[]; try{ projects=await api.listSqlSandboxProjects(); }catch(e){}
+  const list = projects.length ? `<div class="list">${projects.map(p=>`
+      <div class="row clickrow" data-id="${p.id}" style="cursor:pointer"><span class="grow"><span class="t">${esc(p.title)}</span><span class="s">${esc(fmtDateTime(p.updated_at))}</span></span>
+        <button class="btn btn-sm btn-ghost" data-del="${p.id}" title="löschen">🗑️</button><span style="margin-left:8px;color:#7a8aa0">→</span></div>`).join("")}</div>`
+    : `<div class="empty"><span class="ic">🧪</span>Noch keine Projekte. Leg dein erstes an!</div>`;
+  document.getElementById("view").innerHTML = `
+    <div class="page-head"><button class="crumb" id="back">← Zurück</button></div>
+    <div class="page-head" style="margin-top:0"><h2>🧪 SQL-Sandbox</h2><div class="spacer"></div><button class="btn btn-primary" id="btnNewSbx">+ Neues Projekt</button></div>
+    <div class="card" style="margin-bottom:12px;padding:12px 16px"><span class="muted" style="font-size:13px">Probiere SQL frei aus – Datenbank wählen, Abfragen schreiben, ausführen – und speichere deine eigenen Projekte.</span></div>
+    ${list}`;
   document.getElementById("back").onclick = ()=> (ME.role==="teacher"?sqlTeacherHome():sqlStudentHome());
+  document.getElementById("btnNewSbx").onclick = ()=> sqlSandboxProject(null);
+  document.querySelectorAll(".clickrow[data-id]").forEach(r=> r.onclick=(e)=>{ if(e.target.closest("[data-del]")) return; sqlSandboxProject(r.dataset.id); });
+  document.querySelectorAll("[data-del]").forEach(b=> b.onclick=async(e)=>{ e.stopPropagation(); if(!confirm("Projekt löschen?")) return; try{ await api.deleteSqlSandboxProject(b.dataset.del); sqlSandbox(); }catch(err){ toast(err.message||"Fehler","err"); } });
+}
+let sqlSandboxState=null;
+async function sqlSandboxProject(projectId){
+  shell(`<div class="center-load"><span class="spin"></span>Lädt…</div>`);
+  let proj=null; if(projectId){ try{ proj=await api.getSqlSandboxProject(projectId); }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; } }
   let dbs=[]; try{ dbs=await api.sandboxSqlDatabases(); }catch(e){}
-  try{ await SqlEngine.ensure(); }
-  catch(e){ const h=document.getElementById("sqlSbxHost"); if(h) h.innerHTML=errBox({message:"SQL-Engine konnte nicht geladen werden: "+(e.message||e)}); return; }
-  const sel=document.getElementById("sqlSbxDb"); if(!sel) return;   // Nutzer hat während des Ladens weggeklickt
-  sel.innerHTML = dbs.map(d=>`<option value="${esc(d.id)}">${esc(d.name)}${d.mine?"":" (von "+esc(d.owner_name)+")"}</option>`).join("") + `<option value="__empty">(leere Datenbank)</option>`;
-  const dbTextFor = id=>{ if(id==="__empty") return ""; const d=dbs.find(x=>x.id===id); return d?(d.sql_text||""):""; };
-  let view=null;
-  const build = (id)=>{ if(view){ try{ view.destroy(); }catch(e){} } view=new SqlView("#sqlSbxHost",{ dbText:dbTextFor(id) }); pageView=view; };
-  build(sel.value);
-  sel.onchange = ()=> build(sel.value);
-  document.getElementById("sqlSbxReset").onclick = ()=> build(sel.value);
+  sqlSandboxState = {
+    projectId: proj?proj.id:null,
+    title: proj?(proj.title||"Mein SQL-Projekt"):"Mein SQL-Projekt",
+    dbText: proj?(proj.db_text||""):(dbs[0]?(dbs[0].sql_text||""):""),
+    query: proj?(proj.query||""):"",
+    databaseId: proj?null:(dbs[0]?dbs[0].id:"__empty"),
+    dbs, view:null
+  };
+  try{ SqlEngine.ensureStyles(); }catch(e){}
+  renderSqlSandboxProject();
+}
+function renderSqlSandboxProject(){
+  const s=sqlSandboxState;
+  const inList = s.databaseId && s.databaseId!=="__empty" && s.dbs.some(d=>d.id===s.databaseId);
+  const dbOpts = `${(!inList && s.databaseId!=="__empty")?`<option value="" selected>${s.dbText?"— gespeicherte Datenbank —":"— bitte wählen —"}</option>`:""}`
+    + s.dbs.map(d=>`<option value="${esc(d.id)}" ${d.id===s.databaseId?"selected":""}>${esc(d.name)}${d.mine?"":" (von "+esc(d.owner_name)+")"}</option>`).join("")
+    + `<option value="__empty" ${s.databaseId==="__empty"?"selected":""}>(leere Datenbank)</option>`;
+  document.getElementById("view").innerHTML = `
+    <div class="page-head"><button class="crumb" id="back">← Zur Sandbox</button></div>
+    <div class="page-head" style="margin-top:0">
+      <input class="input" id="sbxTitle" style="max-width:260px;font-weight:800" maxlength="80">
+      <label class="muted" style="font-size:13px;font-weight:800;align-self:center;margin-left:8px">Datenbank:</label>
+      <select class="input" id="sbxDb" style="max-width:210px;margin-left:8px;width:auto">${dbOpts}</select>
+      <div class="spacer"></div>
+      <input type="file" id="sbxFile" accept=".sql,.txt" style="display:none">
+      <button class="btn btn-ghost btn-sm" id="sbxOpen" title="SQL aus .sql-Datei laden">📂</button>
+      <button class="btn btn-ghost btn-sm" id="sbxDl" style="margin-left:6px" title="SQL als .sql herunterladen">⬇️</button>
+      <button class="btn btn-primary btn-sm" id="sbxSave" style="margin-left:8px">💾 Speichern</button></div>
+    <div id="sbxHost"><div class="center-load"><span class="spin"></span>SQL-Engine wird geladen…</div></div>`;
+  document.getElementById("sbxTitle").value = s.title;
+  document.getElementById("back").onclick = ()=>{ syncSqlSandbox(); sqlSandbox(); };
+  document.getElementById("sbxTitle").oninput = (e)=>{ s.title=e.target.value; };
+  document.getElementById("sbxDb").onchange = (e)=>{ syncSqlSandbox(); const v=e.target.value; if(v==="__empty"||!v){ s.databaseId=(v==="__empty"?"__empty":null); s.dbText=""; } else { s.databaseId=v; const d=s.dbs.find(x=>x.id===v); s.dbText=d?(d.sql_text||""):""; } buildSqlSandboxView(); };
+  document.getElementById("sbxDl").onclick = ()=>{ const txt=(s.view?s.view.getQuery():s.query)||""; const nm=((s.title||"sandbox").trim().replace(/[^\w.\- ]+/g,"_")||"sandbox")+".sql"; const blob=new Blob([txt],{type:"text/plain;charset=utf-8"}); const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=nm; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),1500); };
+  { const fo=document.getElementById("sbxOpen"), fi=document.getElementById("sbxFile"); fo.onclick=()=>fi.click(); fi.onchange=(e)=>{ const f=e.target.files[0]; if(!f) return; const rd=new FileReader(); rd.onload=()=>{ const t=String(rd.result||""); s.query=t; if(s.view) s.view.setQuery(t); toast("Datei geladen ✓","ok"); }; rd.readAsText(f); }; }
+  document.getElementById("sbxSave").onclick = saveSqlSandboxProject;
+  buildSqlSandboxView();
+}
+function buildSqlSandboxView(){
+  const s=sqlSandboxState; if(!s) return;
+  if(s.view){ try{ s.view.destroy(); }catch(e){} }
+  s.view = new SqlView("#sbxHost", { dbText:s.dbText, query:s.query, schemaOpen:true });
+  pageView = s.view;
+}
+function syncSqlSandbox(){ const s=sqlSandboxState; if(!s) return; if(s.view) s.query=s.view.getQuery(); const t=document.getElementById("sbxTitle"); if(t) s.title=t.value.trim()||"Mein SQL-Projekt"; }
+async function saveSqlSandboxProject(){
+  const s=sqlSandboxState; syncSqlSandbox();
+  const btn=document.getElementById("sbxSave"); if(btn){ btn.disabled=true; btn.textContent="Speichere…"; }
+  const payload={ title:(s.title||"Mein SQL-Projekt"), db_text:s.dbText||"", query:s.query||"" };
+  try{ if(s.projectId){ await api.updateSqlSandboxProject(s.projectId, payload); } else { const p=await api.createSqlSandboxProject(payload); s.projectId=p.id; } toast("Projekt gespeichert ✓","ok"); }
+  catch(e){ toast(e.message||"Fehler","err"); }
+  finally{ if(btn){ btn.disabled=false; btn.textContent="💾 Speichern"; } }
 }
 
 /* ---------- SQL-Playground: Datenbank-Bibliothek (Lehrkräfte) ---------- */
@@ -2508,6 +2577,11 @@ function fmtDate(s){ try{ const d=new Date(s); return d.toLocaleDateString("de-D
    Neueste Version zuerst. Bei jedem Deploy oben einen Eintrag ergänzen.
    ============================================================================ */
 const PATCH_NOTES = [
+  { v:"2.25", date:"1. Juli 2026", title:"Vorhandene Schüler:innen hinzufügen & Sandbox-Projekte", items:[
+    `<b>Vorhandene:n Schüler:in hinzufügen:</b> Im Dialog „📥 Importieren" (Klassenansicht) kannst du jetzt eine:n bereits registrierte:n Schüler:in einfach <b>per Benutzername</b> zur Klasse hinzufügen – gilt für Hamster- und SQL-Klassen.`,
+    `<b>SQL-Sandbox mit Projekten:</b> Die Sandbox funktioniert jetzt wie beim Hamster – du legst <b>eigene Projekte</b> an, die gespeichert werden (Datenbank + Abfrage), und öffnest sie später wieder.`,
+    `In der Sandbox wird das <b>Datenbank-Schema standardmäßig angezeigt</b>, und du kannst deinen SQL-Code als <b>.sql herunterladen</b> bzw. eine <b>.sql-Datei hochladen</b>.`,
+  ]},
   { v:"2.24", date:"1. Juli 2026", title:"Kleinigkeiten: Auswahl, Titel, Tool-Name", items:[
     `In der Schüler-Ansicht ist die <b>aktuell gewählte Teilaufgabe</b> jetzt <b>grün</b> hervorgehoben (statt grau).`,
     `Die Klassen-Übersicht im SQL-Tool heißt jetzt schlicht <b>„Meine Klassen"</b> (ohne Icon), wie beim Hamster.`,
@@ -2722,7 +2796,7 @@ function patchNotesDialog(){
 }
 
 /* ---------- Footer: Versionsnummer (aus den Patch-Notes) + Copyright ---------- */
-const APP_BUILD = "2026-07-01 15:00";   // letztes Update (im Patch-Notes-Dialog angezeigt)
+const APP_BUILD = "2026-07-01 16:30";   // letztes Update (im Patch-Notes-Dialog angezeigt)
 (function(){ const f=document.getElementById("appfoot"); if(f){ const v=(typeof PATCH_NOTES!=="undefined"&&PATCH_NOTES[0])?PATCH_NOTES[0].v:""; f.textContent='© 2026 Laurens Offinger · Version '+v; } })();
 
 boot();
