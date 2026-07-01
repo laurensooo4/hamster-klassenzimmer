@@ -65,6 +65,7 @@ function route(){
   if(!ME){ renderAuth(); return; }
   if(!ACTIVE_TOOL){ toolLauncher(); return; }
   if(ACTIVE_TOOL==="sql"){ if(ME.role==="teacher") sqlTeacherHome(); else sqlStudentHome(); return; }
+  if(ACTIVE_TOOL==="filius"){ if(ME.role==="teacher") filiusTeacherHome(); else filiusStudentHome(); return; }
   if(ME.role==="teacher") teacherHome();
   else studentHome();
 }
@@ -74,7 +75,7 @@ async function signOut(){ await sb.auth.signOut(); ME=null; ACTIVE_TOOL=null; re
 const TOOLS = [
   { id:"hamster", name:"Hamster-Simulator", icon:"🐹", desc:"Programmieren lernen mit dem Hamster", active:true },
   { id:"sql",     name:"SQL-Playground",    icon:"🗄️", desc:"Datenbanken & SQL-Abfragen üben",     active:true },
-  { id:"filius",  name:"Filius",            icon:"🌐", desc:"Computernetzwerke verstehen",          active:false },
+  { id:"filius",  name:"Filius",            icon:"🌐", desc:"Computernetzwerke verstehen",          active:true },
   { id:"java",    name:"Java",              icon:"☕", desc:"Java programmieren",                   active:false },
 ];
 function toolLauncher(){
@@ -91,6 +92,8 @@ function toolLauncher(){
 }
 function setTool(id){ ACTIVE_TOOL=id; route(); }
 function switchTool(){ ACTIVE_TOOL=null; route(); }
+/* Tool-abhängige Lehrer-Klassenansicht (Hamster / SQL / Filius) */
+function classViewFor(tool){ return tool==="sql"?sqlTeacherClassView : tool==="filius"?filiusTeacherClassView : teacherClassView; }
 
 /* ============================================================================
    AUTH-SCREEN (Duolingo-Stil)
@@ -397,6 +400,48 @@ api.sqlGetTemplate = async (id)=>{ const {data,error}=await sb.from("sql_assignm
 api.sqlCreateTemplate = async (t)=>{ const {data,error}=await sb.from("sql_assignment_templates").insert(Object.assign({owner_id:ME.id},t)).select().single(); if(error) throw error; return data; };
 api.sqlUpdateTemplate = async (id,patch)=>{ const {data,error}=await sb.from("sql_assignment_templates").update(Object.assign({updated_at:new Date().toISOString()},patch)).eq("id",id).select().single(); if(error) throw error; return data; };
 api.sqlDeleteTemplate = async (id)=>{ const {error}=await sb.from("sql_assignment_templates").delete().eq("id",id); if(error) throw error; };
+/* ===== FILIUS: Netzwerk-Bibliothek ===== */
+api.filiusListNetworks = async ()=>{ const {data,error}=await sb.rpc("shared_filius_networks"); if(error) throw error; return data||[]; };
+api.sandboxFiliusNetworks = async ()=>{ const {data,error}=await sb.rpc("sandbox_filius_networks"); if(error) throw error; return data||[]; };
+api.filiusGetNetwork = async (id)=>{ const {data,error}=await sb.from("filius_networks").select("*").eq("id",id).single(); if(error) throw error; return data; };
+api.filiusCreateNetwork = async (d)=>{ const {data,error}=await sb.from("filius_networks").insert(Object.assign({owner_id:ME.id},d)).select().single(); if(error) throw error; return data; };
+api.filiusUpdateNetwork = async (id,patch)=>{ const {data,error}=await sb.from("filius_networks").update(Object.assign({updated_at:new Date().toISOString()},patch)).eq("id",id).select().single(); if(error) throw error; return data; };
+api.filiusDeleteNetwork = async (id)=>{ const {error}=await sb.from("filius_networks").delete().eq("id",id); if(error) throw error; };
+/* ===== FILIUS: Aufgaben ===== */
+api.filiusListAssignments = async (classId)=>{ const {data,error}=await sb.from("filius_assignments").select("*").eq("class_id",classId).order("position").order("created_at"); if(error) throw error; return data||[]; };
+api.filiusStudentAssignments = async (classId)=>{ const {data,error}=await sb.from("filius_assignments").select("*").eq("class_id",classId).order("position").order("created_at"); if(error) throw error; return data||[]; };   // RLS -> nur veröffentlichte
+api.filiusGetAssignment = async (id)=>{ const {data,error}=await sb.from("filius_assignments").select("*").eq("id",id).single(); if(error) throw error; return data; };
+api.filiusCreateAssignment = async (a)=>{ const {data:mn}=await sb.from("filius_assignments").select("position").eq("class_id",a.class_id).order("position",{ascending:true}).limit(1); const position=(mn&&mn[0]?mn[0].position:1)-1; const {data,error}=await sb.from("filius_assignments").insert(Object.assign({position},a)).select().single(); if(error) throw error; return data; };
+api.filiusUpdateAssignment = async (id,patch)=>{ const {data,error}=await sb.from("filius_assignments").update(patch).eq("id",id).select().single(); if(error) throw error; return data; };
+api.filiusDeleteAssignment = async (id)=>{ const {error}=await sb.from("filius_assignments").delete().eq("id",id); if(error) throw error; };
+async function moveFiliusAssignment(list, id, dir){ const i=list.findIndex(x=>x.id===id); const j=i+dir; if(i<0||j<0||j>=list.length) return; const a=list[i], b=list[j]; await api.filiusUpdateAssignment(a.id,{position:b.position}); await api.filiusUpdateAssignment(b.id,{position:a.position}); }
+/* Muster-Netzwerk je Aufgabe (nur Lehrkraft) + Schüler-RPC (nur bei Freigabe) */
+api.filiusGetSolution = async (aid)=>{ const {data,error}=await sb.from("filius_assignment_solutions").select("*").eq("assignment_id",aid).maybeSingle(); if(error) throw error; return data; };
+api.filiusSaveSolution = async (aid, data)=>{ const {error}=await sb.from("filius_assignment_solutions").upsert({assignment_id:aid, author_id:ME.id, data, updated_at:new Date().toISOString()},{onConflict:"assignment_id"}); if(error) throw error; };
+api.filiusDeleteSolution = async (aid)=>{ const {error}=await sb.from("filius_assignment_solutions").delete().eq("assignment_id",aid); if(error) throw error; };
+api.filiusSolutionForStudent = async (aid)=>{ const {data,error}=await sb.rpc("filius_solution_for_student",{p_assignment:aid}); if(error) throw error; return data; };
+/* Abgaben (genau eine je Aufgabe+Schüler:in) */
+api.filiusGetMySubmission = async (aid)=>{ const {data,error}=await sb.from("filius_submissions").select("*").eq("assignment_id",aid).eq("student_id",ME.id).maybeSingle(); if(error) throw error; return data; };
+api.filiusMySubmissions = async (aids)=>{ if(!aids.length) return []; const {data,error}=await sb.from("filius_submissions").select("*").in("assignment_id",aids).eq("student_id",ME.id); if(error) throw error; return data||[]; };
+api.filiusSaveSubmission = async (aid, data, results, passed)=>{ const {error}=await sb.from("filius_submissions").upsert({assignment_id:aid, student_id:ME.id, data, results, passed, updated_at:new Date().toISOString()},{onConflict:"assignment_id,student_id"}); if(error) throw error; };
+api.filiusClassSubmissions = async (aids)=>{ if(!aids.length) return []; const {data,error}=await sb.from("filius_submissions").select("assignment_id,student_id,data,results,passed,updated_at").in("assignment_id",aids); if(error) throw error; return data||[]; };   // RLS: nur als Lehrkraft; data -> authoritative Neu-Auswertung
+api.filiusGetSubmission = async (aid, sid)=>{ const {data,error}=await sb.from("filius_submissions").select("*").eq("assignment_id",aid).eq("student_id",sid).maybeSingle(); if(error) throw error; return data; };
+/* Rückmeldungen zu Abgaben */
+api.filiusGetComment = async (subId)=>{ if(!subId) return null; const {data,error}=await sb.from("filius_submission_comments").select("*").eq("submission_id",subId).maybeSingle(); if(error) throw error; return data; };
+api.filiusSaveComment = async (subId, body, released)=>{ const {data,error}=await sb.from("filius_submission_comments").upsert({submission_id:subId, author_id:ME.id, body, released, updated_at:new Date().toISOString()},{onConflict:"submission_id"}).select().single(); if(error) throw error; return data; };
+api.filiusDeleteComment = async (subId)=>{ const {error}=await sb.from("filius_submission_comments").delete().eq("submission_id",subId); if(error) throw error; };
+/* Vorlagen */
+api.filiusListTemplates = async ()=>{ const {data,error}=await sb.rpc("shared_filius_templates"); if(error) throw error; return data||[]; };
+api.filiusGetTemplate = async (id)=>{ const {data,error}=await sb.from("filius_assignment_templates").select("*").eq("id",id).single(); if(error) throw error; return data; };
+api.filiusCreateTemplate = async (t)=>{ const {data,error}=await sb.from("filius_assignment_templates").insert(Object.assign({owner_id:ME.id},t)).select().single(); if(error) throw error; return data; };
+api.filiusUpdateTemplate = async (id,patch)=>{ const {data,error}=await sb.from("filius_assignment_templates").update(Object.assign({updated_at:new Date().toISOString()},patch)).eq("id",id).select().single(); if(error) throw error; return data; };
+api.filiusDeleteTemplate = async (id)=>{ const {error}=await sb.from("filius_assignment_templates").delete().eq("id",id); if(error) throw error; };
+/* Sandbox-Projekte */
+api.filiusListSandboxProjects = async ()=>{ const {data,error}=await sb.from("filius_sandbox_projects").select("id,title,updated_at").eq("owner_id",ME.id).order("updated_at",{ascending:false}); if(error) throw error; return data||[]; };
+api.filiusGetSandboxProject = async (id)=>{ const {data,error}=await sb.from("filius_sandbox_projects").select("*").eq("id",id).single(); if(error) throw error; return data; };
+api.filiusCreateSandboxProject = async (p)=>{ const {data,error}=await sb.from("filius_sandbox_projects").insert(Object.assign({owner_id:ME.id},p)).select().single(); if(error) throw error; return data; };
+api.filiusUpdateSandboxProject = async (id,patch)=>{ const {data,error}=await sb.from("filius_sandbox_projects").update(Object.assign({updated_at:new Date().toISOString()},patch)).eq("id",id).select().single(); if(error) throw error; return data; };
+api.filiusDeleteSandboxProject = async (id)=>{ const {error}=await sb.from("filius_sandbox_projects").delete().eq("id",id); if(error) throw error; };
 
 /* Headless: Code auf frischer Kopie des Territoriums laufen lassen -> Endmodell (wirft bei Fehler) */
 function runHeadless(code, territory){
@@ -979,12 +1024,12 @@ function renderAdminClasses(q){
   q=(q||"").trim().toLowerCase();
   const tname=c=>(c.teacher&&(c.teacher.display_name||c.teacher.username))||"";
   const list=adminState.classes.filter(c=> !q || (c.name||"").toLowerCase().includes(q)||(c.code||"").toLowerCase().includes(q)||tname(c).toLowerCase().includes(q));
-  const toolBadge=c=> c.tool==="sql"?'<span class="badge blue" style="margin-left:6px">SQL</span>':'<span class="badge gray" style="margin-left:6px">Hamster</span>';
+  const toolBadge=c=> c.tool==="sql"?'<span class="badge blue" style="margin-left:6px">SQL</span>':c.tool==="filius"?'<span class="badge" style="margin-left:6px;background:#e7ddff;color:#6b3fd4">Filius</span>':'<span class="badge gray" style="margin-left:6px">Hamster</span>';
   el.innerHTML = list.length ? `<div class="grid">${list.map(c=>`
       <div class="card click" data-id="${c.id}" data-tool="${esc(c.tool||"hamster")}"><h3>${esc(c.name)}${toolBadge(c)}</h3>
         <div class="meta">Code: <b>${esc(c.code)}</b> · 👩‍🏫 ${esc(tname(c)||"–")}</div></div>`).join("")}</div>`
     : `<div class="empty" style="padding:14px"><span class="ic">🔍</span>Keine Klasse gefunden.</div>`;
-  el.querySelectorAll(".card.click").forEach(c=> c.onclick=()=>{ viewFromAdmin=true; (c.dataset.tool==="sql"?sqlTeacherClassView:teacherClassView)(c.dataset.id); });
+  el.querySelectorAll(".card.click").forEach(c=> c.onclick=()=>{ viewFromAdmin=true; classViewFor(c.dataset.tool)(c.dataset.id); });
 }
 function renderAdminUsers(q){
   const el=document.getElementById("admUsers"); if(!el||!adminState) return;
@@ -1087,7 +1132,7 @@ async function adminUserProfile(userId){
     </div>
     <div class="card">${classesHtml}</div>`;
   document.getElementById("back").onclick = adminHome;
-  document.querySelectorAll("[data-cls]").forEach(b=> b.onclick=()=>{ viewFromAdmin=true; (b.dataset.tool==="sql"?sqlTeacherClassView:teacherClassView)(b.dataset.cls); });
+  document.querySelectorAll("[data-cls]").forEach(b=> b.onclick=()=>{ viewFromAdmin=true; classViewFor(b.dataset.tool)(b.dataset.cls); });
 }
 
 /* ============================================================================
@@ -1160,7 +1205,7 @@ async function teacherHome(){
 }
 function newClassDialog(opts){
   opts=opts||{};
-  const toolField = opts.pickTool ? `<div class="field"><label>Tool</label><select class="input" id="clTool"><option value="hamster">🐹 Hamster-Simulator</option><option value="sql">🗄️ SQL-Playground</option></select></div>` : "";
+  const toolField = opts.pickTool ? `<div class="field"><label>Tool</label><select class="input" id="clTool"><option value="hamster">🐹 Hamster-Simulator</option><option value="sql">🗄️ SQL-Playground</option><option value="filius">🌐 Filius (Netzwerke)</option></select></div>` : "";
   openModal(`<button class="x" onclick="closeModal()">✕</button>
     <h3>Neue Klasse</h3><p class="muted" style="margin:2px 0 16px">Gib der Klasse einen Namen – der Einlade-Code wird automatisch erzeugt.</p>
     ${toolField}
@@ -1170,7 +1215,7 @@ function newClassDialog(opts){
   const go=async()=>{ const name=inp.value.trim(); if(!name){ inp.focus(); return; }
     const tool = opts.pickTool ? (document.getElementById("clTool").value||"hamster") : (ACTIVE_TOOL||"hamster");
     const btn=document.getElementById("clCreate"); btn.disabled=true; btn.textContent="Erstelle…";
-    try{ const c=await api.createClass(name, tool); closeModal(); toast('Klasse "'+name+'" erstellt 🎉',"ok"); viewFromAdmin = !!opts.pickTool; (tool==="sql"?sqlTeacherClassView:teacherClassView)(c.id); }
+    try{ const c=await api.createClass(name, tool); closeModal(); toast('Klasse "'+name+'" erstellt 🎉',"ok"); viewFromAdmin = !!opts.pickTool; classViewFor(tool)(c.id); }
     catch(e){ btn.disabled=false; btn.textContent="Klasse erstellen"; toast(e.message||"Fehler","err"); } };
   document.getElementById("clCreate").onclick=go;
   inp.addEventListener("keydown",e=>{ if(e.key==="Enter") go(); });
@@ -1595,7 +1640,7 @@ function renameClassDialog(classId, current, tool){
     const btn=document.getElementById("rnSave"); btn.disabled=true; btn.textContent="Speichere…";
     const { error } = await sb.from("classes").update({ name }).eq("id", classId);
     if(error){ btn.disabled=false; btn.textContent="Speichern"; toast(error.message||"Fehler","err"); return; }
-    closeModal(); toast("Umbenannt ✓","ok"); ((tool||ACTIVE_TOOL)==="sql"?sqlTeacherClassView:teacherClassView)(classId); };
+    closeModal(); toast("Umbenannt ✓","ok"); classViewFor(tool||ACTIVE_TOOL)(classId); };
   document.getElementById("rnSave").onclick=go;
   inp.addEventListener("keydown",e=>{ if(e.key==="Enter") go(); });
 }
@@ -1630,7 +1675,7 @@ async function classTeachersDialog(classId, cls){
     document.querySelectorAll("[data-rmteacher]").forEach(b=> b.onclick=async()=>{ try{ await api.removeClassTeacher(classId, b.dataset.rmteacher); toast("Entfernt","ok"); refresh(); }catch(e){ toast(e.message||"Fehler","err"); } });
   }
   document.getElementById("ctAdd").onclick=async()=>{ const sel=document.getElementById("ctSelect"); if(!sel.value) return; try{ await api.addClassTeacher(classId, sel.value); toast("Hinzugefügt ✓","ok"); refresh(); }catch(e){ toast(e.message||"Fehler","err"); } };
-  { const tb=document.getElementById("ctTransfer"); if(tb) tb.onclick=async()=>{ const sel=document.getElementById("ctTransferSel"); if(!sel.value) return; const nm=(sel.options[sel.selectedIndex]||{}).text||"diese Lehrkraft"; if(!confirm(`Klasse „${cls.name}" wirklich an ${nm} übergeben? ${nm} wird Eigentümer:in mit allen Rechten, du wirst Co-Lehrkraft.`)) return; try{ await api.transferClass(classId, sel.value); closeModal(); toast("Klasse übergeben ✓","ok"); (((cls&&cls.tool)||ACTIVE_TOOL)==="sql"?sqlTeacherClassView:teacherClassView)(classId); }catch(e){ toast(e.message||"Fehler","err"); } }; }
+  { const tb=document.getElementById("ctTransfer"); if(tb) tb.onclick=async()=>{ const sel=document.getElementById("ctTransferSel"); if(!sel.value) return; const nm=(sel.options[sel.selectedIndex]||{}).text||"diese Lehrkraft"; if(!confirm(`Klasse „${cls.name}" wirklich an ${nm} übergeben? ${nm} wird Eigentümer:in mit allen Rechten, du wirst Co-Lehrkraft.`)) return; try{ await api.transferClass(classId, sel.value); closeModal(); toast("Klasse übergeben ✓","ok"); classViewFor((cls&&cls.tool)||ACTIVE_TOOL)(classId); }catch(e){ toast(e.message||"Fehler","err"); } }; }
   refresh();
 }
 
@@ -2493,6 +2538,636 @@ async function saveSqlAssignment(){
 }
 
 /* ============================================================================
+   FILIUS – Netzwerksimulator: Klassen, Aufgaben (mit Prüfungen), Abgaben,
+   Einsicht, Netzwerk-Bibliothek, Vorlagen, Sandbox. Spiegelt den SQL-Playground.
+   ============================================================================ */
+function chkId(){ return "c"+Math.random().toString(36).slice(2,8); }
+function filiusNetData(v){ return (v && v.getData) ? v.getData() : (v||{nodes:[],links:[]}); }
+/* Abgabe IMMER authoritativ gegen die AKTUELLEN Prüfungen auswerten (konsistent in Matrix, Fortschritt, Profil, Einsicht) */
+function filiusEvalSub(sub, checks){ if(sub && sub.data && typeof sub.data==="object"){ try{ return FiliusEngine.evalChecks(sub.data, checks||[]); }catch(e){} } return (sub&&sub.results)||{}; }
+function filiusPassed(res, checks){ return (checks||[]).length>0 && (checks||[]).every(c=> res[c.id]==="correct"); }
+
+async function filiusTeacherHome(){
+  shell(`<div class="center-load"><span class="spin"></span>Klassen werden geladen…</div>`);
+  _classActivity=null;
+  let classes=[];
+  try{ classes = await api.myTeacherClasses(); }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
+  document.getElementById("view").innerHTML = `
+    <div class="page-head"><h2>Meine Klassen</h2><div class="spacer"></div>
+      <button class="btn btn-ghost" id="btnFilNets">🌐 Netzwerke</button>
+      <button class="btn btn-ghost" id="btnFilTpl" style="margin-left:8px">📋 Vorlagen</button>
+      <button class="btn btn-ghost" id="btnFilSbx" style="margin-left:8px">🧪 Sandbox</button>
+      <button class="btn btn-primary" id="btnNewClass" style="margin-left:8px">+ Neue Klasse</button></div>
+    ${classes.length?`<div class="page-head" style="margin:0 0 12px">${classSearchSortControls()}</div>`:""}
+    <div id="clsHost"></div>`;
+  document.getElementById("btnFilNets").onclick = ()=> filiusNetworksPage();
+  document.getElementById("btnFilTpl").onclick = ()=> filiusTemplatesPage();
+  document.getElementById("btnFilSbx").onclick = ()=> filiusSandbox();
+  document.getElementById("btnNewClass").onclick = newClassDialog;
+  wireClassOverview(classes, c=>`
+      <div class="card click" data-id="${c.id}"><h3>${esc(c.name)}</h3>
+        <div class="meta">Code: <b>${esc(c.code)}</b></div></div>`,
+    id=>{ viewFromAdmin=false; filiusTeacherClassView(id); },
+    `<div class="empty"><span class="ic">🌐</span>Noch keine Filius-Klassen. Erstelle deine erste Klasse!</div>`);
+}
+async function filiusStudentHome(){
+  shell(`<div class="center-load"><span class="spin"></span>Wird geladen…</div>`);
+  _classActivity=null;
+  let classes=[];
+  try{ classes = await api.myClasses(); }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
+  if(!classes.length){
+    document.getElementById("view").innerHTML = `
+      <div class="page-head"><h2>🌐 Filius</h2><div class="spacer"></div><button class="btn btn-ghost" id="btnFilSbx">🧪 Sandbox</button></div>
+      <div class="card" style="max-width:480px;margin:0 auto;text-align:center">
+        <div style="font-size:46px">🔑</div>
+        <h3 style="margin:6px 0">Tritt deiner Klasse bei</h3>
+        <p class="muted" style="margin:0 0 16px">Gib den Code ein, den du von deiner Lehrkraft bekommen hast.</p>
+        <div class="field"><input class="input" id="joinCode" placeholder="z. B. K7Q2MX" maxlength="8" style="text-align:center;text-transform:uppercase;letter-spacing:3px;font-family:monospace;font-size:22px"></div>
+        <button class="btn btn-primary btn-lg" id="btnJoin">Beitreten</button>
+      </div>`;
+    wireJoin(); { const sx=document.getElementById("btnFilSbx"); if(sx) sx.onclick=()=> filiusSandbox(); } return;
+  }
+  document.getElementById("view").innerHTML = `
+    <div class="page-head"><h2>Meine Klassen</h2><div class="spacer"></div>
+      <button class="btn btn-ghost" id="btnFilSbx">🧪 Sandbox</button>
+      <button class="btn btn-ghost" id="btnJoinMore" style="margin-left:8px">+ Klasse beitreten</button></div>
+    ${classes.length?`<div class="page-head" style="margin:0 0 12px">${classSearchSortControls()}</div>`:""}
+    <div id="clsHost"></div>`;
+  document.getElementById("btnFilSbx").onclick = ()=> filiusSandbox();
+  document.getElementById("btnJoinMore").onclick = joinDialog;
+  wireClassOverview(classes, c=>`
+      <div class="card click" data-id="${c.id}"><h3>${esc(c.name)}</h3>
+        <div class="meta">Aufgaben ansehen →</div></div>`, id=> filiusStudentClassView(id), "");
+}
+
+async function filiusTeacherClassView(classId){
+  shell(`<div class="center-load"><span class="spin"></span>Klasse wird geladen…</div>`);
+  let cls, roster=[], asgs=[], subs=[];
+  try{
+    const { data } = await sb.from("classes").select("*").eq("id",classId).single(); cls=data;
+    roster = await api.classRoster(classId);
+    roster.sort((a,b)=>{ const na=((a.profiles&&(a.profiles.display_name||a.profiles.username))||"").toLowerCase(), nb=((b.profiles&&(b.profiles.display_name||b.profiles.username))||"").toLowerCase(); return na.localeCompare(nb,"de"); });
+    asgs = await api.filiusListAssignments(classId);
+  }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
+  if(!cls){ document.getElementById("view").innerHTML=errBox({message:"Klasse nicht gefunden."}); return; }
+  if(asgs.length){ try{ subs = await api.filiusClassSubmissions(asgs.map(a=>a.id)); }catch(e){ subs=[]; } }
+  const canTeam=(cls.teacher_id===ME.id||ME.is_admin);
+  let teachers=[]; try{ teachers=await api.classTeachersNamed(classId); }catch(e){ teachers=[]; }
+  const iAmCoTeacher = !canTeam && teachers.some(t=>t.id===ME.id && !t.is_owner);
+  const rosterHtml = roster.length ? `<div class="list">${roster.map(m=>{ const p=m.profiles||{}; const nm=p.display_name||p.username||"?"; return `<div class="row"><span class="chip clickable" data-prof="${m.student_id}" title="Profil ansehen" style="cursor:pointer"><span class="av">${esc(initials(nm))}</span>${esc(nm)}</span><div class="grow"></div><span class="muted" style="font-size:11.5px;margin-right:8px">${fmtDate(m.joined_at)}</span>${canTeam?`<button class="abtn" data-stu="${m.student_id}" data-nm="${esc(nm)}" title="Passwort zurücksetzen">🔑</button><button class="abtn" data-rmstu="${m.student_id}" data-nm="${esc(nm)}" title="aus Klasse entfernen">🗑️</button>`:""}</div>`; }).join("")}</div>`
+    : `<div class="empty"><span class="ic">🎒</span>Noch keine Schüler:innen. Teile den Code <b>${esc(cls.code)}</b>!</div>`;
+  const asgHtml = asgs.length ? `<div class="list">${asgs.map(a=>`
+      <div class="row"><span class="grow"><span style="display:flex;align-items:center;gap:6px;flex-wrap:wrap"><span class="t clickable" data-edit="${a.id}" title="Aufgabe bearbeiten">${esc(a.title)}</span>${a.published?"":'<span class="badge gold">Entwurf</span>'}${a.released?'<span class="badge" title="Muster-Netzwerk für Schüler:innen sichtbar">🏆 Lösung frei</span>':''}</span><span class="s">${(a.checks||[]).length} Prüfung(en) · ${esc(fmtDateTime(a.created_at))}</span></span>
+        <span class="acts">
+          <button class="abtn" data-up="${a.id}" title="nach oben">↑</button>
+          <button class="abtn" data-down="${a.id}" title="nach unten">↓</button>
+          <button class="abtn" data-pub="${a.id}" data-on="${a.published?1:0}" title="${a.published?'verbergen (Entwurf)':'veröffentlichen'}">${a.published?'👁️':'🚀'}</button>
+          <button class="abtn" data-rel="${a.id}" data-relon="${a.released?1:0}" title="${a.released?'Muster-Netzwerk wieder verbergen':'Muster-Netzwerk für Schüler:innen freigeben'}">${a.released?'🏆':'🔒'}</button>
+          <button class="abtn" data-edit="${a.id}" title="bearbeiten">✏️</button>
+          <button class="abtn" data-del="${a.id}" title="löschen">🗑️</button>
+        </span></div>`).join("")}</div>`
+    : `<div class="empty" style="padding:16px"><span class="ic">📝</span>Noch keine Aufgaben.</div>`;
+  document.getElementById("view").innerHTML = `
+    <div class="page-head"><button class="crumb" id="back">${viewFromAdmin?"← Admin-Bereich":"← Meine Klassen"}</button><div class="spacer"></div><button class="btn btn-ghost btn-sm" id="btnFilNets2">🌐 Netzwerke</button><button class="btn btn-ghost btn-sm" id="btnFilTpl2" style="margin-left:8px">📋 Vorlagen</button></div>
+    <div class="page-head" style="margin-top:0"><h2>${esc(cls.name)}${canTeam?` <button class="btn btn-ghost btn-sm" id="btnRename" title="Klasse umbenennen" style="vertical-align:middle">✏️</button>`:""}</h2><div class="spacer"></div>
+      <span class="codechip" title="Einlade-Code" style="${cls.join_open===false?'opacity:.55;':''}">🔑 ${esc(cls.code)}${cls.join_open===false?' <span class="badge gray" title="Beitritt mit diesem Code ist deaktiviert">aus</span>':''} <button class="btn btn-sm btn-ghost" id="copyCode" style="margin-left:4px">Kopieren</button></span>
+      ${canTeam?`<button class="btn btn-ghost btn-sm" id="btnCodeToggle" style="margin-left:8px" title="${cls.join_open===false?'Beitritt mit diesem Code wieder erlauben':'Beitritt mit diesem Code deaktivieren'}">${cls.join_open===false?'🔓 Aktivieren':'🚫 Code deaktivieren'}</button><button class="btn btn-ghost btn-sm" id="btnCodeNew" style="margin-left:6px" title="Neuen Code erzeugen – der alte wird ungültig">🔄 Neuer Code</button>`:''}
+      ${canTeam?`<button class="btn btn-ghost btn-sm" id="btnDeleteClass" style="margin-left:8px;color:var(--red-d)" title="Klasse löschen">🗑️ Löschen</button>`:(iAmCoTeacher?`<button class="btn btn-ghost btn-sm" id="btnLeaveClass" style="margin-left:8px;color:var(--red-d)" title="Klasse verlassen">🚪 Klasse verlassen</button>`:"")}</div>
+    <div class="card" style="margin-bottom:14px">
+      <div style="display:flex;align-items:center;gap:8px"><h3 style="margin:0">📝 Aufgaben <span class="badge gray">${asgs.length}</span></h3><div style="flex:1"></div><button class="btn btn-ghost btn-sm" id="btnFilFromTpl">📋 aus Vorlage</button><button class="btn btn-blue btn-sm" id="btnNewFilAssign" style="margin-left:8px">+ Aufgabe stellen</button></div>
+      <div style="margin-top:12px">${asgHtml}</div></div>
+    <div class="card" style="margin-bottom:14px">
+      <div style="display:flex;align-items:center;gap:8px"><h3 style="margin:0">📊 Abgabe-Matrix</h3><div style="flex:1"></div></div>
+      <div style="margin-top:12px">
+        ${(asgs.length&&roster.length)?'<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap"><span class="muted" style="font-size:12.5px">🟩 richtig · 🟧 falsch · ⬜ offen · ★ = alle Prüfungen bestanden</span><div style="flex:1"></div><input class="input" id="filMatrixSearch" placeholder="🔍 Schüler:in suchen" style="max-width:240px"></div>':''}
+        <div id="filMatrixHost"></div>
+      </div></div>
+    <div class="card" style="margin-bottom:14px"><div style="display:flex;align-items:center;gap:8px"><h3 style="margin:0">🎒 Schüler:innen <span class="badge gray">${roster.length}</span></h3><div style="flex:1"></div>${canTeam?'<button class="btn btn-ghost btn-sm" id="btnFilImport">📥 Importieren</button>':''}</div><div style="margin-top:12px">${rosterHtml}</div></div>
+    <div class="card" style="margin-bottom:16px"><div style="display:flex;align-items:center;gap:8px"><h3 style="margin:0">👩‍🏫 Lehrkräfte <span class="badge gray">${teachers.length}</span></h3><div style="flex:1"></div>${canTeam?'<button class="btn btn-ghost btn-sm" id="btnTeachers">+ verwalten</button>':''}</div>
+      <div class="list" style="margin-top:12px">${teachers.length?teachers.map(t=>`<div class="row"><span class="chip"><span class="av">${esc(initials(t.display_name||t.username))}</span>${esc(t.display_name||t.username)}</span><div class="grow"></div>${t.is_owner?'<span class="badge blue">Ersteller:in</span>':'<span class="badge gray">Co-Lehrkraft</span>'}</div>`).join(""):'<div class="muted" style="font-size:13px">—</div>'}</div></div>`;
+  document.getElementById("back").onclick = ()=> (viewFromAdmin?adminHome():filiusTeacherHome());
+  document.getElementById("copyCode").onclick = ()=>{ if(navigator.clipboard) navigator.clipboard.writeText(cls.code); toast("Code kopiert: "+cls.code,"ok"); };
+  { const bd=document.getElementById("btnDeleteClass"); if(bd) bd.onclick=async()=>{ if(!confirm(`Klasse „${cls.name}" wirklich löschen? Alle Aufgaben und Zuordnungen werden entfernt.`)) return; try{ await api.deleteClass(classId); toast("Klasse gelöscht","ok"); (viewFromAdmin?adminHome():filiusTeacherHome()); }catch(e){ toast(e.message||"Fehler","err"); } }; }
+  { const br=document.getElementById("btnRename"); if(br) br.onclick=()=> renameClassDialog(classId, cls.name, cls.tool); }
+  { const bt=document.getElementById("btnCodeToggle"); if(bt) bt.onclick=async()=>{ const disabling=(cls.join_open!==false); if(disabling){ if(!confirm(`Beitritt für „${cls.name}" deaktivieren?\n\nMit dem Code ${cls.code} kann danach niemand mehr neu beitreten. Bereits beigetretene Schüler:innen bleiben in der Klasse.`)) return; } try{ await api.setClassJoinOpen(classId, !disabling); toast(disabling?"Beitritt deaktiviert 🚫":"Beitritt wieder aktiv 🔓","ok"); filiusTeacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } }; }
+  { const bn=document.getElementById("btnCodeNew"); if(bn) bn.onclick=async()=>{ if(!confirm(`Neuen Einlade-Code für „${cls.name}" erzeugen?\n\nDer bisherige Code ${cls.code} wird sofort ungültig – verteile danach den neuen Code. Bereits beigetretene Schüler:innen bleiben in der Klasse.`)) return; try{ const nc=await api.regenerateClassCode(classId); toast("Neuer Code: "+nc,"ok"); filiusTeacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } }; }
+  { const bl=document.getElementById("btnLeaveClass"); if(bl) bl.onclick=async()=>{ if(!confirm(`Klasse „${cls.name}" wirklich verlassen? Du bist danach keine Co-Lehrkraft mehr und siehst die Klasse nicht mehr.`)) return; try{ await api.removeClassTeacher(classId, ME.id); toast("Klasse verlassen","ok"); filiusTeacherHome(); }catch(e){ toast(e.message||"Fehler","err"); } }; }
+  { const bt=document.getElementById("btnTeachers"); if(bt) bt.onclick=()=> classTeachersDialog(classId, cls); }
+  document.getElementById("btnFilNets2").onclick = ()=> filiusNetworksPage();
+  document.getElementById("btnFilTpl2").onclick = ()=> filiusTemplatesPage();
+  { const bi=document.getElementById("btnFilImport"); if(bi) bi.onclick=()=> importStudentsDialog(classId, cls.code, ()=>filiusTeacherClassView(classId)); }
+  document.querySelectorAll(".chip[data-prof]").forEach(b=> b.onclick=()=>{ const m=roster.find(r=>r.student_id===b.dataset.prof); const p=(m&&m.profiles)||{}; filiusStudentProfilePage(classId, b.dataset.prof, p.display_name||p.username||"?", p.username||""); });
+  document.querySelectorAll("[data-stu]").forEach(b=> b.onclick=()=> resetStudentPw(b.dataset.stu, b.dataset.nm));
+  document.querySelectorAll("[data-rmstu]").forEach(b=> b.onclick=async()=>{ if(!confirm(b.dataset.nm+" aus dieser Klasse entfernen? (Der Account bleibt bestehen.)")) return; try{ await api.removeMembership(classId, b.dataset.rmstu); toast("Entfernt","ok"); filiusTeacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } });
+  document.getElementById("btnNewFilAssign").onclick = ()=> filiusAssignmentEditorPage(classId, null);
+  document.getElementById("btnFilFromTpl").onclick = ()=> filiusPickTemplate(classId);
+  document.querySelectorAll("[data-edit]").forEach(b=> b.onclick=()=> filiusAssignmentEditorPage(classId, {id:b.dataset.edit}));
+  document.querySelectorAll("[data-up]").forEach(b=> b.onclick=async()=>{ await moveFiliusAssignment(asgs, b.dataset.up, -1); filiusTeacherClassView(classId); });
+  document.querySelectorAll("[data-down]").forEach(b=> b.onclick=async()=>{ await moveFiliusAssignment(asgs, b.dataset.down, 1); filiusTeacherClassView(classId); });
+  document.querySelectorAll("[data-pub]").forEach(b=> b.onclick=async()=>{ try{ await api.filiusUpdateAssignment(b.dataset.pub,{published:b.dataset.on!=="1"}); filiusTeacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } });
+  document.querySelectorAll("[data-rel]").forEach(b=> b.onclick=async()=>{ const on=b.dataset.relon==="1"; if(!on && !confirm("Muster-Netzwerk dieser Aufgabe für ALLE Schüler:innen sichtbar machen?")) return; try{ await api.filiusUpdateAssignment(b.dataset.rel,{released:!on}); toast(on?"Muster-Netzwerk verborgen 🔒":"Muster-Netzwerk freigegeben 🏆","ok"); filiusTeacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } });
+  document.querySelectorAll("[data-del]").forEach(b=> b.onclick=async()=>{ if(!confirm("Aufgabe wirklich löschen?")) return; try{ await api.filiusDeleteAssignment(b.dataset.del); filiusTeacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } });
+  const paintFilMatrix=(q)=>{ const host=document.getElementById("filMatrixHost"); if(!host) return;
+    host.innerHTML = (asgs.length&&roster.length) ? buildFiliusMatrix(roster, asgs, subs, q)
+      : `<div class="empty"><span class="ic">📊</span>${!asgs.length?"Stelle Aufgaben – dann erscheint hier, wer welche Prüfungen bestanden hat.":"Noch keine Schüler:innen in der Klasse."}</div>`;
+    host.querySelectorAll(".sqcell[data-aid]").forEach(c=> c.onclick=()=>{ const stu=roster.find(r=>r.student_id===c.dataset.sid); const nm=(stu&&stu.profiles&&(stu.profiles.display_name||stu.profiles.username))||"?"; filiusReviewSubmission(c.dataset.aid, c.dataset.sid, nm, classId); });
+  };
+  paintFilMatrix("");
+  { const ms=document.getElementById("filMatrixSearch"); if(ms) ms.oninput=()=> paintFilMatrix(ms.value); }
+}
+function buildFiliusMatrix(roster, asgs, subs, q){
+  q=(q||"").trim().toLowerCase();
+  const nmeOf=stu=>(stu.profiles&&(stu.profiles.display_name||stu.profiles.username))||"?";
+  const list = q ? roster.filter(stu=> nmeOfSafe(nmeOf(stu)).includes(q)) : roster;
+  if(!list.length) return `<div class="empty" style="padding:16px"><span class="ic">🔍</span>Keine Schüler:in gefunden.</div>`;
+  const head = asgs.map(a=>`<th title="${esc(a.title)}">${esc(a.title.length>14?a.title.slice(0,13)+"…":a.title)}</th>`).join("");
+  const seg=(n,color)=> n>0?`<div style="flex:${n};background:${color}"></div>`:"";
+  const rows = list.map(stu=>{
+    const cells = asgs.map(a=>{
+      const ids=(a.checks||[]).map(c=>c.id); const total=ids.length;
+      if(!total) return `<td><span class="muted" style="font-size:13px" title="Aufgabe hat noch keine Prüfungen">—</span></td>`;
+      const sub = subs.find(x=>x.assignment_id===a.id && x.student_id===stu.student_id);
+      if(!sub) return `<td><span title="noch nicht bearbeitet (${total} Prüfungen)" style="color:var(--muted);font-weight:900">·</span></td>`;
+      const res=filiusEvalSub(sub, a.checks); let g=0,y=0; for(const id of ids){ const st=res[id]; if(st==="correct") g++; else if(st==="wrong") y++; }
+      const grey=total-g-y, done=(g===total);
+      const bar=`<div style="display:flex;height:7px;width:56px;border-radius:4px;overflow:hidden;margin:0 auto 3px;background:var(--line2)">${seg(g,"var(--green)")}${seg(y,"var(--gold)")}${seg(grey,"var(--line2)")}</div>`;
+      const cap=`<span style="font-size:11.5px;font-weight:800;color:${done?'var(--green-d)':'var(--muted)'}">${g}/${total}${done?' ★':''}</span>`;
+      const title=`✓ ${g} richtig · ✗ ${y} falsch · · ${grey} offen (von ${total})`;
+      return `<td><span class="sqcell" data-aid="${a.id}" data-sid="${stu.student_id}" title="${esc(title)} – Abgabe ansehen" style="display:inline-block;min-width:60px;text-align:center;cursor:pointer">${bar}${cap}</span></td>`;
+    }).join("");
+    return `<tr><td class="stu">${esc(nmeOf(stu))}</td>${cells}</tr>`;
+  }).join("");
+  return `<div class="matrix-wrap"><table class="matrix"><thead><tr><th class="stu">Schüler:in</th>${head}</tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+
+async function filiusStudentClassView(classId){
+  shell(`<div class="center-load"><span class="spin"></span>Lädt…</div>`);
+  let cls, asgs=[], subs=[];
+  try{
+    const { data } = await sb.from("classes").select("*").eq("id",classId).single(); cls=data;
+    asgs = await api.filiusStudentAssignments(classId);
+    subs = await api.filiusMySubmissions(asgs.map(a=>a.id));
+  }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
+  const badge=(a)=>{ const s=subs.find(x=>x.assignment_id===a.id); if(!s) return '<span class="badge gray">offen</span>'; return filiusPassed(filiusEvalSub(s,a.checks), a.checks)?'<span class="badge">bestanden ✓</span>':'<span class="badge gold">in Bearbeitung</span>'; };
+  const progress=(a)=>{ const ids=(a.checks||[]).map(c=>c.id), total=ids.length; if(!total) return ""; const sub=subs.find(x=>x.assignment_id===a.id), res=sub?filiusEvalSub(sub,a.checks):{}; let g=0,y=0; for(const id of ids){ const st=res[id]; if(st==="correct")g++; else if(st==="wrong")y++; } const grey=total-g-y; const seg=(n,c)=> n>0?`<div style="flex:${n};background:${c}"></div>`:""; return `<div style="display:flex;align-items:center;gap:8px;margin-top:6px"><div style="display:flex;height:7px;flex:1;max-width:170px;border-radius:4px;overflow:hidden;background:var(--line2)">${seg(g,"var(--green)")}${seg(y,"var(--gold)")}${seg(grey,"var(--line2)")}</div><span class="muted" style="font-size:11.5px;font-weight:800">${g}/${total}</span></div>`; };
+  const list = asgs.length ? `<div class="list">${asgs.map(a=>`
+      <div class="row clickrow" data-id="${a.id}" style="cursor:pointer"><span class="grow"><span class="t">${esc(a.title)}</span>${a.description?`<span class="s">${esc(a.description.slice(0,70))}</span>`:""}${progress(a)}</span>${badge(a)}<span style="margin-left:8px;color:#7a8aa0">→</span></div>`).join("")}</div>`
+    : `<div class="empty"><span class="ic">📝</span>Noch keine Aufgaben. Schau später wieder rein!</div>`;
+  document.getElementById("view").innerHTML = `
+    <div class="page-head"><button class="crumb" id="back">← Meine Klassen</button></div>
+    <div class="page-head" style="margin-top:0"><h2>${esc(cls?cls.name:"Klasse")}</h2></div>
+    ${list}`;
+  document.getElementById("back").onclick = filiusStudentHome;
+  document.querySelectorAll(".clickrow[data-id]").forEach(r=> r.onclick=()=> filiusSolveAssignment(r.dataset.id));
+}
+
+/* ---------- FILIUS: Aufgabe lösen (Schüler:innen) ---------- */
+let filiusSolveState=null;
+async function filiusSolveAssignment(assignmentId){
+  shell(`<div class="center-load"><span class="spin"></span>Aufgabe wird geladen…</div>`);
+  let a, submission=null;
+  try{ a=await api.filiusGetAssignment(assignmentId); }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
+  if(!a){ document.getElementById("view").innerHTML=errBox({message:"Aufgabe nicht gefunden."}); return; }
+  try{ submission=await api.filiusGetMySubmission(assignmentId); }catch(e){}
+  let comment=null; if(submission){ try{ comment=await api.filiusGetComment(submission.id); }catch(e){} }
+  filiusSolveState={
+    a, checks:a.checks||[], classId:a.class_id,
+    data: (submission&&submission.data&&(submission.data.nodes||[]).length!==undefined && (submission.data.nodes||submission.data.links)) ? submission.data : (a.net_snapshot||{nodes:[],links:[]}),
+    results:(submission&&submission.results)||{},
+    teacherComment:(comment&&comment.body)||"", released:!!a.released, view:null
+  };
+  try{ FiliusView.ensureStyles(); }catch(e){}
+  renderFiliusSolve();
+}
+function filiusChecksListHtml(checks, results){
+  if(!checks.length) return '<div class="muted" style="font-size:13px">Diese Aufgabe hat keine Prüfungen – bau das Netzwerk laut Aufgabenstellung.</div>';
+  return `<div class="list">${checks.map(c=>`<div class="row" style="padding:9px 12px"><span class="sicon" data-chk="${c.id}" style="width:18px;text-align:center">${sqlStatusIcon(results[c.id])}</span><span class="grow"><span class="t" style="font-weight:700;font-size:13.5px">${esc(FiliusEngine.checkLabel(c))}</span></span></div>`).join("")}</div>`;
+}
+function renderFiliusSolve(){
+  const s=filiusSolveState;
+  const passed = s.checks.length>0 && s.checks.every(c=> s.results[c.id]==="correct");
+  const statusHtml = Object.keys(s.results).length? (passed?'<span class="badge">bestanden ✓</span>':'<span class="badge gold">in Bearbeitung</span>') : '<span class="badge gray">offen</span>';
+  document.getElementById("view").innerHTML = `
+    <div class="page-head"><button class="crumb" id="back">← Zur Klasse</button><div class="spacer"></div><span id="filSolveStatus">${statusHtml}</span></div>
+    <div class="page-head" style="margin-top:0"><h2>${esc(s.a.title)}</h2></div>
+    ${s.a.description?`<div class="card" style="margin-bottom:12px;padding:12px 16px"><span class="muted" style="font-size:13.5px;white-space:pre-wrap">${esc(s.a.description)}</span></div>`:""}
+    ${s.teacherComment?`<div class="card" style="margin-bottom:12px;padding:12px 16px;border-left:4px solid var(--gold)"><b>💬 Rückmeldung deiner Lehrkraft:</b><div style="margin-top:4px;white-space:pre-wrap">${esc(s.teacherComment)}</div></div>`:""}
+    <div class="card" style="margin-bottom:12px">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><h3 style="margin:0">✅ Prüfungen</h3><div style="flex:1"></div>
+        ${(s.released)?`<button class="btn btn-ghost btn-sm" id="filShowSol">🏆 Muster-Netzwerk</button>`:""}
+        <button class="btn btn-primary btn-sm" id="filCheck">🔍 Netzwerk prüfen &amp; speichern</button></div>
+      <div id="filChkList" style="margin-top:10px">${filiusChecksListHtml(s.checks, s.results)}</div>
+      <span id="filSolveMsg" class="muted" style="display:block;margin-top:8px;font-size:13px"></span>
+    </div>
+    <div id="filSolveHost"></div>`;
+  document.getElementById("back").onclick = ()=> filiusStudentClassView(s.classId);
+  if(s.view){ try{ s.view.destroy(); }catch(e){} }
+  s.view = new FiliusView("#filSolveHost", { data:s.data, height:"58vh" });
+  pageView=s.view;
+  document.getElementById("filCheck").onclick = filiusRunChecksAndSave;
+  { const bs=document.getElementById("filShowSol"); if(bs) bs.onclick=filiusShowSolution; }
+}
+async function filiusRunChecksAndSave(){
+  const s=filiusSolveState; const net=s.view.getData();
+  const btn=document.getElementById("filCheck"); btn.disabled=true; btn.textContent="Prüfe…";
+  let results={}; try{ results=FiliusEngine.evalChecks(net, s.checks); }catch(e){ results={}; }
+  s.results=results; s.data=net;
+  const passed = s.checks.length>0 && s.checks.every(c=> results[c.id]==="correct");
+  try{ await api.filiusSaveSubmission(s.a.id, net, results, passed); }
+  catch(e){ btn.disabled=false; btn.textContent="🔍 Netzwerk prüfen & speichern"; toast(e.message||"Fehler","err"); return; }
+  btn.disabled=false; btn.textContent="🔍 Netzwerk prüfen & speichern";
+  document.querySelectorAll("#filChkList .sicon").forEach(el=>{ const id=el.dataset.chk; el.innerHTML=sqlStatusIcon(results[id]); });
+  const okN=s.checks.filter(c=>results[c.id]==="correct").length;
+  document.getElementById("filSolveStatus").innerHTML = passed?'<span class="badge">bestanden ✓</span>':'<span class="badge gold">in Bearbeitung</span>';
+  const msg=document.getElementById("filSolveMsg"); if(msg) msg.textContent = passed?`Super – alle ${s.checks.length} Prüfungen bestanden! 🎉` : `${okN} von ${s.checks.length} Prüfungen bestanden – gespeichert.`;
+  toast(passed?"Alles richtig! ✓":"Gespeichert","ok");
+}
+async function filiusShowSolution(){
+  const s=filiusSolveState; let data=null;
+  try{ data=await api.filiusSolutionForStudent(s.a.id); }catch(e){}
+  if(!data){ toast("Kein Muster-Netzwerk verfügbar.","err"); return; }
+  const bg=openModal(`<button class="x" onclick="closeModal()">✕</button><h3>🏆 Muster-Netzwerk</h3><p class="muted" style="font-size:12px;margin:0 0 8px">So könnte das Netzwerk aussehen – du kannst es ansehen und im Simulationsmodus testen.</p><div id="filSolHost"></div>`, true);
+  modalView = new FiliusView("#filSolHost", { data:data, readonly:true, height:"56vh" });
+}
+
+/* ---------- FILIUS: Lehrer-Einsicht in eine Abgabe ---------- */
+let filiusReviewState=null;
+async function filiusReviewSubmission(assignmentId, studentId, studentName, classId){
+  shell(`<div class="center-load"><span class="spin"></span>Abgabe wird geladen…</div>`);
+  let a, submission=null;
+  try{ a=await api.filiusGetAssignment(assignmentId); }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
+  if(!a){ document.getElementById("view").innerHTML=errBox({message:"Aufgabe nicht gefunden."}); return; }
+  try{ submission=await api.filiusGetSubmission(assignmentId, studentId); }catch(e){}
+  let comment=null; if(submission){ try{ comment=await api.filiusGetComment(submission.id); }catch(e){} }
+  const net = (submission&&submission.data)||{nodes:[],links:[]};
+  const checks=a.checks||[];
+  const results = submission ? FiliusEngine.evalChecks(net, checks) : {};   // authoritativ neu auswerten
+  filiusReviewState={ assignmentId, classId, studentId, studentName, checks, net, results,
+    passed: submission? filiusPassed(results, checks) : null, updatedAt: submission?submission.updated_at:null,
+    submissionId: submission?submission.id:null, comment, title:a.title, description:a.description||"", view:null };
+  try{ FiliusView.ensureStyles(); }catch(e){}
+  renderFiliusReview();
+}
+function renderFiliusReview(){
+  const s=filiusReviewState;
+  const statusBadge = s.passed===true?'<span class="badge">bestanden ✓</span>':(s.updatedAt?'<span class="badge gold">in Bearbeitung</span>':'<span class="badge gray">keine Abgabe</span>');
+  document.getElementById("view").innerHTML = `
+    <div class="page-head"><button class="crumb" id="back">← Zur Klasse</button><div class="spacer"></div>${statusBadge}${s.updatedAt?`<span class="muted" style="font-size:12px;margin-left:8px">${esc(fmtDateTime(s.updatedAt))}</span>`:''}</div>
+    <div class="page-head" style="margin-top:0"><h2>Abgabe von ${esc(s.studentName)}</h2></div>
+    <div class="card" style="margin-bottom:12px;padding:12px 16px"><b>Aufgabe:</b> ${esc(s.title)}${s.description?` – <span class="muted">${esc(s.description)}</span>`:''}
+      <span class="muted" style="font-size:12px;display:block;margin-top:4px">👀 Einsicht: Du siehst das gebaute Netzwerk der/des Schüler:in. Wechsle in den ▶ Simulationsmodus, um selbst zu pingen. Die Prüfungen werden hier verlässlich neu ausgewertet.</span></div>
+    <div class="card" style="margin-bottom:12px"><h3 style="margin:0 0 10px">✅ Prüfungen</h3>${filiusChecksListHtml(s.checks, s.results)}</div>
+    <div id="filRevHost"></div>
+    ${s.submissionId?`<div class="card" style="margin-top:14px">
+      <h3 style="margin:0 0 8px">💬 Rückmeldung an ${esc(s.studentName)}</h3>
+      <textarea class="input" id="filRevComment" style="min-height:70px" placeholder="Kommentar zu dieser Abgabe…">${esc((s.comment&&s.comment.body)||"")}</textarea>
+      <div style="display:flex;gap:12px;align-items:center;margin-top:10px;flex-wrap:wrap">
+        <label style="display:flex;gap:8px;align-items:center;font-weight:800;cursor:pointer"><input type="checkbox" id="filRevRelease" style="width:18px;height:18px" ${s.comment&&s.comment.released?'checked':''}> Für Schüler:in sichtbar</label>
+        <div style="flex:1"></div>
+        <button class="btn btn-ghost btn-sm" id="filRevDelete" style="${s.comment?'':'display:none'}">Löschen</button>
+        <button class="btn btn-primary" id="filRevSave">Kommentar speichern</button>
+      </div>
+      <span id="filRevMsg" class="muted" style="display:block;margin-top:6px">${s.comment?(s.comment.released?'Für Schüler:in sichtbar ✓':'Gespeichert (noch nicht freigegeben)'):''}</span>
+    </div>`:''}`;
+  document.getElementById("back").onclick = ()=> filiusTeacherClassView(s.classId);
+  if(s.view){ try{ s.view.destroy(); }catch(e){} }
+  s.view = new FiliusView("#filRevHost", { data:s.net, readonly:true, height:"56vh" });
+  pageView=s.view;
+  { const sv=document.getElementById("filRevSave"); if(sv) sv.onclick=async()=>{ const body=(document.getElementById("filRevComment").value||"").trim(); const released=document.getElementById("filRevRelease").checked; if(!body){ toast("Bitte einen Kommentar eingeben.","err"); return; } sv.disabled=true; sv.textContent="Speichere…"; try{ s.comment=await api.filiusSaveComment(s.submissionId, body, released); document.getElementById("filRevDelete").style.display=""; document.getElementById("filRevMsg").textContent=released?"Für Schüler:in sichtbar ✓":"Gespeichert (noch nicht freigegeben)"; toast("Kommentar gespeichert ✓","ok"); }catch(e){ toast(e.message||"Fehler","err"); } finally{ sv.disabled=false; sv.textContent="Kommentar speichern"; } }; }
+  { const dl=document.getElementById("filRevDelete"); if(dl) dl.onclick=async()=>{ if(!s.submissionId||!s.comment) return; if(!confirm("Kommentar löschen?")) return; try{ await api.filiusDeleteComment(s.submissionId); s.comment=null; document.getElementById("filRevComment").value=""; document.getElementById("filRevRelease").checked=false; dl.style.display="none"; document.getElementById("filRevMsg").textContent="Kommentar gelöscht."; toast("Gelöscht","ok"); }catch(e){ toast(e.message||"Fehler","err"); } }; }
+}
+
+/* ---------- FILIUS: Schüler-Profil (Lehrer-Ansicht) ---------- */
+async function filiusStudentProfilePage(classId, studentId, studentName, username){
+  shell(`<div class="center-load"><span class="spin"></span>Profil…</div>`);
+  let asgs=[], subs=[], note=null, overview=null;
+  try{
+    asgs = await api.filiusListAssignments(classId);
+    if(asgs.length){ subs = (await api.filiusClassSubmissions(asgs.map(a=>a.id))).filter(s=>s.student_id===studentId); }
+    try{ note = await api.getStudentNote(classId, studentId); }catch(e){}
+    try{ overview = await api.studentOverview(studentId); }catch(e){}
+  }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
+  const lastLogin = (overview&&overview.last_login)?fmtDateTime(overview.last_login):"—";
+  const subByA = id=> subs.find(s=>s.assignment_id===id);
+  const passCount = asgs.filter(a=>{ const s=subByA(a.id); return s && filiusPassed(filiusEvalSub(s,a.checks), a.checks); }).length;
+  const doneCount = asgs.filter(a=> !!subByA(a.id)).length;
+  const _ts = subs.map(s=>s.updated_at).filter(Boolean).sort(); const lastAct=_ts.length?fmtDateTime(_ts[_ts.length-1]):"—";
+  const aRows = asgs.length ? asgs.map(a=>{
+    const ids=(a.checks||[]).map(c=>c.id), total=ids.length, s=subByA(a.id), res=s?filiusEvalSub(s,a.checks):{};
+    let g=0; for(const id of ids){ if(res[id]==="correct") g++; }
+    const badge = !s ? '<span class="badge gray">offen</span>' : (filiusPassed(res,a.checks)?'<span class="badge">bestanden ✓</span>':'<span class="badge gold">in Bearbeitung</span>');
+    const quote = total?` <span class="muted" style="font-size:12px">${g}/${total}</span>`:"";
+    const open = s?`<button class="btn btn-sm btn-ghost" data-aopen="${a.id}">ansehen</button>`:"";
+    return `<div class="row"><span class="grow"><span class="t">${esc(a.title)}${quote}</span></span>${badge}${open}</div>`;
+  }).join("") : `<div class="muted" style="font-size:13px">Keine Aufgaben.</div>`;
+  document.getElementById("view").innerHTML = `
+    <div class="page-head"><button class="crumb" id="back">← zurück zur Klasse</button></div>
+    <div class="page-head" style="margin-top:0"><h2><span class="chip" style="font-size:16px"><span class="av">${esc(initials(studentName))}</span>${esc(studentName)}</span></h2></div>
+    <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(220px,1fr));margin-bottom:14px">
+      <div class="card"><div class="meta">🪪 Benutzername</div><div style="font-weight:900;margin-top:4px"><code>${esc(username||"—")}</code></div></div>
+      <div class="card"><div class="meta">🕐 Zuletzt eingeloggt</div><div style="font-weight:900;margin-top:4px">${esc(lastLogin)}</div></div>
+      <div class="card"><div class="meta">⚡ Letzte Filius-Abgabe</div><div style="font-weight:900;margin-top:4px">${esc(lastAct)}</div></div>
+      <div class="card"><div class="meta">✅ Fortschritt</div><div style="font-weight:900;margin-top:4px">${passCount} bestanden · ${doneCount}/${asgs.length} bearbeitet</div></div>
+    </div>
+    <div class="card" style="margin-bottom:14px"><h3 style="margin:0 0 10px">📋 Aufgaben</h3><div class="list">${aRows}</div></div>
+    <div class="card"><h3 style="margin:0 0 8px">📝 Notizen zu ${esc(studentName)} <span class="muted" style="font-weight:600;font-size:12px">(privat – nur Lehrkräfte)</span></h3>
+      <textarea class="input" id="snNote" style="min-height:90px" placeholder="Notizen zu ${esc(studentName)}…">${esc(note?note.body:"")}</textarea>
+      <div style="display:flex;gap:10px;align-items:center;margin-top:10px"><button class="btn btn-primary" id="snSave">Notiz speichern</button><span id="snMsg" class="muted" style="font-size:13px">${note&&note.updated_at?("zuletzt: "+esc(fmtDateTime(note.updated_at))):""}</span></div></div>`;
+  document.getElementById("back").onclick = ()=> filiusTeacherClassView(classId);
+  document.querySelectorAll("[data-aopen]").forEach(b=> b.onclick=()=> filiusReviewSubmission(b.dataset.aopen, studentId, studentName, classId));
+  document.getElementById("snSave").onclick=async()=>{ const body=document.getElementById("snNote").value; const btn=document.getElementById("snSave"); btn.disabled=true; btn.textContent="Speichere…"; try{ await api.saveStudentNote(classId, studentId, body); document.getElementById("snMsg").textContent="gespeichert ✓"; toast("Notiz gespeichert ✓","ok"); }catch(e){ toast(e.message||"Fehler","err"); } finally{ btn.disabled=false; btn.textContent="Notiz speichern"; } };
+}
+
+/* ---------- FILIUS: Netzwerk-Bibliothek ---------- */
+async function filiusNetworksPage(){
+  shell(`<div class="center-load"><span class="spin"></span>Netzwerke…</div>`);
+  let list=[]; try{ list=await api.filiusListNetworks(); }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
+  const rows = list.length ? `<div class="list">${list.map(d=>`
+      <div class="row clickrow" data-open="${d.id}" style="cursor:pointer">
+        <span class="grow"><span class="t">${esc(d.name)}</span><span class="s">von ${esc(d.owner_name)}${d.mine?" (du)":""} · ${d.shared?"🌍 geteilt":"🔒 privat"} · ${esc(fmtDateTime(d.updated_at))}</span></span>
+        ${(d.mine||ME.is_admin)?`<button class="btn btn-sm btn-ghost" data-del="${d.id}" data-nm="${esc(d.name)}" title="löschen">🗑️</button>`:""}
+        <span style="margin-left:8px;color:#7a8aa0">→</span></div>`).join("")}</div>`
+    : `<div class="empty"><span class="ic">🌐</span>Noch keine Netzwerke. Lege dein erstes an!</div>`;
+  document.getElementById("view").innerHTML = `
+    <div class="page-head"><button class="crumb" id="back">← Filius · Meine Klassen</button></div>
+    <div class="page-head" style="margin-top:0"><h2>🌐 Netzwerke</h2><div class="spacer"></div><button class="btn btn-primary" id="btnNewNet">+ Neues Netzwerk</button></div>
+    <div class="card" style="margin-bottom:12px;padding:12px 16px"><span class="muted" style="font-size:13px">Wiederverwendbare Start-Netzwerke für Aufgaben. <b>Geteilte</b> Netzwerke können andere Lehrkräfte nutzen und stehen <b>allen in der 🧪 Sandbox</b> zur Verfügung; <b>private</b> nur dir.</span></div>
+    ${rows}`;
+  document.getElementById("back").onclick = filiusTeacherHome;
+  document.getElementById("btnNewNet").onclick = ()=> filiusNetworkEditorPage(null);
+  document.querySelectorAll(".clickrow[data-open]").forEach(r=> r.onclick=(e)=>{ if(e.target.closest("[data-del]")) return; const d=list.find(x=>x.id===r.dataset.open); filiusNetworkEditorPage(d); });
+  document.querySelectorAll("[data-del]").forEach(b=> b.onclick=async(e)=>{ e.stopPropagation(); if(!confirm(`Netzwerk „${b.dataset.nm}" wirklich löschen?`)) return; try{ await api.filiusDeleteNetwork(b.dataset.del); toast("Netzwerk gelöscht","ok"); filiusNetworksPage(); }catch(err){ toast(err.message||"Fehler","err"); } });
+}
+async function filiusNetworkEditorPage(meta){
+  const isNew=!meta, canEdit=isNew||!!meta.mine||ME.is_admin;
+  shell(`<div class="center-load"><span class="spin"></span>Lädt…</div>`);
+  let data={nodes:[],links:[]}, name="", shared=false;
+  if(!isNew){ try{ const d=await api.filiusGetNetwork(meta.id); data=d.data||{nodes:[],links:[]}; name=d.name||""; shared=!!d.shared; }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; } }
+  try{ FiliusView.ensureStyles(); }catch(e){}
+  const title=isNew?"Neues Netzwerk":(canEdit?"Netzwerk bearbeiten":esc(name));
+  document.getElementById("view").innerHTML = `
+    <div class="page-head"><button class="crumb" id="back">← Netzwerke</button><div class="spacer"></div>
+      <input type="file" id="netFile" accept=".json,.fnet" style="display:none">
+      ${canEdit?`<button class="btn btn-ghost btn-sm" id="netOpen" title="Netzwerk aus Datei laden">📂</button>`:""}
+      <button class="btn btn-ghost btn-sm" id="netDl" style="margin-left:6px" title="als .json herunterladen">⬇️</button></div>
+    <div class="page-head" style="margin-top:0"><h2>🌐 ${title}</h2>${(!canEdit&&meta)?`<span class="badge gray" style="margin-left:8px;align-self:center">von ${esc(meta.owner_name)} · nur ansehen</span>`:""}</div>
+    <div class="card" style="margin-bottom:14px">
+      <div class="field" style="margin-bottom:${canEdit?"12px":"0"}"><label>Name</label><input class="input" id="netName" maxlength="80" value="${esc(name)}" ${canEdit?"":"disabled"}></div>
+      ${canEdit?`<label style="display:flex;align-items:center;gap:8px;font-weight:700;font-size:14px;cursor:pointer"><input type="checkbox" id="netShared" ${shared?"checked":""}> 🌍 Freigeben – andere Lehrkräfte können es nutzen und es steht allen in der 🧪 Sandbox zur Verfügung</label>`:""}
+    </div>
+    <div id="netHost"></div>
+    ${canEdit?`<div style="margin-top:14px"><button class="btn btn-primary btn-lg" id="netSave" style="max-width:280px">💾 Netzwerk speichern</button></div>`:""}`;
+  document.getElementById("back").onclick = filiusNetworksPage;
+  pageView = new FiliusView("#netHost", { data:data, readonly:!canEdit, height:"60vh" });
+  document.getElementById("netDl").onclick = ()=>{ const nm=((document.getElementById("netName").value||"").trim()||"netzwerk").replace(/[^\w.\- ]+/g,"_")+".json"; const blob=new Blob([JSON.stringify(pageView.getData())],{type:"application/json;charset=utf-8"}); const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=nm; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),1500); };
+  { const fo=document.getElementById("netOpen"); if(fo){ const fi=document.getElementById("netFile"); fo.onclick=()=>fi.click(); fi.onchange=(e)=>{ const f=e.target.files[0]; if(!f) return; const rd=new FileReader(); rd.onload=()=>{ try{ const d=JSON.parse(rd.result); pageView.setData(d); toast("Datei geladen ✓","ok"); }catch(err){ toast("Ungültige Datei","err"); } }; rd.readAsText(f); }; } }
+  { const sv=document.getElementById("netSave"); if(sv) sv.onclick=async()=>{ const nm=(document.getElementById("netName").value||"").trim(); if(!nm){ toast("Bitte einen Namen eingeben.","err"); return; } const sh=!!(document.getElementById("netShared")&&document.getElementById("netShared").checked); sv.disabled=true; sv.textContent="Speichere…"; try{ if(isNew) await api.filiusCreateNetwork({name:nm, data:pageView.getData(), shared:sh}); else await api.filiusUpdateNetwork(meta.id,{name:nm, data:pageView.getData(), shared:sh}); toast("Netzwerk gespeichert ✓","ok"); filiusNetworksPage(); }catch(e){ sv.disabled=false; sv.textContent="💾 Netzwerk speichern"; toast(e.message||"Fehler","err"); } }; }
+}
+
+/* ---------- FILIUS: Vorlagen ---------- */
+async function filiusPickTemplate(classId){
+  openModal(`<button class="x" id="tplPickX">×</button><h3 style="margin:0 0 12px">📋 Aufgabe aus Vorlage</h3><div id="tplPickHost"><div class="center-load"><span class="spin"></span>Vorlagen…</div></div>`);
+  { const x=document.getElementById("tplPickX"); if(x) x.onclick=closeModal; }
+  let list=[]; try{ list=await api.filiusListTemplates(); }catch(e){ const h=document.getElementById("tplPickHost"); if(h) h.innerHTML=errBox(e); return; }
+  const host=document.getElementById("tplPickHost"); if(!host) return;
+  if(!list.length){ host.innerHTML=`<div class="empty"><span class="ic">📋</span>Noch keine Vorlagen. Öffne eine Aufgabe und wähle „⭐ Als Vorlage".</div>`; return; }
+  host.innerHTML=`<div class="muted" style="font-size:12.5px;margin-bottom:8px">Wähle eine Vorlage – sie wird als neue Aufgabe in dieser Klasse geöffnet.</div>
+    <div class="list">${list.map(t=>`<div class="row clickrow" data-tpl="${t.id}" style="cursor:pointer"><span class="grow"><span class="t">${esc(t.title)}</span><span class="s">${t.check_count} Prüfung(en) · von ${esc(t.owner_name)}${t.mine?" (du)":""}${t.shared?" · 🌍 geteilt":""}</span></span><span style="margin-left:8px;color:#7a8aa0">→</span></div>`).join("")}</div>`;
+  host.querySelectorAll(".clickrow[data-tpl]").forEach(r=> r.onclick=async()=>{ try{ const tpl=await api.filiusGetTemplate(r.dataset.tpl); closeModal(); filiusAssignmentEditorPage(classId, null, tpl); }catch(e){ toast(e.message||"Fehler","err"); } });
+}
+async function filiusTemplatesPage(){
+  shell(`<div class="center-load"><span class="spin"></span>Vorlagen…</div>`);
+  let list=[]; try{ list=await api.filiusListTemplates(); }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
+  const rows = list.length ? `<div class="list">${list.map(t=>`
+      <div class="row"><span class="grow"><span class="t${(t.mine||ME.is_admin)?" clickable":""}"${(t.mine||ME.is_admin)?` data-edit="${t.id}" title="bearbeiten"`:""}>${esc(t.title)}</span><span class="s">${t.check_count} Prüfung(en) · von ${esc(t.owner_name)}${t.mine?" (du)":""} · ${t.shared?"🌍 geteilt":"🔒 privat"} · ${esc(fmtDateTime(t.updated_at))}</span></span>
+        ${(t.mine||ME.is_admin)?`<button class="abtn" data-edit="${t.id}" title="bearbeiten">✏️</button><button class="abtn" data-share="${t.id}" data-on="${t.shared?1:0}" title="${t.shared?'Freigabe zurücknehmen':'für andere Lehrkräfte freigeben'}">${t.shared?'🌍':'🔒'}</button><button class="abtn" data-del="${t.id}" data-nm="${esc(t.title)}" title="löschen">🗑️</button>`:""}
+      </div>`).join("")}</div>`
+    : `<div class="empty"><span class="ic">📋</span>Noch keine Vorlagen. Lege eine über „+ Neue Vorlage" an – oder wähle in einer Aufgabe „⭐ Als Vorlage".</div>`;
+  document.getElementById("view").innerHTML = `
+    <div class="page-head"><button class="crumb" id="back">← Filius · Meine Klassen</button></div>
+    <div class="page-head" style="margin-top:0"><h2>📋 Aufgaben-Vorlagen</h2><div class="spacer"></div><button class="btn btn-primary" id="btnNewTpl">+ Neue Vorlage</button></div>
+    <div class="card" style="margin-bottom:12px;padding:12px 16px"><span class="muted" style="font-size:13px">Vorlagen sind wiederverwendbare Aufgaben (Start-Netzwerk + Prüfungen). In einer Klasse legst du über <b>📋 aus Vorlage</b> eine neue Aufgabe daraus an. <b>Geteilte</b> Vorlagen können auch andere Lehrkräfte verwenden.</span></div>
+    ${rows}`;
+  document.getElementById("back").onclick = filiusTeacherHome;
+  document.getElementById("btnNewTpl").onclick = ()=> filiusTemplateEditorPage(null);
+  document.querySelectorAll("[data-edit]").forEach(b=> b.onclick=()=> filiusTemplateEditorPage({id:b.dataset.edit}));
+  document.querySelectorAll("[data-share]").forEach(b=> b.onclick=async()=>{ const on=b.dataset.on==="1"; try{ await api.filiusUpdateTemplate(b.dataset.share,{shared:!on}); toast(on?"Freigabe zurückgenommen":"Vorlage freigegeben 🌍","ok"); filiusTemplatesPage(); }catch(e){ toast(e.message||"Fehler","err"); } });
+  document.querySelectorAll("[data-del]").forEach(b=> b.onclick=async()=>{ if(!confirm(`Vorlage „${b.dataset.nm}" wirklich löschen?`)) return; try{ await api.filiusDeleteTemplate(b.dataset.del); toast("Vorlage gelöscht","ok"); filiusTemplatesPage(); }catch(e){ toast(e.message||"Fehler","err"); } });
+}
+
+/* ---------- FILIUS: Aufgaben-Editor (Lehrkräfte) ---------- */
+let filiusAssignState=null;
+async function filiusAssignmentEditorPage(classId, existing, prefill){
+  shell(`<div class="center-load"><span class="spin"></span>Lädt…</div>`);
+  let nets=[]; try{ nets=await api.filiusListNetworks(); }catch(e){ nets=[]; }
+  let a=null, sol=null;
+  if(existing && existing.id){ try{ a=await api.filiusGetAssignment(existing.id); sol=await api.filiusGetSolution(existing.id); }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; } }
+  if(prefill){
+    filiusAssignState={ classId, id:null, isTemplate:false, title:prefill.title||"", description:prefill.description||"", published:false, networkId:null,
+      starter:prefill.net_snapshot||{nodes:[],links:[]}, solution:(prefill.solution_net&&(prefill.solution_net.nodes||prefill.solution_net.links))?prefill.solution_net:null,
+      checks:(prefill.checks||[]).map(c=>({id:c.id||chkId(), type:c.type, params:Object.assign({},c.params||{})})),
+      editing:"starter", nets, view:null };
+  } else {
+    filiusAssignState={ classId, id:a?a.id:null, isTemplate:false, title:a?(a.title||""):"", description:a?(a.description||""):"", published:a?!!a.published:false, networkId:a?a.network_id:null,
+      starter:a?(a.net_snapshot||{nodes:[],links:[]}):{nodes:[],links:[]}, solution:(sol&&sol.data&&(sol.data.nodes||sol.data.links))?sol.data:null,
+      checks:(a?(a.checks||[]):[]).map(c=>({id:c.id||chkId(), type:c.type, params:Object.assign({},c.params||{})})),
+      editing:"starter", nets, view:null };
+    if(!filiusAssignState.checks.length && !a) filiusAssignState.checks=[{id:chkId(), type:"ping", params:{}}];
+  }
+  try{ FiliusView.ensureStyles(); }catch(e){}
+  renderFiliusAssignEditor();
+}
+async function filiusTemplateEditorPage(existing){
+  shell(`<div class="center-load"><span class="spin"></span>Lädt…</div>`);
+  let nets=[]; try{ nets=await api.filiusListNetworks(); }catch(e){ nets=[]; }
+  let tpl=null;
+  if(existing && existing.id){ try{ tpl=await api.filiusGetTemplate(existing.id); }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; } }
+  filiusAssignState={ classId:null, id:null, isTemplate:true, templateId:tpl?tpl.id:null, title:tpl?(tpl.title||""):"", description:tpl?(tpl.description||""):"", published:false, networkId:null,
+    starter:tpl?(tpl.net_snapshot||{nodes:[],links:[]}):{nodes:[],links:[]}, solution:(tpl&&tpl.solution_net&&(tpl.solution_net.nodes||tpl.solution_net.links))?tpl.solution_net:null,
+    checks:(tpl?(tpl.checks||[]):[]).map(c=>({id:c.id||chkId(), type:c.type, params:Object.assign({},c.params||{})})),
+    editing:"starter", nets, view:null };
+  if(!filiusAssignState.checks.length) filiusAssignState.checks=[{id:chkId(), type:"ping", params:{}}];
+  try{ FiliusView.ensureStyles(); }catch(e){}
+  renderFiliusAssignEditor();
+}
+function filiusSyncEditing(){ const s=filiusAssignState; if(!s||!s.view) return; s[s.editing]=s.view.getData(); }
+function renderFiliusAssignEditor(){
+  const s=filiusAssignState;
+  const netOpts = `<option value="">— leer / selbst bauen —</option>`+ s.nets.map(d=>`<option value="${esc(d.id)}" ${d.id===s.networkId?"selected":""}>${esc(d.name)}${d.mine?"":" (von "+esc(d.owner_name)+")"}</option>`).join("");
+  document.getElementById("view").innerHTML = `
+    <div class="page-head"><button class="crumb" id="back">${s.isTemplate?"← Vorlagen":"← Zur Klasse"}</button></div>
+    <div class="card" style="margin-bottom:14px">
+      <div class="page-head" style="margin:0 0 12px"><h2 style="margin:0">${s.isTemplate?(s.templateId?"Vorlage bearbeiten":"Neue Vorlage"):(s.id?"Filius-Aufgabe bearbeiten":"Neue Filius-Aufgabe")}</h2><div class="spacer"></div>
+        ${s.isTemplate?"":`<button class="btn btn-ghost btn-sm" id="faTpl" title="Diese Aufgabe als wiederverwendbare Vorlage speichern">⭐ Als Vorlage</button>`}
+        <button class="btn btn-primary" id="faSave" style="margin-left:8px">${s.isTemplate?"💾 Vorlage speichern":"💾 Aufgabe speichern"}</button></div>
+      <div class="field"><label>${s.isTemplate?"Titel der Vorlage":"Titel der Aufgabe"}</label><input class="input" id="faTitle" maxlength="120" value="${esc(s.title)}"></div>
+      <div class="field"><label>Aufgabenstellung (optional)</label><textarea class="input" id="faDesc" style="min-height:54px" placeholder="Was sollen die Schüler:innen bauen? Nenne Rechnernamen/IP-Adressen, die die Prüfungen erwarten.">${esc(s.description)}</textarea></div>
+      ${s.isTemplate?"":`<label style="display:flex;align-items:center;gap:8px;font-weight:700;font-size:14px;cursor:pointer"><input type="checkbox" id="faPub" ${s.published?"checked":""}> 🚀 Veröffentlicht (für Schüler:innen sichtbar)</label>`}
+    </div>
+    <div class="card" style="margin-bottom:14px">
+      <h3 style="margin:0 0 10px">✅ Prüfungen <span class="muted" style="font-weight:600;font-size:12px">(werden automatisch gegen das Schüler-Netz ausgewertet)</span></h3>
+      <div id="faChkList"></div>
+      <button class="btn btn-ghost btn-sm" id="faAddChk" style="margin-top:4px;width:100%">+ Prüfung</button>
+    </div>
+    <div class="card" style="margin-bottom:12px">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <div class="fv-modeseg" style="background:var(--line2);border-radius:11px;padding:3px"><button id="faTabStart" class="on" style="border:none;background:var(--card);font-family:inherit;font-weight:800;font-size:13px;color:var(--ink);padding:6px 12px;border-radius:9px;cursor:pointer">🔧 Start-Netzwerk</button><button id="faTabSol" style="border:none;background:transparent;font-family:inherit;font-weight:800;font-size:13px;color:var(--muted);padding:6px 12px;border-radius:9px;cursor:pointer">🏆 Muster-Netzwerk</button></div>
+        <label class="muted" style="font-size:13px;font-weight:800;align-self:center;margin-left:6px">aus Bibliothek:</label>
+        <select class="input" id="faNet" style="max-width:230px;width:auto">${netOpts}</select>
+        <div style="flex:1"></div>
+        <label id="faSolWrap" style="display:none;align-items:center;gap:7px;font-weight:700;font-size:13px;cursor:pointer"><input type="checkbox" id="faSolOn" ${s.solution?"checked":""}> Muster-Netzwerk hinterlegen</label>
+      </div>
+      <p class="fv-hint" id="faHint" style="margin:8px 2px 0">🔧 Baue das <b>Start-Netzwerk</b>, mit dem die Schüler:innen beginnen (kann auch leer bleiben – dann bauen sie von Grund auf).</p>
+    </div>
+    <div id="faNetHost"></div>`;
+  document.getElementById("back").onclick = ()=>{ filiusSyncEditing(); s.isTemplate?filiusTemplatesPage():filiusTeacherClassView(s.classId); };
+  document.getElementById("faTitle").oninput=(e)=>{ s.title=e.target.value; };
+  document.getElementById("faDesc").oninput=(e)=>{ s.description=e.target.value; };
+  { const pb=document.getElementById("faPub"); if(pb) pb.onchange=(e)=>{ s.published=e.target.checked; }; }
+  document.getElementById("faSave").onclick = s.isTemplate?filiusSaveTemplateFromEditor:filiusSaveAssignment;
+  { const tb=document.getElementById("faTpl"); if(tb) tb.onclick=filiusSaveAsTemplate; }
+  document.getElementById("faAddChk").onclick = ()=>{ s.checks.push({id:chkId(), type:"ping", params:{}}); renderFiliusChecks(); };
+  document.getElementById("faNet").onchange = async (e)=>{ const v=e.target.value; s.networkId=v||null; if(s.editing!=="starter"){ filiusSetEditing("starter"); } if(!v){ return; } try{ const d=await api.filiusGetNetwork(v); s.starter=d.data||{nodes:[],links:[]}; if(s.view) s.view.setData(s.starter); }catch(err){ toast(err.message||"Fehler","err"); } };
+  document.getElementById("faTabStart").onclick = ()=> filiusSetEditing("starter");
+  document.getElementById("faTabSol").onclick = ()=> filiusSetEditing("solution");
+  { const so=document.getElementById("faSolOn"); if(so) so.onchange=(e)=>{ if(e.target.checked){ if(!s.solution) s.solution={nodes:[],links:[]}; } else { if(confirm("Muster-Netzwerk verwerfen?")){ s.solution=null; if(s.editing==="solution") filiusSetEditing("starter"); } else { e.target.checked=true; } } }; }
+  renderFiliusChecks();
+  s.view = new FiliusView("#faNetHost", { data:s.editing==="solution"?(s.solution||{nodes:[],links:[]}):s.starter, height:"56vh" });
+  pageView = s.view;
+  filiusUpdateEditTabs();
+}
+function filiusSetEditing(which){
+  const s=filiusAssignState; if(s.editing===which) return;
+  filiusSyncEditing();
+  if(which==="solution" && !s.solution) s.solution={nodes:[],links:[]};
+  s.editing=which;
+  if(s.view) s.view.setData(which==="solution"?(s.solution||{nodes:[],links:[]}):s.starter);
+  filiusUpdateEditTabs();
+}
+function filiusUpdateEditTabs(){
+  const s=filiusAssignState;
+  const ts=document.getElementById("faTabStart"), tsol=document.getElementById("faTabSol"), wrap=document.getElementById("faSolWrap"), hint=document.getElementById("faHint");
+  if(wrap) wrap.style.display="flex";
+  if(ts&&tsol){ const on=s.editing==="starter"; ts.style.background=on?"var(--card)":"transparent"; ts.style.color=on?"var(--ink)":"var(--muted)"; tsol.style.background=!on?"var(--card)":"transparent"; tsol.style.color=!on?"var(--ink)":"var(--muted)"; }
+  if(hint) hint.innerHTML = s.editing==="solution" ? '🏆 Baue das <b>Muster-Netzwerk</b> – bei Freigabe können Schüler:innen es ansehen.' : '🔧 Baue das <b>Start-Netzwerk</b>, mit dem die Schüler:innen beginnen (kann auch leer bleiben).';
+  const so=document.getElementById("faSolOn"); if(so) so.checked=!!s.solution;
+}
+function filiusCheckParamHtml(check){
+  const t=FiliusEngine.CHECK_TYPES[check.type]; if(!t) return ""; const p=check.params||{};
+  return t.fields.map(f=>{
+    const val=esc(p[f.k]!=null?p[f.k]:"");
+    if(f.type==="select"){ return `<div class="field" style="margin:0"><label>${esc(f.label)}</label><select class="input filcp" data-k="${f.k}">${f.opts.map(o=>`<option value="${o[0]}" ${p[f.k]===o[0]?"selected":""}>${esc(o[1])}</option>`).join("")}</select></div>`; }
+    return `<div class="field" style="margin:0"><label>${esc(f.label)}</label><input class="input filcp" data-k="${f.k}" type="${f.type==="number"?"number":"text"}" placeholder="${esc(f.ph||"")}" value="${val}"></div>`;
+  }).join("");
+}
+function renderFiliusChecks(){
+  const s=filiusAssignState; const host=document.getElementById("faChkList"); if(!host) return;
+  const typeOpts = Object.keys(FiliusEngine.CHECK_TYPES).map(k=>({k, label:FiliusEngine.CHECK_TYPES[k].label}));
+  if(!s.checks.length){ host.innerHTML='<div class="muted" style="font-size:13px;padding:6px 2px">Noch keine Prüfung – füge unten eine hinzu.</div>'; return; }
+  host.innerHTML = s.checks.map((c,i)=>`
+    <div class="card" style="padding:12px 14px;margin-bottom:8px;box-shadow:none;border:1.5px solid var(--line)">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+        <span class="sqedit-no" style="flex:none">${i+1}</span>
+        <select class="input" data-ctype="${i}" style="max-width:230px;width:auto">${typeOpts.map(o=>`<option value="${o.k}" ${o.k===c.type?"selected":""}>${esc(o.label)}</option>`).join("")}</select>
+        <div style="flex:1"></div>
+        <button class="abtn" data-cup="${i}" title="nach oben">↑</button><button class="abtn" data-cdown="${i}" title="nach unten">↓</button><button class="abtn" data-cdel="${i}" title="löschen">🗑️</button>
+      </div>
+      <div class="fv-row2" data-cp="${i}">${filiusCheckParamHtml(c)}</div>
+    </div>`).join("");
+  host.querySelectorAll("[data-ctype]").forEach(sel=> sel.onchange=(e)=>{ const i=+sel.dataset.ctype; s.checks[i].type=e.target.value; s.checks[i].params={}; const box=host.querySelector(`[data-cp="${i}"]`); if(box){ box.innerHTML=filiusCheckParamHtml(s.checks[i]); wireCheckParams(box, s.checks[i]); } });
+  host.querySelectorAll("[data-cp]").forEach(box=>{ const i=+box.dataset.cp; wireCheckParams(box, s.checks[i]); });
+  host.querySelectorAll("[data-cup]").forEach(b=> b.onclick=()=>{ const i=+b.dataset.cup; if(i<=0) return; const a=s.checks; [a[i-1],a[i]]=[a[i],a[i-1]]; renderFiliusChecks(); });
+  host.querySelectorAll("[data-cdown]").forEach(b=> b.onclick=()=>{ const i=+b.dataset.cdown; if(i>=s.checks.length-1) return; const a=s.checks; [a[i+1],a[i]]=[a[i],a[i+1]]; renderFiliusChecks(); });
+  host.querySelectorAll("[data-cdel]").forEach(b=> b.onclick=()=>{ const i=+b.dataset.cdel; s.checks.splice(i,1); renderFiliusChecks(); });
+}
+function wireCheckParams(box, check){ box.querySelectorAll(".filcp").forEach(inp=>{ inp.oninput=()=>{ check.params=check.params||{}; check.params[inp.dataset.k]=inp.value; }; inp.onchange=()=>{ check.params=check.params||{}; check.params[inp.dataset.k]=inp.value; }; }); }
+function filiusValidateChecks(checks){ for(let i=0;i<checks.length;i++){ const c=checks[i], t=FiliusEngine.CHECK_TYPES[c.type]; if(!t) continue; for(const f of t.fields){ const v=(c.params||{})[f.k]; if(v==null||String(v).trim()===""){ if(c.type==="count"&&f.k==="min"){ continue; } throw new Error("Prüfung "+(i+1)+" ("+t.label+"): Feld „"+f.label+"“ fehlt."); } } if(c.type==="count" && !(+((c.params||{}).min)>0)) c.params.min=1; } }
+async function filiusSaveAssignment(){
+  const s=filiusAssignState; filiusSyncEditing();
+  const title=(s.title||"").trim();
+  if(!title){ toast("Bitte einen Titel eingeben.","err"); return; }
+  if(!s.checks.length){ toast("Bitte mindestens eine Prüfung anlegen.","err"); return; }
+  try{ filiusValidateChecks(s.checks); }catch(e){ toast(e.message,"err"); return; }
+  const btn=document.getElementById("faSave"); btn.disabled=true; btn.textContent="Speichere…";
+  try{
+    const payload={ class_id:s.classId, title, description:(s.description||"").trim()||null, published:s.published, network_id:s.networkId||null, net_snapshot:s.starter||{nodes:[],links:[]}, checks:s.checks };
+    let aid=s.id;
+    if(aid){ await api.filiusUpdateAssignment(aid, payload); } else { const a=await api.filiusCreateAssignment(payload); aid=a.id; s.id=aid; }
+    if(s.solution && ((s.solution.nodes||[]).length || (s.solution.links||[]).length)) await api.filiusSaveSolution(aid, s.solution);
+    else { try{ await api.filiusDeleteSolution(aid); }catch(_){} }
+    toast("Aufgabe gespeichert ✓","ok"); filiusTeacherClassView(s.classId);
+  }catch(e){ btn.disabled=false; btn.textContent="💾 Aufgabe speichern"; toast(e.message||"Fehler","err"); }
+}
+async function filiusSaveAsTemplate(){
+  const s=filiusAssignState; filiusSyncEditing();
+  const title=(s.title||"").trim(); if(!title){ toast("Bitte zuerst einen Titel eingeben.","err"); return; }
+  if(!s.checks.length){ toast("Bitte mindestens eine Prüfung anlegen.","err"); return; }
+  try{ filiusValidateChecks(s.checks); }catch(e){ toast(e.message,"err"); return; }
+  const name=prompt("Name der Vorlage:", title); if(name===null) return;
+  try{ await api.filiusCreateTemplate({ title:(name.trim()||title), description:(s.description||"").trim()||null, net_snapshot:s.starter||{nodes:[],links:[]}, checks:s.checks, solution_net:s.solution||{} }); toast("Als Vorlage gespeichert ⭐","ok"); }
+  catch(e){ toast(e.message||"Fehler","err"); }
+}
+async function filiusSaveTemplateFromEditor(){
+  const s=filiusAssignState; filiusSyncEditing();
+  const title=(s.title||"").trim(); if(!title){ toast("Bitte einen Titel eingeben.","err"); return; }
+  if(!s.checks.length){ toast("Bitte mindestens eine Prüfung anlegen.","err"); return; }
+  try{ filiusValidateChecks(s.checks); }catch(e){ toast(e.message,"err"); return; }
+  const btn=document.getElementById("faSave"); btn.disabled=true; btn.textContent="Speichere…";
+  const payload={ title, description:(s.description||"").trim()||null, net_snapshot:s.starter||{nodes:[],links:[]}, checks:s.checks, solution_net:s.solution||{} };
+  try{ if(s.templateId){ await api.filiusUpdateTemplate(s.templateId, payload); } else { const t=await api.filiusCreateTemplate(payload); s.templateId=t.id; } toast("Vorlage gespeichert ⭐","ok"); filiusTemplatesPage(); }
+  catch(e){ btn.disabled=false; btn.textContent="💾 Vorlage speichern"; toast(e.message||"Fehler","err"); }
+}
+
+/* ---------- FILIUS: Sandbox (private Projekte) ---------- */
+async function filiusSandbox(){
+  shell(`<div class="center-load"><span class="spin"></span>Sandbox…</div>`);
+  let projects=[]; try{ projects=await api.filiusListSandboxProjects(); }catch(e){}
+  const list = projects.length ? `<div class="list">${projects.map(p=>`
+      <div class="row clickrow" data-id="${p.id}" style="cursor:pointer"><span class="grow"><span class="t">${esc(p.title)}</span><span class="s">${esc(fmtDateTime(p.updated_at))}</span></span>
+        <button class="btn btn-sm btn-ghost" data-del="${p.id}" title="löschen">🗑️</button><span style="margin-left:8px;color:#7a8aa0">→</span></div>`).join("")}</div>`
+    : `<div class="empty"><span class="ic">🧪</span>Noch keine Projekte. Leg dein erstes an!</div>`;
+  document.getElementById("view").innerHTML = `
+    <div class="page-head"><button class="crumb" id="back">← Zurück</button></div>
+    <div class="page-head" style="margin-top:0"><h2>🧪 Filius-Sandbox</h2><div class="spacer"></div><button class="btn btn-primary" id="btnNewSbx">+ Neues Projekt</button></div>
+    <div class="card" style="margin-bottom:12px;padding:12px 16px"><span class="muted" style="font-size:13px">Baue frei ein Netzwerk, teste im Simulationsmodus mit ping &amp; Co. – und speichere deine eigenen Projekte.</span></div>
+    ${list}`;
+  document.getElementById("back").onclick = ()=> (ME.role==="teacher"?filiusTeacherHome():filiusStudentHome());
+  document.getElementById("btnNewSbx").onclick = ()=> filiusSandboxProject(null);
+  document.querySelectorAll(".clickrow[data-id]").forEach(r=> r.onclick=(e)=>{ if(e.target.closest("[data-del]")) return; filiusSandboxProject(r.dataset.id); });
+  document.querySelectorAll("[data-del]").forEach(b=> b.onclick=async(e)=>{ e.stopPropagation(); if(!confirm("Projekt löschen?")) return; try{ await api.filiusDeleteSandboxProject(b.dataset.del); filiusSandbox(); }catch(err){ toast(err.message||"Fehler","err"); } });
+}
+let filiusSandboxStateObj=null;
+async function filiusSandboxProject(projectId){
+  shell(`<div class="center-load"><span class="spin"></span>Lädt…</div>`);
+  let proj=null; if(projectId){ try{ proj=await api.filiusGetSandboxProject(projectId); }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; } }
+  let libs=[]; try{ libs=await api.sandboxFiliusNetworks(); }catch(e){}
+  filiusSandboxStateObj={ projectId:proj?proj.id:null, title:proj?(proj.title||"Mein Netzwerk"):"Mein Netzwerk", data:proj?(proj.data||{nodes:[],links:[]}):{nodes:[],links:[]}, libs, view:null };
+  try{ FiliusView.ensureStyles(); }catch(e){}
+  const s=filiusSandboxStateObj;
+  const libOpts = `<option value="">— Vorlage laden —</option>`+ s.libs.map(d=>`<option value="${esc(d.id)}">${esc(d.name)}${d.mine?"":" (von "+esc(d.owner_name)+")"}</option>`).join("");
+  document.getElementById("view").innerHTML = `
+    <div class="page-head"><button class="crumb" id="back">← Zur Sandbox</button></div>
+    <div class="page-head" style="margin-top:0">
+      <input class="input" id="fsbTitle" style="max-width:260px;font-weight:800" maxlength="80">
+      ${s.libs.length?`<select class="input" id="fsbLib" style="max-width:210px;margin-left:8px;width:auto">${libOpts}</select>`:""}
+      <div class="spacer"></div>
+      <input type="file" id="fsbFile" accept=".json,.fnet" style="display:none">
+      <button class="btn btn-ghost btn-sm" id="fsbOpen" title="Netzwerk aus Datei laden">📂</button>
+      <button class="btn btn-ghost btn-sm" id="fsbDl" style="margin-left:6px" title="als .json herunterladen">⬇️</button>
+      <button class="btn btn-primary btn-sm" id="fsbSave" style="margin-left:8px">💾 Speichern</button></div>
+    <div id="fsbHost"></div>`;
+  document.getElementById("fsbTitle").value = s.title;
+  document.getElementById("back").onclick = ()=>{ s.title=(document.getElementById("fsbTitle").value||"").trim()||s.title; filiusSandbox(); };
+  document.getElementById("fsbTitle").oninput=(e)=>{ s.title=e.target.value; };
+  s.view = new FiliusView("#fsbHost", { data:s.data, height:"62vh" });
+  pageView=s.view;
+  { const lib=document.getElementById("fsbLib"); if(lib) lib.onchange=(e)=>{ const v=e.target.value; if(!v) return; const d=s.libs.find(x=>x.id===v); if(d && d.data){ s.view.setData(d.data); toast("Vorlage geladen ✓","ok"); } e.target.value=""; }; }
+  document.getElementById("fsbDl").onclick = ()=>{ const nm=((s.title||"netzwerk").trim().replace(/[^\w.\- ]+/g,"_")||"netzwerk")+".json"; const blob=new Blob([JSON.stringify(s.view.getData())],{type:"application/json;charset=utf-8"}); const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=nm; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),1500); };
+  { const fo=document.getElementById("fsbOpen"), fi=document.getElementById("fsbFile"); fo.onclick=()=>fi.click(); fi.onchange=(e)=>{ const f=e.target.files[0]; if(!f) return; const rd=new FileReader(); rd.onload=()=>{ try{ s.view.setData(JSON.parse(rd.result)); toast("Datei geladen ✓","ok"); }catch(err){ toast("Ungültige Datei","err"); } }; rd.readAsText(f); }; }
+  document.getElementById("fsbSave").onclick = async ()=>{ s.title=(document.getElementById("fsbTitle").value||"").trim()||"Mein Netzwerk"; const btn=document.getElementById("fsbSave"); btn.disabled=true; btn.textContent="Speichere…"; const payload={ title:s.title, data:s.view.getData() }; try{ if(s.projectId){ await api.filiusUpdateSandboxProject(s.projectId, payload); } else { const p=await api.filiusCreateSandboxProject(payload); s.projectId=p.id; } toast("Projekt gespeichert ✓","ok"); }catch(e){ toast(e.message||"Fehler","err"); } finally{ btn.disabled=false; btn.textContent="💾 Speichern"; } };
+}
+
+/* ============================================================================
    SANDBOX (freier Modus) – Schüler:innen bauen Welt + Code, speicherbar
    ============================================================================ */
 async function sandboxHome(classId){
@@ -2577,6 +3252,13 @@ function fmtDate(s){ try{ const d=new Date(s); return d.toLocaleDateString("de-D
    Neueste Version zuerst. Bei jedem Deploy oben einen Eintrag ergänzen.
    ============================================================================ */
 const PATCH_NOTES = [
+  { v:"2.26", date:"1. Juli 2026", title:"🌐 Neues Tool: Filius – Netzwerksimulator", items:[
+    `<b>Filius ist da!</b> Nach 🐹 Hamster und 🗄️ SQL gibt es jetzt als drittes Lern-Tool den <b>🌐 Netzwerksimulator</b> (nach dem Vorbild von FILIUS) – direkt im Browser, ohne Installation, im gleichen Design.`,
+    `<b>Netzwerke bauen (Entwurfsmodus):</b> Komponenten per Klick platzieren – <b>Notebook, Rechner, Switch, Router</b> und Textfelder –, mit dem <b>🔌 Kabel</b>-Werkzeug verbinden und per Doppelklick konfigurieren (IP-Adresse, Subnetzmaske, Gateway, DNS, DHCP).`,
+    `<b>Simulieren:</b> Im ▶ Simulationsmodus öffnet ein Klick auf einen Rechner die <b>Befehlszeile</b> (<code>ping</code>, <code>ipconfig</code>, <code>host</code>, <code>traceroute</code>) und – wo installiert – einen <b>Webbrowser</b>. Datenpakete werden auf den Leitungen animiert. Es funktionieren echtes <b>Subnetz-/Gateway-Routing</b> (auch über mehrere Router mit automatischem Routing), <b>DNS</b>, <b>Webserver</b> und <b>DHCP</b>.`,
+    `<b>Aufgaben-Klassen wie gewohnt:</b> Lehrkräfte stellen Aufgaben mit automatisch bewerteten <b>Prüfungen</b> (z. B. „PC1 erreicht PC2 per Ping", „mind. 1 Router", „PC1 hat IP im Netz 192.168.0.0/24", „Webseite erreichbar", „DNS löst auf"). Dazu <b>Abgabe-Matrix, Einsicht, Rückmeldungen, Muster-Netzwerk freigeben, Vorlagen, Netzwerk-Bibliothek</b> und eine <b>🧪 Sandbox</b> mit privaten Projekten – genau wie beim SQL-Playground.`,
+    `<b>Schüler:innen</b> treten per Klassencode bei, bauen das Netz, klicken <b>🔍 Netzwerk prüfen &amp; speichern</b> und sehen sofort, welche Prüfungen bestanden sind.`,
+  ]},
   { v:"2.25", date:"1. Juli 2026", title:"Vorhandene Schüler:innen hinzufügen & Sandbox-Projekte", items:[
     `<b>Vorhandene:n Schüler:in hinzufügen:</b> Im Dialog „📥 Importieren" (Klassenansicht) kannst du jetzt eine:n bereits registrierte:n Schüler:in einfach <b>per Benutzername</b> zur Klasse hinzufügen – gilt für Hamster- und SQL-Klassen.`,
     `<b>SQL-Sandbox mit Projekten:</b> Die Sandbox funktioniert jetzt wie beim Hamster – du legst <b>eigene Projekte</b> an, die gespeichert werden (Datenbank + Abfrage), und öffnest sie später wieder.`,
@@ -2796,7 +3478,7 @@ function patchNotesDialog(){
 }
 
 /* ---------- Footer: Versionsnummer (aus den Patch-Notes) + Copyright ---------- */
-const APP_BUILD = "2026-07-01 16:30";   // letztes Update (im Patch-Notes-Dialog angezeigt)
+const APP_BUILD = "2026-07-01 18:45";   // letztes Update (im Patch-Notes-Dialog angezeigt)
 (function(){ const f=document.getElementById("appfoot"); if(f){ const v=(typeof PATCH_NOTES!=="undefined"&&PATCH_NOTES[0])?PATCH_NOTES[0].v:""; f.textContent='© 2026 Laurens Offinger · Version '+v; } })();
 
 boot();
