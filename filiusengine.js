@@ -549,6 +549,7 @@
     this._anim=null;
     this.sim=null;   // Sim-Sitzung: {sat, log, no, start, layers}
     this._pingTimer=null;
+    this._simSpeed=1;
     this._build();
   }
   function normalizeNet(d){ d=d||{}; if(typeof d==="string"){ try{ d=JSON.parse(d); }catch(e){ d={}; } } return { nodes:(d.nodes||[]).map(function(n){ return n; }), links:(d.links||[]).slice() }; }
@@ -573,6 +574,7 @@
         +'<span class="fv-sep"></span>'
         +'<span class="fv-palette" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">'+palette+'</span>'
         +'<div style="flex:1"></div>'
+        +'<label class="fv-hint" title="Simulationsgeschwindigkeit" style="display:flex;align-items:center;gap:5px;margin-right:10px">🐢<input type="range" min="0.5" max="3" step="0.5" value="'+(this._simSpeed||1)+'" id="fvSpeed" style="width:78px">🐇</label>'
         +'<span class="fv-hint fv-status"></span>'
       +'</div>'
       +'<div class="fv-canvaswrap"><div class="fv-canvas" style="--fvh:'+this.height+'"><svg class="fv-svg"></svg></div></div>'
@@ -586,6 +588,7 @@
     this.host.querySelectorAll("[data-mode]").forEach(function(b){ b.onclick=function(){ self.setMode(b.dataset.mode); }; });
     // Werkzeuge
     this.host.querySelectorAll(".fv-tool").forEach(function(b){ b.onclick=function(){ self.setTool(b.dataset.tool); }; });
+    { var sp=this.$("#fvSpeed"); if(sp) sp.oninput=function(){ self._simSpeed=+sp.value||1; }; }
     // Canvas-Klick (platzieren / abwählen)
     this.canvas.addEventListener("mousedown", function(e){ if(e.target===self.canvas||e.target===self.svg) self._canvasDown(e); });
     // Tastatur (Löschen)
@@ -1105,7 +1108,7 @@
     var pk=this.svg.querySelector(".fv-packet"); if(!pk) return; pk.style.display="";
     var seg=0, t=0, dur=16; // ms pro Schritt
     if(this._anim) clearInterval(this._anim);
-    this._anim=setInterval(function(){ t+=0.04; if(t>=1){ t=0; seg++; if(seg>=pts.length-1){ clearInterval(self._anim); self._anim=null; pk.style.display="none"; return; } }
+    this._anim=setInterval(function(){ t+=0.04*(self._simSpeed||1); if(t>=1){ t=0; seg++; if(seg>=pts.length-1){ clearInterval(self._anim); self._anim=null; pk.style.display="none"; return; } }
       var A=pts[seg], B=pts[seg+1]; pk.setAttribute("cx", A.x+(B.x-A.x)*t); pk.setAttribute("cy", A.y+(B.y-A.y)*t);
     }, dur);
   };

@@ -3260,6 +3260,7 @@ const PATCH_NOTES = [
     `<b>Echo-Server + Einfacher Client:</b> Verbindung testen und eine Nachricht zurückspiegeln lassen (Reiter 🔌 Client).`,
     `<b>Firewall:</b> pro Rechner aktivierbar – eingehende <b>Pings (ICMP)</b> oder bestimmte <b>Ports</b> (z. B. 80) blockieren. Passt perfekt zu „NICHT erreichbar"-Prüfungen.`,
     `<b>Statische Routen:</b> Am Router lassen sich jetzt <b>manuelle Weiterleitungs-Einträge</b> (Ziel · Netzmaske · nächster Hop) eintragen – für Routing-Aufgaben ohne automatisches Routing.`,
+    `<b>Simulationsgeschwindigkeit:</b> Regler (🐢–🐇) in der Werkzeugleiste steuert das Tempo der Paket-Animation. <b>Bildbetrachter</b> für importierte Bilddateien im Datei-Explorer.`,
   ]},
   { v:"2.27", date:"1. Juli 2026", title:"🌐 Filius Welle 1: Netzwerk sichtbar machen", items:[
     `<b>Fix vorab:</b> Filius-Klassen ließen sich zunächst nicht anlegen (DB-Regel). Nach Einspielen von <code>schema_update_phaseW.sql</code> funktioniert das Anlegen von Filius-Klassen.`,
