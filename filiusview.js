@@ -71,7 +71,7 @@
     if(document.getElementById("fv2-styles")) return;
     var s=el("style"); s.id="fv2-styles";
     s.textContent = [
-".fv{display:flex;flex-direction:column;height:var(--fvH,560px);border:2px solid var(--line);border-radius:14px;overflow:hidden;background:var(--card);position:relative;font-family:inherit}",
+".fv{display:flex;flex-direction:column;height:var(--fvH,560px);min-height:var(--fvMin,748px);border:2px solid var(--line);border-radius:14px;overflow:hidden;background:var(--card);position:relative;font-family:inherit}",
 /* Toolbar */
 ".fv-tb{display:flex;align-items:center;gap:4px;padding:6px 8px;background:linear-gradient(#f7f9fc,#eef2f7);border-bottom:1px solid var(--line);flex-wrap:wrap}",
 ":root[data-theme='dark'] .fv-tb{background:linear-gradient(#232a36,#1c222c)}",
@@ -132,7 +132,7 @@
 ":root[data-theme='dark'] .fv-cfg{background:linear-gradient(#232a36,#1b212b)}",
 ".fv-cfg-bar{display:flex;align-items:center;gap:8px;height:20px;padding:1px 8px;cursor:pointer;font-size:11.5px;font-weight:800;color:var(--muted)}",
 ".fv-cfg-bar img{width:40px;height:11px}",
-".fv-cfg-body{height:230px;overflow:auto;padding:10px 12px;display:none}",
+".fv-cfg-body{height:276px;overflow:auto;padding:10px 12px;display:none}",
 ".fv-cfg.max .fv-cfg-body{display:block}",
 ".fv-cfg-title{font-weight:900;font-size:14px;margin:0 0 8px;display:flex;align-items:center;gap:7px}",
 ".fv-cfg-title img{width:22px;height:20px}",
@@ -172,10 +172,10 @@
 ".fv-desk-tb img{width:18px;height:18px}",
 ".fv-desk-tb .x{margin-left:auto;cursor:pointer;font-size:16px;padding:0 6px;border-radius:5px}",
 ".fv-desk-tb .x:hover{background:#e0533a}",
-".fv-desk-body{flex:1;position:relative;overflow:hidden;background:#3a5a80}",
-".fv-desk-screen{position:absolute;inset:0}",
+".fv-desk-body{flex:1;position:relative;overflow:hidden;background:#3a5a80;display:flex;flex-direction:column}",
+".fv-desk-screen{position:relative;flex:1;min-height:0}",
 ".fv-desk-bg{width:100%;height:100%;background:url('"+dg("hintergrundbild.png")+"') center/cover;position:absolute;inset:0}",
-".fv-desk-apps{position:absolute;inset:0;display:flex;flex-wrap:wrap;align-content:flex-start;gap:4px 2px;padding:10px 6px}",
+".fv-desk-apps{position:absolute;inset:0;display:flex;flex-wrap:wrap;align-content:flex-start;gap:4px 2px;padding:18px 6px 10px}",
 ".fv-dicon{width:118px;height:92px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;cursor:pointer;border-radius:8px}",
 ".fv-dicon:hover{background:rgba(255,255,255,.14)}",
 ".fv-dicon img{width:42px;height:42px;object-fit:contain}",
@@ -257,6 +257,8 @@
     this._removeCursorImg&&this._removeCursorImg();
     this.host.innerHTML="";
     var root=el("div","fv"); root.style.setProperty("--fvH", this.height);
+    // Tall-Mindesthöhe (Palette+Konfig ohne Scrollen) nur im editierbaren Vollbild-Editor; readonly-Modals bleiben flexibel
+    root.style.setProperty("--fvMin", ro?"0px":"748px");
     // --- Toolbar ---
     var tb=el("div","fv-tb");
     var seg=el("div","fv-modeseg");
@@ -301,6 +303,8 @@
     if(!ro) side.querySelectorAll(".fv-palitem").forEach(function(it){ it.addEventListener("pointerdown", function(e){ self._paletteDown(e, it.dataset.type); }); });
     // Canvas events
     cv.addEventListener("pointerdown", function(e){ if(e.target===cv||e.target===self.svg) self._canvasDown(e); });
+    // Rechtsklick auf freier Fläche beendet den Kabelmodus (statt Browser-Kontextmenü)
+    cvwrap.addEventListener("contextmenu", function(e){ if(self.mode==="design"&&!self.readonly&&(self.tool==="cable"||self.cable)){ e.preventDefault(); self._cancelCable(); } });
     cvwrap.addEventListener("scroll", function(){ if(self._cursorImg){ /* keep */ } });
     // Config bar toggle
     cfg.querySelector(".fv-cfg-bar").onclick=function(){ self.cfgMax=!self.cfgMax; self._applyCfg(); };
@@ -396,6 +400,7 @@
   FiliusView.prototype._wireNode=function(e,n){
     var self=this;
     e.addEventListener("pointerdown", function(ev){ ev.stopPropagation();
+      if(ev.button&&ev.button!==0) return;   // Rechts-/Mittelklick: nur contextmenu behandelt das (kein Kabel/Drag/Sim-Klick)
       if(self.mode==="sim"){ self._simNodeClick(n); return; }
       if(self.mode==="doku"){ if(n.type==="text"){ self._selectOnly(n.id); self._startDrag(e,n,ev); } return; }
       if(self.readonly) return;
@@ -415,7 +420,7 @@
     });
     e.addEventListener("contextmenu", function(ev){ ev.preventDefault();
       if(self.readonly) return;
-      if(self.mode==="design"){ if(self.cable){ self.cable=null; self._removeCursorImg(); self.render(); return; } self._nodeMenu(ev,n); }
+      if(self.mode==="design"){ if(self.tool==="cable"||self.cable){ self._cancelCable(); return; } self._nodeMenu(ev,n); }
       else if(self.mode==="sim"){ self._simNodeMenu(ev,n); }
       else if(self.mode==="doku" && n.type==="text"){ self._menu(ev.clientX, ev.clientY, [{label:"Löschen", fn:function(){ self._removeNode(n.id); }}]); }
     });
@@ -547,6 +552,8 @@
     document.addEventListener("pointermove", this._cursorMove);
   };
   FiliusView.prototype._removeCursorImg=function(){ if(this._cursorImg){ this._cursorImg.remove(); this._cursorImg=null; } if(this._cursorMove){ document.removeEventListener("pointermove", this._cursorMove); this._cursorMove=null; } };
+  // Kabelwerkzeug vollständig beenden (Rechtsklick/ESC)
+  FiliusView.prototype._cancelCable=function(){ this.tool="select"; this.cable=null; this._removeCursorImg(); this._setStatus(""); this.render(); };
 
   /* --------------------------- Löschen / Keys --------------------------- */
   FiliusView.prototype._removeNode=function(id){
@@ -564,7 +571,7 @@
   };
   FiliusView.prototype._onKey=function(e){
     if(this.readonly) return;
-    if(e.key==="Escape"){ if(this.cable||this.tool==="cable"){ this.cable=null; this.tool="select"; this._removeCursorImg(); this._setStatus(""); this.render(); } return; }
+    if(e.key==="Escape"){ if(this.cable||this.tool==="cable"){ this._cancelCable(); } return; }
     if((e.key==="Delete"||e.key==="Backspace") && this.mode==="design"){
       if(document.activeElement && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) return;
       if(this.sel.length||this.selLink){ e.preventDefault(); this._deleteSelected(); }
@@ -929,31 +936,27 @@
     mount.innerHTML='<div class="fv-hint">Diese Anwendung ist noch nicht verfügbar.</div>';
   };
 
-  /* ---- Software-Installation ---- */
+  /* ---- Software-Installation (zweispaltige Checkbox-Liste, Button unten fixiert) ---- */
   FiliusView.prototype._appInstall=function(n, mount){
     var self=this; n.apps=n.apps||{};
     var pending=JSON.parse(JSON.stringify(n.apps));   // Arbeitskopie bis „Änderungen annehmen“
-    function render(){
-      var inst=APPS.filter(function(a){ return pending[a.key]; });
-      var avail=APPS.filter(function(a){ return !pending[a.key]; });
-      mount.innerHTML='<div style="display:flex;gap:14px;align-items:stretch;height:100%">'
-        +'<div style="flex:1;display:flex;flex-direction:column"><div style="font-weight:800;margin-bottom:5px">Installiert:</div><div class="fv-list" id="lInst" style="flex:1"></div></div>'
-        +'<div style="display:flex;flex-direction:column;justify-content:center;gap:10px"><button class="fv-btn" id="bAdd" title="installieren"><img src="'+ag("pfeil_links.png")+'" style="width:20px;height:14px"></button><button class="fv-btn" id="bRem" title="entfernen"><img src="'+ag("pfeil_rechts.png")+'" style="width:20px;height:14px"></button></div>'
-        +'<div style="flex:1;display:flex;flex-direction:column"><div style="font-weight:800;margin-bottom:5px">Verfügbar:</div><div class="fv-list" id="lAvail" style="flex:1"></div></div>'
-        +'</div><div style="text-align:center;margin-top:10px"><button class="fv-btn primary" id="bOk">Änderungen annehmen</button></div>';
-      var selI=null, selA=null;
-      var li=mount.querySelector("#lInst"), la=mount.querySelector("#lAvail");
-      inst.forEach(function(a){ var it=el("div","it",'<img src="'+dg(a.icon)+'" style="width:20px;height:20px">'+esc(a.name)); it.onclick=function(){ selI=a.key; selA=null; render2(); }; it.ondblclick=function(){ pending[a.key]=false; render(); }; it.dataset.k=a.key; li.appendChild(it); });
-      avail.forEach(function(a){ var it=el("div","it",'<img src="'+dg(a.icon)+'" style="width:20px;height:20px">'+esc(a.name)); it.onclick=function(){ selA=a.key; selI=null; render2(); }; it.ondblclick=function(){ pending[a.key]=true; render(); }; it.dataset.k=a.key; la.appendChild(it); });
-      function render2(){ li.querySelectorAll(".it").forEach(function(x){ x.classList.toggle("sel", x.dataset.k===selI); }); la.querySelectorAll(".it").forEach(function(x){ x.classList.toggle("sel", x.dataset.k===selA); }); }
-      mount.querySelector("#bAdd").onclick=function(){ if(selA){ pending[selA]=true; render(); } };
-      mount.querySelector("#bRem").onclick=function(){ if(selI){ pending[selI]=false; render(); } };
-      mount.querySelector("#bOk").onclick=function(){
-        APPS.forEach(function(a){ var was=!!n.apps[a.key], now=!!pending[a.key]; if(now&&!was){ n.apps[a.key]=true; self._onInstall(n, a.key); } else if(!now&&was){ delete n.apps[a.key]; } });
-        self._changed(); var d=self._deskOf(n.id); if(d) d.app=null; self._renderDesk(n.id);
-      };
-    }
-    render();
+    var sorted=APPS.slice().sort(function(a,b){ return a.name.localeCompare(b.name,"de"); });
+    mount.innerHTML='<div style="display:flex;flex-direction:column;height:100%">'
+      +'<div style="font-weight:800;margin-bottom:6px;flex:0 0 auto">Wähle die Programme aus, die auf diesem Rechner installiert sein sollen:</div>'
+      +'<div id="swGrid" style="flex:1;overflow:auto;display:grid;grid-template-columns:1fr 1fr;gap:3px 16px;align-content:start;padding-right:4px"></div>'
+      +'<div style="flex:0 0 auto;border-top:1px solid var(--line);padding-top:8px;margin-top:8px;text-align:center"><button class="fv-btn primary" id="swOk">Änderungen annehmen</button></div>'
+      +'</div>';
+    var grid=mount.querySelector("#swGrid");
+    sorted.forEach(function(a){
+      var lab=el("label","fv-chk"); lab.style.cssText="padding:5px 6px;border-radius:6px;cursor:pointer;min-width:0";
+      lab.innerHTML='<input type="checkbox" '+(pending[a.key]?"checked":"")+'><img src="'+dg(a.icon)+'" style="width:20px;height:20px;flex:0 0 auto"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(a.name)+'</span>';
+      lab.querySelector("input").onchange=function(){ pending[a.key]=this.checked; };
+      grid.appendChild(lab);
+    });
+    mount.querySelector("#swOk").onclick=function(){
+      APPS.forEach(function(a){ var was=!!n.apps[a.key], now=!!pending[a.key]; if(now&&!was){ n.apps[a.key]=true; self._onInstall(n, a.key); } else if(!now&&was){ delete n.apps[a.key]; } });
+      self._changed(); var d=self._deskOf(n.id); if(d) d.app=null; self._renderDesk(n.id);
+    };
   };
   FiliusView.prototype._deskOf=function(id){ return this._desks[id]; };
   FiliusView.prototype._onInstall=function(n, key){
@@ -1143,23 +1146,44 @@
     mount.innerHTML='<div style="margin-bottom:8px"><button class="fv-btn" id="ivOpen" style="width:100%">Öffnen</button></div><div id="ivBox" style="text-align:center"></div>';
     mount.querySelector("#ivOpen").onclick=function(){ self._chooseFile(n,"open",function(path){ if(!path) return; var c=F.read(fs,path); if(c==null) return; card.querySelector(".fv-appwin-tb .t").textContent=F.base(path); var box=mount.querySelector("#ivBox"); if(/^data:image\//i.test(c)){ box.innerHTML='<img style="max-width:100%;max-height:320px">'; box.querySelector("img").src=c; } else box.innerHTML='<div class="fv-hint">Kein anzeigbares Bild (nur importierte Bilddateien).</div>'; }, "image"); };
   };
-  // Einfacher Datei-Auswahldialog (DMTNFileChooser-Ersatz)
+  // Modulares Fenster INNERHALB des virtuellen Desktops (über der laufenden App)
+  FiliusView.prototype._modular=function(hostId, title, build){
+    var d=this._desks[hostId]; if(!d||!d.win) return null;
+    var screen=d.win.querySelector(".fv-desk-screen"); if(!screen) return null;
+    var old=screen.querySelector(".fv-modular"); if(old) old.remove();
+    var wrap=el("div","fv-modular");
+    wrap.innerHTML='<div class="fv-modular-veil"></div><div class="fv-modular-win"><div class="fv-modular-tt">'+esc(title)+'</div><div class="fv-modular-bd"></div></div>';
+    screen.appendChild(wrap);
+    var bd=wrap.querySelector(".fv-modular-bd");
+    function close(){ wrap.remove(); }
+    wrap.querySelector(".fv-modular-veil").onclick=close;
+    build(bd, close);
+    return { close:close, body:bd };
+  };
+  // Datei-Auswahldialog INNERHALB des Desktops (Darstellung wie Datei-Explorer)
   FiliusView.prototype._chooseFile=function(n, mode, cb, filter){
     var self=this, F=E.fs, fs=F.of(n), dir="/";
-    function render(bg){
-      var items=F.list(fs,dir).filter(function(it){ return it.dir || !filter || F.fileType(it.name)===filter; });
-      var body='<h3>'+(mode==="save"?"Datei speichern":"Datei öffnen")+'</h3>'
-        +'<div class="fv-frow"><span class="fv-hint">Ordner: '+esc(dir)+'</span><span style="flex:1"></span>'+(dir!=="/"?'<button class="fv-btn" id="chUp">⬆️ aufwärts</button>':'')+'</div>'
-        +'<div class="fv-list" style="max-height:220px">'+(items.length?items.map(function(it){ return '<div class="it" data-p="'+esc(it.path)+'" data-d="'+(it.dir?1:0)+'">'+(it.dir?"📁 ":"📄 ")+esc(it.name)+'</div>'; }).join(""):'<div class="fv-hint" style="padding:8px">(leer)</div>')+'</div>'
-        +'<div class="fv-frow" style="margin-top:8px"><label class="cap" style="width:auto">Dateiname:</label><input class="fv-in" id="chName" value=""></div>'
-        +'<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:10px"><button class="fv-btn" id="chX">Abbrechen</button><button class="fv-btn primary" id="chOk">'+(mode==="save"?"Speichern":"Öffnen")+'</button></div>';
-      bg.querySelector(".fv-dlg").innerHTML=body;
-      if(dir!=="/") bg.querySelector("#chUp").onclick=function(){ dir=F.parent(dir); render(bg); };
-      bg.querySelectorAll("[data-p]").forEach(function(it){ it.onclick=function(){ if(it.dataset.d==="1"){ dir=it.dataset.p; render(bg); } else { bg.querySelector("#chName").value=F.base(it.dataset.p); } }; });
-      bg.querySelector("#chX").onclick=bg._close;
-      bg.querySelector("#chOk").onclick=function(){ var nm=bg.querySelector("#chName").value.trim(); bg._close(); cb(nm?F.resolve(dir,nm):null); };
+    var m=this._modular(n.id, mode==="save"?"Datei speichern":"Datei öffnen", function(bd, close){
+      function render(){
+        var items=F.list(fs,dir).filter(function(it){ return it.dir || !filter || F.fileType(it.name)===filter; });
+        bd.innerHTML='<div class="fv-frow"><span class="fv-hint">Ordner: '+esc(dir)+'</span><span style="flex:1"></span>'+(dir!=="/"?'<button class="fv-btn" id="chUp">⬆️ aufwärts</button>':'')+'</div>'
+          +'<div class="fv-list" style="max-height:200px">'+(items.length?items.map(function(it){ return '<div class="it" data-p="'+esc(it.path)+'" data-d="'+(it.dir?1:0)+'">'+(it.dir?"📁 ":"📄 ")+esc(it.name)+'</div>'; }).join(""):'<div class="fv-hint" style="padding:8px">(leer)</div>')+'</div>'
+          +'<div class="fv-frow" style="margin-top:8px"><label class="cap" style="width:auto;flex:0 0 auto">Dateiname:</label><input class="fv-in" id="chName" value="" style="flex:1"></div>'
+          +'<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:10px"><button class="fv-btn" id="chX">Abbrechen</button><button class="fv-btn primary" id="chOk">'+(mode==="save"?"Speichern":"Öffnen")+'</button></div>';
+        if(dir!=="/") bd.querySelector("#chUp").onclick=function(){ dir=F.parent(dir); render(); };
+        bd.querySelectorAll("[data-p]").forEach(function(it){ it.onclick=function(){ if(it.dataset.d==="1"){ dir=it.dataset.p; render(); } else { bd.querySelector("#chName").value=F.base(it.dataset.p); } }; });
+        bd.querySelector("#chX").onclick=function(){ close(); };
+        bd.querySelector("#chOk").onclick=function(){ var nm=bd.querySelector("#chName").value.trim(); close(); cb(nm?F.resolve(dir,nm):null); };
+      }
+      render();
+    });
+    if(!m){ // Fallback (kein Desktop) – seitenweiter Dialog
+      var self2=this, dir2="/";
+      this._dialog("<div></div>", function(bg){ (function render(){ var items=F.list(fs,dir2).filter(function(it){ return it.dir || !filter || F.fileType(it.name)===filter; });
+        bg.querySelector(".fv-dlg").innerHTML='<h3>'+(mode==="save"?"Datei speichern":"Datei öffnen")+'</h3><div class="fv-list" style="max-height:220px">'+(items.length?items.map(function(it){ return '<div class="it" data-p="'+esc(it.path)+'" data-d="'+(it.dir?1:0)+'">'+(it.dir?"📁 ":"📄 ")+esc(it.name)+'</div>'; }).join(""):'<div class="fv-hint" style="padding:8px">(leer)</div>')+'</div><div class="fv-frow" style="margin-top:8px"><label class="cap" style="width:auto">Dateiname:</label><input class="fv-in" id="chName"></div><div style="display:flex;justify-content:flex-end;gap:8px;margin-top:10px"><button class="fv-btn" id="chX">Abbrechen</button><button class="fv-btn primary" id="chOk">'+(mode==="save"?"Speichern":"Öffnen")+'</button></div>';
+        bg.querySelectorAll("[data-p]").forEach(function(it){ it.onclick=function(){ if(it.dataset.d==="1"){ dir2=it.dataset.p; render(); } else { bg.querySelector("#chName").value=F.base(it.dataset.p); } }; });
+        bg.querySelector("#chX").onclick=bg._close; bg.querySelector("#chOk").onclick=function(){ var nm=bg.querySelector("#chName").value.trim(); bg._close(); cb(nm?F.resolve(dir2,nm):null); }; })(); });
     }
-    this._dialog("<div></div>", function(bg){ render(bg); });
   };
 
   /* ---- Webbrowser ---- */

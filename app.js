@@ -13,6 +13,11 @@ const app = () => document.getElementById("app");
 
 /* ---------- Helfer ---------- */
 const esc = s => String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+/* Aktualisieren-Schaltfläche neben dem Klassennamen (alle Tools, Lehrer+Schüler) */
+const CLASS_REFRESH_BTN = '<button class="btn btn-ghost btn-sm" id="btnClassRefresh" title="Seite aktualisieren" style="vertical-align:middle;margin-left:6px">🔄</button>';
+function wireClassRefresh(fn){ const b=document.getElementById("btnClassRefresh"); if(b) b.onclick=fn; }
+/* Vorschau der (freigegebenen) Lehrer-Rückmeldung in der Aufgabenliste */
+function feedbackPreviewHtml(body){ const t=(body||"").trim(); if(!t) return ""; const short=t.length>90?t.slice(0,90)+"…":t; return `<span class="s" style="color:var(--gold-d);font-weight:800">💬 Rückmeldung: ${esc(short)}</span>`; }
 const normUser = u => u.trim().toLowerCase();
 const userEmail = u => normUser(u) + "@" + CONFIG.EMAIL_DOMAIN;
 const initials = s => (s||"?").trim().slice(0,1).toUpperCase();
@@ -430,6 +435,7 @@ api.filiusGetSubmission = async (aid, sid)=>{ const {data,error}=await sb.from("
 api.filiusGetComment = async (subId)=>{ if(!subId) return null; const {data,error}=await sb.from("filius_submission_comments").select("*").eq("submission_id",subId).maybeSingle(); if(error) throw error; return data; };
 api.filiusSaveComment = async (subId, body, released)=>{ const {data,error}=await sb.from("filius_submission_comments").upsert({submission_id:subId, author_id:ME.id, body, released, updated_at:new Date().toISOString()},{onConflict:"submission_id"}).select().single(); if(error) throw error; return data; };
 api.filiusDeleteComment = async (subId)=>{ const {error}=await sb.from("filius_submission_comments").delete().eq("submission_id",subId); if(error) throw error; };
+api.filiusClassComments = async (subIds)=>{ if(!subIds.length) return []; const {data,error}=await sb.from("filius_submission_comments").select("submission_id,released,body").in("submission_id",subIds); if(error) throw error; return data||[]; };   // RLS: Schüler nur freigegebene+eigene
 /* Vorlagen */
 api.filiusListTemplates = async ()=>{ const {data,error}=await sb.rpc("shared_filius_templates"); if(error) throw error; return data||[]; };
 api.filiusGetTemplate = async (id)=>{ const {data,error}=await sb.from("filius_assignment_templates").select("*").eq("id",id).single(); if(error) throw error; return data; };
@@ -890,7 +896,7 @@ function renderSolveComment(subId){
 function loadVersion(sub){
   if(!sub||!solveState) return;
   solveState.viewingId = sub.id;
-  if(pageView) pageView.setCode(sub.code);
+  if(pageView){ pageView.setCode(sub.code); if(pageView.reset) pageView.reset(); }   // Code laden + Territorium auf Aufgaben-Start zurücksetzen
   setEditNote(); renderSolveComment(sub.id); renderMyNote(sub.id); renderHistoryCard();   // Buttons aktualisieren -> geöffnete Abgabe markieren
   const h=document.getElementById("solveHost"); if(h) h.scrollIntoView({behavior:"smooth",block:"start"});
 }
@@ -1263,7 +1269,7 @@ async function teacherClassView(classId){
   document.getElementById("view").innerHTML = `
     <div class="page-head"><button class="crumb" id="back">${viewFromAdmin?"← Admin-Bereich":"← Meine Klassen"}</button></div>
     <div class="page-head" style="margin-top:0">
-      <h2>${esc(cls.name)} <button class="btn btn-ghost btn-sm" id="btnRename" title="Klasse umbenennen" style="vertical-align:middle">✏️</button></h2>
+      <h2>${esc(cls.name)} <button class="btn btn-ghost btn-sm" id="btnRename" title="Klasse umbenennen" style="vertical-align:middle">✏️</button>${CLASS_REFRESH_BTN}</h2>
       <div class="spacer"></div>
       <span class="codechip" title="Einlade-Code" style="${cls.join_open===false?'opacity:.55;':''}">🔑 ${esc(cls.code)}${cls.join_open===false?' <span class="badge gray" title="Beitritt mit diesem Code ist deaktiviert">aus</span>':''} <button class="btn btn-sm btn-ghost" id="copyCode" style="margin-left:4px">Kopieren</button></span>
       ${canTeam?`<button class="btn btn-ghost btn-sm" id="btnCodeToggle" style="margin-left:8px" title="${cls.join_open===false?'Beitritt mit diesem Code wieder erlauben':'Beitritt mit diesem Code deaktivieren'}">${cls.join_open===false?'🔓 Aktivieren':'🚫 Code deaktivieren'}</button><button class="btn btn-ghost btn-sm" id="btnCodeNew" style="margin-left:6px" title="Neuen Code erzeugen – der alte wird ungültig">🔄 Neuer Code</button>`:''}
@@ -1284,6 +1290,7 @@ async function teacherClassView(classId){
   document.getElementById("back").onclick = ()=> (viewFromAdmin?adminHome():teacherHome());
   document.getElementById("copyCode").onclick = ()=>{ if(navigator.clipboard) navigator.clipboard.writeText(cls.code); toast("Code kopiert: "+cls.code,"ok"); };
   document.getElementById("btnRename").onclick = ()=> renameClassDialog(classId, cls.name, cls.tool);
+  wireClassRefresh(()=> teacherClassView(classId));
   { const bt=document.getElementById("btnCodeToggle"); if(bt) bt.onclick=async()=>{ const disabling=(cls.join_open!==false); if(disabling){ if(!confirm(`Beitritt für „${cls.name}" deaktivieren?\n\nMit dem Code ${cls.code} kann danach niemand mehr neu beitreten. Bereits beigetretene Schüler:innen bleiben in der Klasse.`)) return; } try{ await api.setClassJoinOpen(classId, !disabling); toast(disabling?"Beitritt deaktiviert 🚫":"Beitritt wieder aktiv 🔓","ok"); teacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } }; }
   { const bn=document.getElementById("btnCodeNew"); if(bn) bn.onclick=async()=>{ if(!confirm(`Neuen Einlade-Code für „${cls.name}" erzeugen?\n\nDer bisherige Code ${cls.code} wird sofort ungültig – verteile danach den neuen Code. Bereits beigetretene Schüler:innen bleiben in der Klasse.`)) return; try{ const nc=await api.regenerateClassCode(classId); toast("Neuer Code: "+nc,"ok"); teacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } }; }
   document.querySelectorAll(".sectoggle[data-sec]").forEach(t=> t.onclick=()=>{ const k=t.dataset.sec; secOpen[k]=!secOpen[k]; const body=document.getElementById("sec-"+k); if(body) body.style.display=secOpen[k]?"":"none"; const ar=t.querySelector(".secarrow"); if(ar) ar.textContent=secOpen[k]?"▼":"▶"; });
@@ -1743,19 +1750,22 @@ async function studentClassView(classId){
     assignments = await api.listAssignments(classId);
     if(assignments.length){ const { data:s } = await sb.from("submissions").select("*").in("assignment_id",assignments.map(a=>a.id)).eq("student_id",ME.id).eq("is_current",true); mySubs=s||[]; }
   }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
+  let myComs=[]; try{ if(mySubs.length) myComs = await api.myComments(mySubs.map(x=>x.id)); }catch(e){}   // Rückmeldungen der aktuellen Abgaben
   const list = assignments.length ? `<div class="list">${assignments.map(a=>{
       const s=mySubs.find(x=>x.assignment_id===a.id);
+      const com = s ? myComs.find(c=>c.submission_id===s.id && c.released) : null;
       const badge = s ? (s.passed===true?`<span class="badge">bestanden ✓</span>`:`<span class="badge gold">abgegeben</span>`) : `<span class="badge gray">offen</span>`;
       return `<div class="row clickrow" data-id="${a.id}" style="cursor:pointer">
-        <span class="grow"><span class="t">${esc(a.title)}</span>${a.description?`<span class="s">${esc(a.description.slice(0,70))}</span>`:""}</span>
+        <span class="grow"><span class="t">${esc(a.title)}</span>${a.description?`<span class="s">${esc(a.description.slice(0,70))}</span>`:""}${com?feedbackPreviewHtml(com.body):""}</span>
         ${badge}<span style="margin-left:8px;color:#7a8aa0">→</span></div>`;
     }).join("")}</div>`
     : `<div class="empty"><span class="ic">📝</span>Noch keine Aufgaben. Schau später wieder rein!</div>`;
   document.getElementById("view").innerHTML = `
     <div class="page-head"><button class="crumb" id="back">← Meine Klassen</button></div>
-    <div class="page-head" style="margin-top:0"><h2>${esc(cls?cls.name:"Klasse")}</h2></div>
+    <div class="page-head" style="margin-top:0"><h2>${esc(cls?cls.name:"Klasse")}${CLASS_REFRESH_BTN}</h2></div>
     ${list}`;
   document.getElementById("back").onclick = studentHome;
+  wireClassRefresh(()=> studentClassView(classId));
   /* Sandbox ist jetzt klassenunabhängig und steht in der Klassenübersicht */
   document.querySelectorAll(".clickrow[data-id]").forEach(r=> r.onclick=()=> solveAssignment(r.dataset.id));
 }
@@ -1847,7 +1857,7 @@ async function sqlTeacherClassView(classId){
     : `<div class="empty" style="padding:16px"><span class="ic">📝</span>Noch keine Aufgaben.</div>`;
   document.getElementById("view").innerHTML = `
     <div class="page-head"><button class="crumb" id="back">${viewFromAdmin?"← Admin-Bereich":"← Meine Klassen"}</button><div class="spacer"></div><button class="btn btn-ghost btn-sm" id="btnSqlDbs2">🗄️ Datenbanken</button><button class="btn btn-ghost btn-sm" id="btnSqlTpl2" style="margin-left:8px">📋 Vorlagen</button></div>
-    <div class="page-head" style="margin-top:0"><h2>${esc(cls.name)}${canTeam?` <button class="btn btn-ghost btn-sm" id="btnRename" title="Klasse umbenennen" style="vertical-align:middle">✏️</button>`:""}</h2><div class="spacer"></div>
+    <div class="page-head" style="margin-top:0"><h2>${esc(cls.name)}${canTeam?` <button class="btn btn-ghost btn-sm" id="btnRename" title="Klasse umbenennen" style="vertical-align:middle">✏️</button>`:""}${CLASS_REFRESH_BTN}</h2><div class="spacer"></div>
       <span class="codechip" title="Einlade-Code" style="${cls.join_open===false?'opacity:.55;':''}">🔑 ${esc(cls.code)}${cls.join_open===false?' <span class="badge gray" title="Beitritt mit diesem Code ist deaktiviert">aus</span>':''} <button class="btn btn-sm btn-ghost" id="copyCode" style="margin-left:4px">Kopieren</button></span>
       ${canTeam?`<button class="btn btn-ghost btn-sm" id="btnCodeToggle" style="margin-left:8px" title="${cls.join_open===false?'Beitritt mit diesem Code wieder erlauben':'Beitritt mit diesem Code deaktivieren'}">${cls.join_open===false?'🔓 Aktivieren':'🚫 Code deaktivieren'}</button><button class="btn btn-ghost btn-sm" id="btnCodeNew" style="margin-left:6px" title="Neuen Code erzeugen – der alte wird ungültig">🔄 Neuer Code</button>`:''}
       ${canTeam?`<button class="btn btn-ghost btn-sm" id="btnDeleteClass" style="margin-left:8px;color:var(--red-d)" title="Klasse löschen">🗑️ Löschen</button>`:(iAmCoTeacher?`<button class="btn btn-ghost btn-sm" id="btnLeaveClass" style="margin-left:8px;color:var(--red-d)" title="Klasse verlassen">🚪 Klasse verlassen</button>`:"")}</div>
@@ -1867,6 +1877,7 @@ async function sqlTeacherClassView(classId){
   document.getElementById("copyCode").onclick = ()=>{ if(navigator.clipboard) navigator.clipboard.writeText(cls.code); toast("Code kopiert: "+cls.code,"ok"); };
   { const bd=document.getElementById("btnDeleteClass"); if(bd) bd.onclick=async()=>{ if(!confirm(`Klasse „${cls.name}" wirklich löschen? Alle Aufgaben und Zuordnungen werden entfernt.`)) return; try{ await api.deleteClass(classId); toast("Klasse gelöscht","ok"); (viewFromAdmin?adminHome():sqlTeacherHome()); }catch(e){ toast(e.message||"Fehler","err"); } }; }
   { const br=document.getElementById("btnRename"); if(br) br.onclick=()=> renameClassDialog(classId, cls.name, cls.tool); }
+  wireClassRefresh(()=> sqlTeacherClassView(classId));
   { const bt=document.getElementById("btnCodeToggle"); if(bt) bt.onclick=async()=>{ const disabling=(cls.join_open!==false); if(disabling){ if(!confirm(`Beitritt für „${cls.name}" deaktivieren?\n\nMit dem Code ${cls.code} kann danach niemand mehr neu beitreten. Bereits beigetretene Schüler:innen bleiben in der Klasse.`)) return; } try{ await api.setClassJoinOpen(classId, !disabling); toast(disabling?"Beitritt deaktiviert 🚫":"Beitritt wieder aktiv 🔓","ok"); sqlTeacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } }; }
   { const bn=document.getElementById("btnCodeNew"); if(bn) bn.onclick=async()=>{ if(!confirm(`Neuen Einlade-Code für „${cls.name}" erzeugen?\n\nDer bisherige Code ${cls.code} wird sofort ungültig – verteile danach den neuen Code. Bereits beigetretene Schüler:innen bleiben in der Klasse.`)) return; try{ const nc=await api.regenerateClassCode(classId); toast("Neuer Code: "+nc,"ok"); sqlTeacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } }; }
   { const bl=document.getElementById("btnLeaveClass"); if(bl) bl.onclick=async()=>{ if(!confirm(`Klasse „${cls.name}" wirklich verlassen? Du bist danach keine Co-Lehrkraft mehr und siehst die Klasse nicht mehr.`)) return; try{ await api.removeClassTeacher(classId, ME.id); toast("Klasse verlassen","ok"); sqlTeacherHome(); }catch(e){ toast(e.message||"Fehler","err"); } }; }
@@ -2093,16 +2104,19 @@ async function sqlStudentClassView(classId){
     subs = await api.sqlMySubmissions(asgs.map(a=>a.id));
     if(asgs.length){ const arr=await Promise.all(asgs.map(a=> api.sqlSubtasksForStudent(a.id).then(r=>(r||[]).map(x=>x.id)).catch(()=>[]))); asgs.forEach((a,i)=>{ subIdsBy[a.id]=arr[i]; }); }
   }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
+  let coms=[]; try{ if(subs.length) coms = await api.sqlClassComments(subs.map(x=>x.id)); }catch(e){}   // freigegebene Rückmeldungen
+  const feedback=(a)=>{ const s=subs.find(x=>x.assignment_id===a.id); const c=s?coms.find(x=>x.submission_id===s.id&&x.released):null; return c?feedbackPreviewHtml(c.body):""; };
   const badge=(a)=>{ const s=subs.find(x=>x.assignment_id===a.id); if(!s) return '<span class="badge gray">offen</span>'; if(s.passed===true) return '<span class="badge">bestanden ✓</span>'; return '<span class="badge gold">in Bearbeitung</span>'; };
   const progress=(a)=>{ const ids=subIdsBy[a.id]||[], total=ids.length; if(!total) return ""; const sub=subs.find(x=>x.assignment_id===a.id), res=(sub&&sub.results)||{}; let g=0,y=0; for(const id of ids){ const st=res[id]; if(st==="correct")g++; else if(st==="wrong")y++; } const grey=total-g-y; const seg=(n,c)=> n>0?`<div style="flex:${n};background:${c}"></div>`:""; return `<div style="display:flex;align-items:center;gap:8px;margin-top:6px"><div style="display:flex;height:7px;flex:1;max-width:170px;border-radius:4px;overflow:hidden;background:var(--line2)">${seg(g,"var(--green)")}${seg(y,"var(--gold)")}${seg(grey,"var(--line2)")}</div><span class="muted" style="font-size:11.5px;font-weight:800">${g}/${total}</span></div>`; };
   const list = asgs.length ? `<div class="list">${asgs.map(a=>`
-      <div class="row clickrow" data-id="${a.id}" style="cursor:pointer"><span class="grow"><span class="t">${esc(a.title)}</span>${a.description?`<span class="s">${esc(a.description.slice(0,70))}</span>`:""}${progress(a)}</span>${badge(a)}<span style="margin-left:8px;color:#7a8aa0">→</span></div>`).join("")}</div>`
+      <div class="row clickrow" data-id="${a.id}" style="cursor:pointer"><span class="grow"><span class="t">${esc(a.title)}</span>${a.description?`<span class="s">${esc(a.description.slice(0,70))}</span>`:""}${feedback(a)}${progress(a)}</span>${badge(a)}<span style="margin-left:8px;color:#7a8aa0">→</span></div>`).join("")}</div>`
     : `<div class="empty"><span class="ic">📝</span>Noch keine Aufgaben. Schau später wieder rein!</div>`;
   document.getElementById("view").innerHTML = `
     <div class="page-head"><button class="crumb" id="back">← Meine Klassen</button></div>
-    <div class="page-head" style="margin-top:0"><h2>${esc(cls?cls.name:"Klasse")}</h2></div>
+    <div class="page-head" style="margin-top:0"><h2>${esc(cls?cls.name:"Klasse")}${CLASS_REFRESH_BTN}</h2></div>
     ${list}`;
   document.getElementById("back").onclick = sqlStudentHome;
+  wireClassRefresh(()=> sqlStudentClassView(classId));
   document.querySelectorAll(".clickrow[data-id]").forEach(r=> r.onclick=()=> sqlSolveAssignment(r.dataset.id));
 }
 
@@ -2629,7 +2643,7 @@ async function filiusTeacherClassView(classId){
     : `<div class="empty" style="padding:16px"><span class="ic">📝</span>Noch keine Aufgaben.</div>`;
   document.getElementById("view").innerHTML = `
     <div class="page-head"><button class="crumb" id="back">${viewFromAdmin?"← Admin-Bereich":"← Meine Klassen"}</button><div class="spacer"></div><button class="btn btn-ghost btn-sm" id="btnFilNets2">🌐 Netzwerke</button><button class="btn btn-ghost btn-sm" id="btnFilTpl2" style="margin-left:8px">📋 Vorlagen</button></div>
-    <div class="page-head" style="margin-top:0"><h2>${esc(cls.name)}${canTeam?` <button class="btn btn-ghost btn-sm" id="btnRename" title="Klasse umbenennen" style="vertical-align:middle">✏️</button>`:""}</h2><div class="spacer"></div>
+    <div class="page-head" style="margin-top:0"><h2>${esc(cls.name)}${canTeam?` <button class="btn btn-ghost btn-sm" id="btnRename" title="Klasse umbenennen" style="vertical-align:middle">✏️</button>`:""}${CLASS_REFRESH_BTN}</h2><div class="spacer"></div>
       <span class="codechip" title="Einlade-Code" style="${cls.join_open===false?'opacity:.55;':''}">🔑 ${esc(cls.code)}${cls.join_open===false?' <span class="badge gray" title="Beitritt mit diesem Code ist deaktiviert">aus</span>':''} <button class="btn btn-sm btn-ghost" id="copyCode" style="margin-left:4px">Kopieren</button></span>
       ${canTeam?`<button class="btn btn-ghost btn-sm" id="btnCodeToggle" style="margin-left:8px" title="${cls.join_open===false?'Beitritt mit diesem Code wieder erlauben':'Beitritt mit diesem Code deaktivieren'}">${cls.join_open===false?'🔓 Aktivieren':'🚫 Code deaktivieren'}</button><button class="btn btn-ghost btn-sm" id="btnCodeNew" style="margin-left:6px" title="Neuen Code erzeugen – der alte wird ungültig">🔄 Neuer Code</button>`:''}
       ${canTeam?`<button class="btn btn-ghost btn-sm" id="btnDeleteClass" style="margin-left:8px;color:var(--red-d)" title="Klasse löschen">🗑️ Löschen</button>`:(iAmCoTeacher?`<button class="btn btn-ghost btn-sm" id="btnLeaveClass" style="margin-left:8px;color:var(--red-d)" title="Klasse verlassen">🚪 Klasse verlassen</button>`:"")}</div>
@@ -2649,6 +2663,7 @@ async function filiusTeacherClassView(classId){
   document.getElementById("copyCode").onclick = ()=>{ if(navigator.clipboard) navigator.clipboard.writeText(cls.code); toast("Code kopiert: "+cls.code,"ok"); };
   { const bd=document.getElementById("btnDeleteClass"); if(bd) bd.onclick=async()=>{ if(!confirm(`Klasse „${cls.name}" wirklich löschen? Alle Aufgaben und Zuordnungen werden entfernt.`)) return; try{ await api.deleteClass(classId); toast("Klasse gelöscht","ok"); (viewFromAdmin?adminHome():filiusTeacherHome()); }catch(e){ toast(e.message||"Fehler","err"); } }; }
   { const br=document.getElementById("btnRename"); if(br) br.onclick=()=> renameClassDialog(classId, cls.name, cls.tool); }
+  wireClassRefresh(()=> filiusTeacherClassView(classId));
   { const bt=document.getElementById("btnCodeToggle"); if(bt) bt.onclick=async()=>{ const disabling=(cls.join_open!==false); if(disabling){ if(!confirm(`Beitritt für „${cls.name}" deaktivieren?\n\nMit dem Code ${cls.code} kann danach niemand mehr neu beitreten. Bereits beigetretene Schüler:innen bleiben in der Klasse.`)) return; } try{ await api.setClassJoinOpen(classId, !disabling); toast(disabling?"Beitritt deaktiviert 🚫":"Beitritt wieder aktiv 🔓","ok"); filiusTeacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } }; }
   { const bn=document.getElementById("btnCodeNew"); if(bn) bn.onclick=async()=>{ if(!confirm(`Neuen Einlade-Code für „${cls.name}" erzeugen?\n\nDer bisherige Code ${cls.code} wird sofort ungültig – verteile danach den neuen Code. Bereits beigetretene Schüler:innen bleiben in der Klasse.`)) return; try{ const nc=await api.regenerateClassCode(classId); toast("Neuer Code: "+nc,"ok"); filiusTeacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } }; }
   { const bl=document.getElementById("btnLeaveClass"); if(bl) bl.onclick=async()=>{ if(!confirm(`Klasse „${cls.name}" wirklich verlassen? Du bist danach keine Co-Lehrkraft mehr und siehst die Klasse nicht mehr.`)) return; try{ await api.removeClassTeacher(classId, ME.id); toast("Klasse verlassen","ok"); filiusTeacherHome(); }catch(e){ toast(e.message||"Fehler","err"); } }; }
@@ -2708,16 +2723,19 @@ async function filiusStudentClassView(classId){
     asgs = await api.filiusStudentAssignments(classId);
     subs = await api.filiusMySubmissions(asgs.map(a=>a.id));
   }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
+  let coms=[]; try{ if(subs.length) coms = await api.filiusClassComments(subs.map(x=>x.id)); }catch(e){}   // freigegebene Rückmeldungen
+  const feedback=(a)=>{ const s=subs.find(x=>x.assignment_id===a.id); const c=s?coms.find(x=>x.submission_id===s.id&&x.released):null; return c?feedbackPreviewHtml(c.body):""; };
   const badge=(a)=>{ const s=subs.find(x=>x.assignment_id===a.id); if(!s) return '<span class="badge gray">offen</span>'; return filiusPassed(filiusEvalSub(s,a.checks), a.checks)?'<span class="badge">bestanden ✓</span>':'<span class="badge gold">in Bearbeitung</span>'; };
   const progress=(a)=>{ const ids=(a.checks||[]).map(c=>c.id), total=ids.length; if(!total) return ""; const sub=subs.find(x=>x.assignment_id===a.id), res=sub?filiusEvalSub(sub,a.checks):{}; let g=0,y=0; for(const id of ids){ const st=res[id]; if(st==="correct")g++; else if(st==="wrong")y++; } const grey=total-g-y; const seg=(n,c)=> n>0?`<div style="flex:${n};background:${c}"></div>`:""; return `<div style="display:flex;align-items:center;gap:8px;margin-top:6px"><div style="display:flex;height:7px;flex:1;max-width:170px;border-radius:4px;overflow:hidden;background:var(--line2)">${seg(g,"var(--green)")}${seg(y,"var(--gold)")}${seg(grey,"var(--line2)")}</div><span class="muted" style="font-size:11.5px;font-weight:800">${g}/${total}</span></div>`; };
   const list = asgs.length ? `<div class="list">${asgs.map(a=>`
-      <div class="row clickrow" data-id="${a.id}" style="cursor:pointer"><span class="grow"><span class="t">${esc(a.title)}</span>${a.description?`<span class="s">${esc(a.description.slice(0,70))}</span>`:""}${progress(a)}</span>${badge(a)}<span style="margin-left:8px;color:#7a8aa0">→</span></div>`).join("")}</div>`
+      <div class="row clickrow" data-id="${a.id}" style="cursor:pointer"><span class="grow"><span class="t">${esc(a.title)}</span>${a.description?`<span class="s">${esc(a.description.slice(0,70))}</span>`:""}${feedback(a)}${progress(a)}</span>${badge(a)}<span style="margin-left:8px;color:#7a8aa0">→</span></div>`).join("")}</div>`
     : `<div class="empty"><span class="ic">📝</span>Noch keine Aufgaben. Schau später wieder rein!</div>`;
   document.getElementById("view").innerHTML = `
     <div class="page-head"><button class="crumb" id="back">← Meine Klassen</button></div>
-    <div class="page-head" style="margin-top:0"><h2>${esc(cls?cls.name:"Klasse")}</h2></div>
+    <div class="page-head" style="margin-top:0"><h2>${esc(cls?cls.name:"Klasse")}${CLASS_REFRESH_BTN}</h2></div>
     ${list}`;
   document.getElementById("back").onclick = filiusStudentHome;
+  wireClassRefresh(()=> filiusStudentClassView(classId));
   document.querySelectorAll(".clickrow[data-id]").forEach(r=> r.onclick=()=> filiusSolveAssignment(r.dataset.id));
 }
 
@@ -3252,6 +3270,16 @@ function fmtDate(s){ try{ const d=new Date(s); return d.toLocaleDateString("de-D
    Neueste Version zuerst. Bei jedem Deploy oben einen Eintrag ergänzen.
    ============================================================================ */
 const PATCH_NOTES = [
+  { v:"2.30", date:"5. Juli 2026", title:"🔄 Komfort & Filius-Feinschliff", items:[
+    `<b>Aktualisieren-Schaltfläche</b> neben dem Klassennamen – in allen Tools, für Lehrkräfte und Schüler:innen.`,
+    `<b>Rückmeldungs-Vorschau:</b> In der Aufgabenübersicht siehst du jetzt zu jeder Aufgabe direkt eine Vorschau der freigegebenen Rückmeldung deiner Lehrkraft (beim Hamster die Rückmeldung zur aktuellen Abgabe).`,
+    `<b>Hamster:</b> Beim Laden einer eigenen Abgabe wird das Territorium jetzt sauber auf den Aufgaben-Start zurückgesetzt.`,
+    `<b>Filius – Editor:</b> Das Fenster ist jetzt immer hoch genug, dass die Rechner-Konfiguration <b>und</b> alle Bausteine links ohne Scrollen sichtbar sind.`,
+    `<b>Filius – Desktop:</b> Die Programm-Symbole rutschen nicht mehr hinter die Leiste; die Taskleiste sitzt jetzt korrekt unten.`,
+    `<b>Filius – Bildbetrachter:</b> Der „Öffnen"-Dialog erscheint jetzt <b>innerhalb</b> des virtuellen Desktops (wie der Datei-Explorer).`,
+    `<b>Filius – Kabel:</b> Ein <b>Rechtsklick beendet den Kabelmodus</b>.`,
+    `<b>Filius – Software-Installation:</b> Programme jetzt als zweispaltige, alphabetische Liste mit <b>Häkchen</b>; „Änderungen annehmen" bleibt immer sichtbar.`,
+  ]},
   { v:"2.28", date:"1. Juli 2026", title:"🌐 Filius Wellen 2+3: Betriebssystem, Routing & Anwendungen", items:[
     `<b>Virtuelles Dateisystem + Datei-Explorer + Text-Editor:</b> Jeder Rechner hat jetzt Ordner & Dateien (Reiter <b>📁 Dateien</b> im Simulationsmodus) – anlegen, bearbeiten, löschen, importieren, herunterladen. Der <b>Webserver</b> liefert die Seite aus <code>/webserver/index.html</code>, die du im Editor bearbeiten kannst.`,
     `<b>Komplette Befehlszeile:</b> zusätzlich zu ping/ipconfig/host/traceroute jetzt <code>ls, cd, pwd, mkdir, touch, cat, echo … > datei, cp, mv, rm</code> sowie <code>arp</code> (ARP-Tabelle) und <code>route</code> (Weiterleitungstabelle). <code>help</code> listet alles auf.`,
@@ -3497,7 +3525,7 @@ function patchNotesDialog(){
 }
 
 /* ---------- Footer: Versionsnummer (aus den Patch-Notes) + Copyright ---------- */
-const APP_BUILD = "2026-07-01 22:15";   // letztes Update (im Patch-Notes-Dialog angezeigt)
+const APP_BUILD = "2026-07-05 12:17";   // letztes Update (im Patch-Notes-Dialog angezeigt)
 (function(){ const f=document.getElementById("appfoot"); if(f){ const v=(typeof PATCH_NOTES!=="undefined"&&PATCH_NOTES[0])?PATCH_NOTES[0].v:""; f.textContent='© 2026 Laurens Offinger · Version '+v; } })();
 
 boot();

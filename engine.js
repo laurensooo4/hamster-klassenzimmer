@@ -898,6 +898,7 @@ class HamsterView{
   setCode(s){ this.code=s; if(this.code_){ this.code_.value=s; this._refreshEditor(); this._undo=[this._snap()]; this._redo=[]; clearTimeout(this._recT); } }
   getTerritory(){ return toJSON(this.initial); }
   getModel(){ return cloneModel(this.model); }
+  reset(){ this._stopRun(true); this._resetModel(); if(this._clearOut) this._clearOut(); this.runState="idle"; if(this._updateBtns) this._updateBtns(); }
   onFinish(fn){ this._onFinish=fn; }
 }
 
