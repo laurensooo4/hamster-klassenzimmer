@@ -93,6 +93,7 @@ function route(){
   if(!ACTIVE_TOOL){ toolLauncher(); return; }
   if(ACTIVE_TOOL==="sql"){ if(ME.role==="teacher") sqlTeacherHome(); else sqlStudentHome(); return; }
   if(ACTIVE_TOOL==="filius"){ if(ME.role==="teacher") filiusTeacherHome(); else filiusStudentHome(); return; }
+  if(ACTIVE_TOOL==="java"){ if(ME.role==="teacher") javaTeacherHome(); else javaStudentHome(); return; }
   if(ME.role==="teacher") teacherHome();
   else studentHome();
 }
@@ -103,7 +104,7 @@ const TOOLS = [
   { id:"hamster", name:"Hamster-Simulator", icon:"🐹", desc:"Programmieren lernen mit dem Hamster", active:true },
   { id:"sql",     name:"SQL-Playground",    icon:"🗄️", desc:"Datenbanken & SQL-Abfragen üben",     active:true },
   { id:"filius",  name:"Filius",            icon:"🌐", desc:"Computernetzwerke verstehen",          active:true },
-  { id:"java",    name:"Java",              icon:"☕", desc:"Java programmieren",                   active:false },
+  { id:"java",    name:"Java",              icon:"☕", desc:"Java programmieren wie die Profis",    active:true },
 ];
 function toolLauncher(){
   shell(`<div class="page-head" style="justify-content:center;text-align:center"><div>
@@ -119,8 +120,8 @@ function toolLauncher(){
 }
 function setTool(id){ ACTIVE_TOOL=id; route(); }
 function switchTool(){ ACTIVE_TOOL=null; route(); }
-/* Tool-abhängige Lehrer-Klassenansicht (Hamster / SQL / Filius) */
-function classViewFor(tool){ return tool==="sql"?sqlTeacherClassView : tool==="filius"?filiusTeacherClassView : teacherClassView; }
+/* Tool-abhängige Lehrer-Klassenansicht (Hamster / SQL / Filius / Java) */
+function classViewFor(tool){ return tool==="sql"?sqlTeacherClassView : tool==="filius"?filiusTeacherClassView : tool==="java"?javaTeacherClassView : teacherClassView; }
 
 /* ============================================================================
    AUTH-SCREEN (Duolingo-Stil)
@@ -1057,7 +1058,7 @@ function renderAdminClasses(q){
   q=(q||"").trim().toLowerCase();
   const tname=c=>(c.teacher&&(c.teacher.display_name||c.teacher.username))||"";
   const list=adminState.classes.filter(c=> !q || (c.name||"").toLowerCase().includes(q)||(c.code||"").toLowerCase().includes(q)||tname(c).toLowerCase().includes(q));
-  const toolBadge=c=> c.tool==="sql"?'<span class="badge blue" style="margin-left:6px">SQL</span>':c.tool==="filius"?'<span class="badge" style="margin-left:6px;background:#e7ddff;color:#6b3fd4">Filius</span>':'<span class="badge gray" style="margin-left:6px">Hamster</span>';
+  const toolBadge=c=> c.tool==="sql"?'<span class="badge blue" style="margin-left:6px">SQL</span>':c.tool==="filius"?'<span class="badge" style="margin-left:6px;background:#e7ddff;color:#6b3fd4">Filius</span>':c.tool==="java"?'<span class="badge" style="margin-left:6px;background:#ffe3c9;color:#a05a00">Java</span>':'<span class="badge gray" style="margin-left:6px">Hamster</span>';
   el.innerHTML = list.length ? `<div class="grid">${list.map(c=>`
       <div class="card click" data-id="${c.id}" data-tool="${esc(c.tool||"hamster")}"><h3>${esc(c.name)}${toolBadge(c)}</h3>
         <div class="meta">Code: <b>${esc(c.code)}</b> · 👩‍🏫 ${esc(tname(c)||"–")}</div></div>`).join("")}</div>`
@@ -1238,7 +1239,7 @@ async function teacherHome(){
 }
 function newClassDialog(opts){
   opts=opts||{};
-  const toolField = opts.pickTool ? `<div class="field"><label>Tool</label><select class="input" id="clTool"><option value="hamster">🐹 Hamster-Simulator</option><option value="sql">🗄️ SQL-Playground</option><option value="filius">🌐 Filius (Netzwerke)</option></select></div>` : "";
+  const toolField = opts.pickTool ? `<div class="field"><label>Tool</label><select class="input" id="clTool"><option value="hamster">🐹 Hamster-Simulator</option><option value="sql">🗄️ SQL-Playground</option><option value="filius">🌐 Filius (Netzwerke)</option><option value="java">☕ Java</option></select></div>` : "";
   openModal(`<button class="x" onclick="closeModal()">✕</button>
     <h3>Neue Klasse</h3><p class="muted" style="margin:2px 0 16px">Gib der Klasse einen Namen – der Einlade-Code wird automatisch erzeugt.</p>
     ${toolField}
@@ -3304,7 +3305,673 @@ function fmtDate(s){ try{ const d=new Date(s); return d.toLocaleDateString("de-D
    PATCH-NOTES (Änderungsverlauf) – Knopf unten links in Lehrer-/Admin-Ansicht
    Neueste Version zuerst. Bei jedem Deploy oben einen Eintrag ergänzen.
    ============================================================================ */
+/* ============================================================================
+   ☕ JAVA-IDE — viertes Lern-Tool (Codeboard-angelehnt; Engine: javaengine.js,
+   IDE: javaview.js). Struktur gespiegelt von Filius/SQL.
+   ============================================================================ */
+/* ---------- API ---------- */
+api.javaListAssignments = async (classId)=>{ const {data,error}=await sb.from("java_assignments").select("*").eq("class_id",classId).order("position").order("created_at"); if(error) throw error; return data||[]; };
+api.javaStudentAssignments = api.javaListAssignments;   // RLS -> Schüler sehen nur veröffentlichte
+api.javaGetAssignment = async (id)=>{ const {data,error}=await sb.from("java_assignments").select("*").eq("id",id).single(); if(error) throw error; return data; };
+api.javaCreateAssignment = async (a)=>{ const {data:mn}=await sb.from("java_assignments").select("position").eq("class_id",a.class_id).order("position",{ascending:true}).limit(1); const position=(mn&&mn[0]?mn[0].position:1)-1; const {data,error}=await sb.from("java_assignments").insert(Object.assign({position},a)).select().single(); if(error) throw error; return data; };
+api.javaUpdateAssignment = async (id,patch)=>{ const {data,error}=await sb.from("java_assignments").update(patch).eq("id",id).select().single(); if(error) throw error; return data; };
+api.javaDeleteAssignment = async (id)=>{ const {error}=await sb.from("java_assignments").delete().eq("id",id); if(error) throw error; };
+api.javaGetSolution = async (aid)=>{ const {data,error}=await sb.from("java_assignment_solutions").select("*").eq("assignment_id",aid).maybeSingle(); if(error) throw error; return data; };
+api.javaSaveSolution = async (aid, data)=>{ const {error}=await sb.from("java_assignment_solutions").upsert({assignment_id:aid, author_id:ME.id, data, updated_at:new Date().toISOString()},{onConflict:"assignment_id"}); if(error) throw error; };
+api.javaSolutionForStudent = async (aid)=>{ const {data,error}=await sb.rpc("java_solution_for_student",{p_assignment:aid}); if(error) throw error; return data; };
+api.javaGetMySubmission = async (aid)=>{ const {data,error}=await sb.from("java_submissions").select("*").eq("assignment_id",aid).eq("student_id",ME.id).maybeSingle(); if(error) throw error; return data; };
+api.javaMySubmissions = async (aids)=>{ if(!aids.length) return []; const {data,error}=await sb.from("java_submissions").select("*").in("assignment_id",aids).eq("student_id",ME.id); if(error) throw error; return data||[]; };
+api.javaSaveSubmission = async (aid, files, results, passed)=>{ const {error}=await sb.from("java_submissions").upsert({assignment_id:aid, student_id:ME.id, files, results, passed, updated_at:new Date().toISOString()},{onConflict:"assignment_id,student_id"}); if(error) throw error; };
+api.javaClassSubmissions = async (aids)=>{ if(!aids.length) return []; const {data,error}=await sb.from("java_submissions").select("id,assignment_id,student_id,files,results,passed,updated_at").in("assignment_id",aids); if(error) throw error; return data||[]; };
+api.javaGetSubmission = async (aid, sid)=>{ const {data,error}=await sb.from("java_submissions").select("*").eq("assignment_id",aid).eq("student_id",sid).maybeSingle(); if(error) throw error; return data; };
+api.javaGetComment = async (subId)=>{ if(!subId) return null; const {data,error}=await sb.from("java_submission_comments").select("*").eq("submission_id",subId).maybeSingle(); if(error) throw error; return data; };
+api.javaSaveComment = async (subId, body, released)=>{ const {data,error}=await sb.from("java_submission_comments").upsert({submission_id:subId, author_id:ME.id, body, released, updated_at:new Date().toISOString()},{onConflict:"submission_id"}).select().single(); if(error) throw error; return data; };
+api.javaDeleteComment = async (subId)=>{ const {error}=await sb.from("java_submission_comments").delete().eq("submission_id",subId); if(error) throw error; };
+api.javaClassComments = async (subIds)=>{ if(!subIds.length) return []; const {data,error}=await sb.from("java_submission_comments").select("submission_id,released,body").in("submission_id",subIds); if(error) throw error; return data||[]; };
+api.javaListTemplates = async ()=>{ const {data,error}=await sb.rpc("shared_java_templates"); if(error) throw error; return data||[]; };
+api.javaGetTemplate = async (id)=>{ const {data,error}=await sb.from("java_assignment_templates").select("*").eq("id",id).single(); if(error) throw error; return data; };
+api.javaCreateTemplate = async (t)=>{ const {data,error}=await sb.from("java_assignment_templates").insert(Object.assign({owner_id:ME.id},t)).select().single(); if(error) throw error; return data; };
+api.javaUpdateTemplate = async (id,patch)=>{ const {data,error}=await sb.from("java_assignment_templates").update(Object.assign({updated_at:new Date().toISOString()},patch)).eq("id",id).select().single(); if(error) throw error; return data; };
+api.javaDeleteTemplate = async (id)=>{ const {error}=await sb.from("java_assignment_templates").delete().eq("id",id); if(error) throw error; };
+api.javaListSandboxProjects = async ()=>{ const {data,error}=await sb.from("java_sandbox_projects").select("id,title,updated_at").eq("owner_id",ME.id).order("updated_at",{ascending:false}); if(error) throw error; return data||[]; };
+api.javaGetSandboxProject = async (id)=>{ const {data,error}=await sb.from("java_sandbox_projects").select("*").eq("id",id).single(); if(error) throw error; return data; };
+api.javaCreateSandboxProject = async (p)=>{ const {data,error}=await sb.from("java_sandbox_projects").insert(Object.assign({owner_id:ME.id},p)).select().single(); if(error) throw error; return data; };
+api.javaUpdateSandboxProject = async (id,patch)=>{ const {data,error}=await sb.from("java_sandbox_projects").update(Object.assign({updated_at:new Date().toISOString()},patch)).eq("id",id).select().single(); if(error) throw error; return data; };
+api.javaDeleteSandboxProject = async (id)=>{ const {error}=await sb.from("java_sandbox_projects").delete().eq("id",id); if(error) throw error; };
+async function moveJavaAssignment(list, id, dir){ const i=list.findIndex(x=>x.id===id); const j=i+dir; if(i<0||j<0||j>=list.length) return; const a=list[i], b=list[j]; await api.javaUpdateAssignment(a.id,{position:b.position}); await api.javaUpdateAssignment(b.id,{position:a.position}); }
+
+/* ---------- Auto-Check-Helfer ---------- */
+function javaChecksOf(a){ const c=(a&&a.checks)||{}; return { mode:c.mode||"none", tests:Array.isArray(c.tests)?c.tests:[], runs:Array.isArray(c.runs)?c.runs:[] }; }
+function javaNorm(s){ return String(s==null?"":s).split("\n").map(l=>l.replace(/[ \t]+$/,"")).join("\n").replace(/\n+$/,""); }
+function javaTestOk(test, output){ const e=javaNorm(test.expected), o=javaNorm(output); return (test.match==="contains") ? o.includes(e) : o===e; }
+function javaStdinLines(s){ s=String(s==null?"":s); return s==="" ? [] : s.split("\n"); }
+/* führt Tests gegen einen Datei-Satz aus -> {results:{id:correct|wrong}, passed, firstError} */
+async function javaRunTests(files, tests){
+  const results={}; let firstError=null;
+  for(const t of tests){
+    const r = await JavaEngine.runHeadless(files.map(f=>({name:f.name,content:f.content})), javaStdinLines(t.stdin));
+    if(!r.ok && !firstError) firstError = r.errorText || "Fehler";
+    results[t.id] = (r.ok && javaTestOk(t, r.output)) ? "correct" : "wrong";
+  }
+  const passed = tests.length>0 && tests.every(t=>results[t.id]==="correct");
+  return { results, passed, firstError };
+}
+const JAVA_DEFAULT_FILES = ()=>[{name:"Main.java", content:'public class Main {\n\n\tpublic static void main(String[] args) {\n\t\tSystem.out.println("Hallo Welt!");\n\t}\n\n}\n', readonly:false, hidden:false}];
+
+/* ---------- Home (Lehrkraft / Schüler:in) ---------- */
+async function javaTeacherHome(){
+  shell(`<div class="center-load"><span class="spin"></span>Klassen werden geladen…</div>`);
+  _classActivity=null;
+  let classes=[];
+  try{ classes = await api.myTeacherClasses(); }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
+  document.getElementById("view").innerHTML = `
+    <div class="page-head"><h2>Meine Klassen</h2><div class="spacer"></div>
+      <button class="btn btn-ghost" id="btnJvTpl">📋 Vorlagen</button>
+      <button class="btn btn-ghost" id="btnJvSbx" style="margin-left:8px">🧪 Sandbox</button>
+      <button class="btn btn-primary" id="btnNewClass" style="margin-left:8px">+ Neue Klasse</button></div>
+    ${classes.length?`<div class="page-head" style="margin:0 0 12px">${classSearchSortControls()}</div>`:""}
+    <div id="clsHost"></div>`;
+  document.getElementById("btnJvTpl").onclick = ()=> javaTemplatesPage({label:"← Java · Meine Klassen", go:javaTeacherHome});
+  document.getElementById("btnJvSbx").onclick = ()=> javaSandbox();
+  document.getElementById("btnNewClass").onclick = newClassDialog;
+  wireClassOverview(classes, c=>`
+      <div class="card click" data-id="${c.id}"><h3>${esc(c.name)}</h3>
+        <div class="meta">Code: <b>${esc(c.code)}</b></div></div>`,
+    id=>{ viewFromAdmin=false; javaTeacherClassView(id); },
+    `<div class="empty"><span class="ic">☕</span>Noch keine Java-Klassen. Erstelle deine erste Klasse!</div>`);
+}
+async function javaStudentHome(){
+  shell(`<div class="center-load"><span class="spin"></span>Wird geladen…</div>`);
+  _classActivity=null;
+  let classes=[];
+  try{ classes = await api.myClasses(); }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
+  if(!classes.length){
+    document.getElementById("view").innerHTML = `
+      <div class="page-head"><h2>☕ Java</h2><div class="spacer"></div><button class="btn btn-ghost" id="btnJvSbx">🧪 Sandbox</button></div>
+      <div class="card" style="max-width:480px;margin:0 auto;text-align:center">
+        <div style="font-size:46px">🔑</div>
+        <h3 style="margin:6px 0">Tritt deiner Klasse bei</h3>
+        <p class="muted" style="margin:0 0 16px">Gib den Code ein, den du von deiner Lehrkraft bekommen hast.</p>
+        <div class="field"><input class="input" id="joinCode" placeholder="z. B. K7Q2MX" maxlength="8" style="text-align:center;text-transform:uppercase;letter-spacing:3px;font-family:monospace;font-size:22px"></div>
+        <button class="btn btn-primary btn-lg" id="btnJoin">Beitreten</button>
+      </div>`;
+    wireJoin(); { const sx=document.getElementById("btnJvSbx"); if(sx) sx.onclick=()=> javaSandbox(); } return;
+  }
+  document.getElementById("view").innerHTML = `
+    <div class="page-head"><h2>Meine Klassen</h2><div class="spacer"></div>
+      <button class="btn btn-ghost" id="btnJvSbx">🧪 Sandbox</button>
+      <button class="btn btn-ghost" id="btnJoinMore" style="margin-left:8px">+ Klasse beitreten</button></div>
+    ${classes.length?`<div class="page-head" style="margin:0 0 12px">${classSearchSortControls()}</div>`:""}
+    <div id="clsHost"></div>`;
+  document.getElementById("btnJvSbx").onclick = ()=> javaSandbox();
+  document.getElementById("btnJoinMore").onclick = joinDialog;
+  wireClassOverview(classes, c=>`
+      <div class="card click" data-id="${c.id}"><h3>${esc(c.name)}</h3>
+        <div class="meta">Aufgaben ansehen →</div></div>`, id=> javaStudentClassView(id), "");
+}
+
+/* ---------- Lehrkraft: Klassenansicht + Matrix ---------- */
+async function javaTeacherClassView(classId){
+  shell(`<div class="center-load"><span class="spin"></span>Klasse wird geladen…</div>`);
+  let cls, roster=[], asgs=[], subs=[];
+  try{
+    const { data } = await sb.from("classes").select("*").eq("id",classId).single(); cls=data;
+    roster = await api.classRoster(classId);
+    roster.sort((a,b)=>{ const na=((a.profiles&&(a.profiles.display_name||a.profiles.username))||"").toLowerCase(), nb=((b.profiles&&(b.profiles.display_name||b.profiles.username))||"").toLowerCase(); return na.localeCompare(nb,"de"); });
+    asgs = await api.javaListAssignments(classId);
+  }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
+  if(!cls){ document.getElementById("view").innerHTML=errBox({message:"Klasse nicht gefunden."}); return; }
+  if(asgs.length){ try{ subs = await api.javaClassSubmissions(asgs.map(a=>a.id)); }catch(e){ subs=[]; } }
+  const canTeam=(cls.teacher_id===ME.id||ME.is_admin);
+  let teachers=[]; try{ teachers=await api.classTeachersNamed(classId); }catch(e){ teachers=[]; }
+  const iAmCoTeacher = !canTeam && teachers.some(t=>t.id===ME.id && !t.is_owner);
+  const rosterHtml = roster.length ? `<div class="list">${roster.map(m=>{ const p=m.profiles||{}; const nm=p.display_name||p.username||"?"; return `<div class="row"><span class="chip clickable" data-prof="${m.student_id}" title="Profil ansehen" style="cursor:pointer"><span class="av">${esc(initials(nm))}</span>${esc(nm)}</span><div class="grow"></div><span class="muted" style="font-size:11.5px;margin-right:8px">${fmtDate(m.joined_at)}</span>${canTeam?`<button class="abtn" data-stu="${m.student_id}" data-nm="${esc(nm)}" title="Passwort zurücksetzen">🔑</button><button class="abtn" data-rmstu="${m.student_id}" data-nm="${esc(nm)}" title="aus Klasse entfernen">🗑️</button>`:""}</div>`; }).join("")}</div>`
+    : `<div class="empty"><span class="ic">🎒</span>Noch keine Schüler:innen. Teile den Code <b>${esc(cls.code)}</b>!</div>`;
+  const modeLabel = a=>{ const c=javaChecksOf(a); return c.mode==="tests" ? `🧪 ${c.tests.length} Test(s)` : c.mode==="solution" ? "🏆 Musterlösungs-Vergleich" : "kein Auto-Check"; };
+  const asgHtml = asgs.length ? `<div class="list">${asgs.map(a=>`
+      <div class="row"><span class="grow"><span style="display:flex;align-items:center;gap:6px;flex-wrap:wrap"><span class="t clickable" data-edit="${a.id}" title="Aufgabe bearbeiten">${esc(a.title)}</span>${a.published?"":'<span class="badge gold">Entwurf</span>'}${a.released?'<span class="badge" title="Musterlösung für Schüler:innen sichtbar">🏆 Lösung frei</span>':''}</span><span class="s">${modeLabel(a)} · ${esc(fmtDateTime(a.created_at))}</span></span>
+        <span class="acts">
+          <button class="abtn" data-up="${a.id}" title="nach oben">↑</button>
+          <button class="abtn" data-down="${a.id}" title="nach unten">↓</button>
+          <button class="abtn" data-pub="${a.id}" data-on="${a.published?1:0}" title="${a.published?'verbergen (Entwurf)':'veröffentlichen'}">${a.published?'👁️':'🚀'}</button>
+          <button class="abtn" data-rel="${a.id}" data-relon="${a.released?1:0}" title="${a.released?'Musterlösung wieder verbergen':'Musterlösung für Schüler:innen freigeben'}">${a.released?'🏆':'🔒'}</button>
+          <button class="abtn" data-edit="${a.id}" title="bearbeiten">✏️</button>
+          <button class="abtn" data-del="${a.id}" title="löschen">🗑️</button>
+        </span></div>`).join("")}</div>`
+    : `<div class="empty" style="padding:16px"><span class="ic">📝</span>Noch keine Aufgaben.</div>`;
+  document.getElementById("view").innerHTML = `
+    <div class="page-head"><button class="crumb" id="back">${viewFromAdmin?"← Admin-Bereich":"← Meine Klassen"}</button><div class="spacer"></div><button class="btn btn-ghost btn-sm" id="btnJvTpl2">📋 Vorlagen</button></div>
+    <div class="page-head" style="margin-top:0"><h2>${esc(cls.name)}${canTeam?` <button class="btn btn-ghost btn-sm" id="btnRename" title="Klasse umbenennen" style="vertical-align:middle">✏️</button>`:""}${CLASS_REFRESH_BTN}</h2><div class="spacer"></div>
+      <span class="codechip" title="Einlade-Code" style="${cls.join_open===false?'opacity:.55;':''}">🔑 ${esc(cls.code)}${cls.join_open===false?' <span class="badge gray" title="Beitritt mit diesem Code ist deaktiviert">aus</span>':''} <button class="btn btn-sm btn-ghost" id="copyCode" style="margin-left:4px">Kopieren</button></span>
+      ${canTeam?`<button class="btn btn-ghost btn-sm" id="btnCodeToggle" style="margin-left:8px" title="${cls.join_open===false?'Beitritt mit diesem Code wieder erlauben':'Beitritt mit diesem Code deaktivieren'}">${cls.join_open===false?'🔓 Aktivieren':'🚫 Code deaktivieren'}</button><button class="btn btn-ghost btn-sm" id="btnCodeNew" style="margin-left:6px" title="Neuen Code erzeugen – der alte wird ungültig">🔄 Neuer Code</button>`:''}
+      ${canTeam?`<button class="btn btn-ghost btn-sm" id="btnDeleteClass" style="margin-left:8px;color:var(--red-d)" title="Klasse löschen">🗑️ Löschen</button>`:(iAmCoTeacher?`<button class="btn btn-ghost btn-sm" id="btnLeaveClass" style="margin-left:8px;color:var(--red-d)" title="Klasse verlassen">🚪 Klasse verlassen</button>`:"")}</div>
+    <div class="card" style="margin-bottom:14px">
+      <div style="display:flex;align-items:center;gap:8px"><h3 style="margin:0">📝 Aufgaben <span class="badge gray">${asgs.length}</span></h3><div style="flex:1"></div><button class="btn btn-ghost btn-sm" id="btnJvFromTpl">📋 aus Vorlage</button><button class="btn btn-blue btn-sm" id="btnNewJvAssign" style="margin-left:8px">+ Aufgabe stellen</button></div>
+      <div style="margin-top:12px">${asgHtml}</div></div>
+    <div class="card" style="margin-bottom:14px">
+      <div style="display:flex;align-items:center;gap:8px"><h3 style="margin:0">📊 Abgabe-Matrix</h3><div style="flex:1"></div>${(asgs.length&&roster.length)?'<button class="btn btn-ghost btn-sm" id="btnJvMatrixMax" title="Matrix im Vollbild öffnen">⛶ Vergrößern</button>':''}</div>
+      <div style="margin-top:12px">
+        ${(asgs.length&&roster.length)?'<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap"><span class="muted" style="font-size:12.5px">🟩 Test bestanden · 🟧 Test fehlgeschlagen · ⬜ offen · ★ = alle sichtbaren Tests bestanden</span><div style="flex:1"></div><input class="input" id="jvMatrixSearch" placeholder="🔍 Schüler:in suchen" style="max-width:240px"></div>':''}
+        <div id="jvMatrixHost"></div>
+      </div></div>
+    <div class="card" style="margin-bottom:14px"><div style="display:flex;align-items:center;gap:8px"><h3 style="margin:0">🎒 Schüler:innen <span class="badge gray">${roster.length}</span></h3><div style="flex:1"></div>${canTeam?'<button class="btn btn-ghost btn-sm" id="btnJvImport">📥 Importieren</button>':''}</div><div style="margin-top:12px">${rosterHtml}</div></div>
+    <div class="card" style="margin-bottom:16px"><div style="display:flex;align-items:center;gap:8px"><h3 style="margin:0">👩‍🏫 Lehrkräfte <span class="badge gray">${teachers.length}</span></h3><div style="flex:1"></div>${canTeam?'<button class="btn btn-ghost btn-sm" id="btnTeachers">+ verwalten</button>':''}</div>
+      <div class="list" style="margin-top:12px">${teachers.length?teachers.map(t=>`<div class="row"><span class="chip"><span class="av">${esc(initials(t.display_name||t.username))}</span>${esc(t.display_name||t.username)}</span><div class="grow"></div>${t.is_owner?'<span class="badge blue">Ersteller:in</span>':'<span class="badge gray">Co-Lehrkraft</span>'}</div>`).join(""):'<div class="muted" style="font-size:13px">—</div>'}</div></div>`;
+  document.getElementById("back").onclick = ()=> (viewFromAdmin?adminHome():javaTeacherHome());
+  document.getElementById("copyCode").onclick = ()=>{ if(navigator.clipboard) navigator.clipboard.writeText(cls.code); toast("Code kopiert: "+cls.code,"ok"); };
+  { const bd=document.getElementById("btnDeleteClass"); if(bd) bd.onclick=async()=>{ if(!confirm(`Klasse „${cls.name}" wirklich löschen? Alle Aufgaben und Zuordnungen werden entfernt.`)) return; try{ await api.deleteClass(classId); toast("Klasse gelöscht","ok"); (viewFromAdmin?adminHome():javaTeacherHome()); }catch(e){ toast(e.message||"Fehler","err"); } }; }
+  { const br=document.getElementById("btnRename"); if(br) br.onclick=()=> renameClassDialog(classId, cls.name, cls.tool); }
+  wireClassRefresh(()=> javaTeacherClassView(classId));
+  { const bt=document.getElementById("btnCodeToggle"); if(bt) bt.onclick=async()=>{ const disabling=(cls.join_open!==false); if(disabling){ if(!confirm(`Beitritt für „${cls.name}" deaktivieren?\n\nMit dem Code ${cls.code} kann danach niemand mehr neu beitreten. Bereits beigetretene Schüler:innen bleiben in der Klasse.`)) return; } try{ await api.setClassJoinOpen(classId, !disabling); toast(disabling?"Beitritt deaktiviert 🚫":"Beitritt wieder aktiv 🔓","ok"); javaTeacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } }; }
+  { const bn=document.getElementById("btnCodeNew"); if(bn) bn.onclick=async()=>{ if(!confirm(`Neuen Einlade-Code für „${cls.name}" erzeugen?\n\nDer bisherige Code ${cls.code} wird sofort ungültig – verteile danach den neuen Code. Bereits beigetretene Schüler:innen bleiben in der Klasse.`)) return; try{ const nc=await api.regenerateClassCode(classId); toast("Neuer Code: "+nc,"ok"); javaTeacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } }; }
+  { const bl=document.getElementById("btnLeaveClass"); if(bl) bl.onclick=async()=>{ if(!confirm(`Klasse „${cls.name}" wirklich verlassen? Du bist danach keine Co-Lehrkraft mehr und siehst die Klasse nicht mehr.`)) return; try{ await api.removeClassTeacher(classId, ME.id); toast("Klasse verlassen","ok"); javaTeacherHome(); }catch(e){ toast(e.message||"Fehler","err"); } }; }
+  { const bt=document.getElementById("btnTeachers"); if(bt) bt.onclick=()=> classTeachersDialog(classId, cls); }
+  document.getElementById("btnJvTpl2").onclick = ()=> javaTemplatesPage({label:"← zurück zur Klasse", go:()=> javaTeacherClassView(classId)});
+  { const bi=document.getElementById("btnJvImport"); if(bi) bi.onclick=()=> importStudentsDialog(classId, cls.code, ()=>javaTeacherClassView(classId)); }
+  document.querySelectorAll(".chip[data-prof]").forEach(b=> b.onclick=()=>{ const m=roster.find(r=>r.student_id===b.dataset.prof); const p=(m&&m.profiles)||{}; javaStudentProfilePage(classId, b.dataset.prof, p.display_name||p.username||"?", p.username||""); });
+  document.querySelectorAll("[data-stu]").forEach(b=> b.onclick=()=> resetStudentPw(b.dataset.stu, b.dataset.nm));
+  document.querySelectorAll("[data-rmstu]").forEach(b=> b.onclick=async()=>{ if(!confirm(b.dataset.nm+" aus dieser Klasse entfernen? (Der Account bleibt bestehen.)")) return; try{ await api.removeMembership(classId, b.dataset.rmstu); toast("Entfernt","ok"); javaTeacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } });
+  document.getElementById("btnNewJvAssign").onclick = ()=> javaAssignmentEditorPage(classId, null);
+  document.getElementById("btnJvFromTpl").onclick = ()=> javaPickTemplate(classId);
+  document.querySelectorAll("[data-edit]").forEach(b=> b.onclick=()=> javaAssignmentEditorPage(classId, {id:b.dataset.edit}));
+  document.querySelectorAll("[data-up]").forEach(b=> b.onclick=async()=>{ await moveJavaAssignment(asgs, b.dataset.up, -1); javaTeacherClassView(classId); });
+  document.querySelectorAll("[data-down]").forEach(b=> b.onclick=async()=>{ await moveJavaAssignment(asgs, b.dataset.down, 1); javaTeacherClassView(classId); });
+  document.querySelectorAll("[data-pub]").forEach(b=> b.onclick=async()=>{ try{ await api.javaUpdateAssignment(b.dataset.pub,{published:b.dataset.on!=="1"}); javaTeacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } });
+  document.querySelectorAll("[data-rel]").forEach(b=> b.onclick=async()=>{ const on=b.dataset.relon==="1"; if(!on && !confirm("Musterlösung dieser Aufgabe für ALLE Schüler:innen sichtbar machen?")) return; try{ await api.javaUpdateAssignment(b.dataset.rel,{released:!on}); toast(on?"Musterlösung verborgen 🔒":"Musterlösung freigegeben 🏆","ok"); javaTeacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } });
+  document.querySelectorAll("[data-del]").forEach(b=> b.onclick=async()=>{ if(!confirm("Aufgabe wirklich löschen?")) return; try{ await api.javaDeleteAssignment(b.dataset.del); javaTeacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } });
+  const paintJvMatrixInto=(host, q, close)=>{ if(!host) return;
+    host.innerHTML = (asgs.length&&roster.length) ? buildJavaMatrix(roster, asgs, subs, q)
+      : `<div class="empty"><span class="ic">📊</span>${!asgs.length?"Stelle Aufgaben – dann erscheint hier, wer abgegeben hat.":"Noch keine Schüler:innen in der Klasse."}</div>`;
+    host.querySelectorAll(".sqcell[data-aid]").forEach(c=> c.onclick=()=>{ const stu=roster.find(r=>r.student_id===c.dataset.sid); const nm=(stu&&stu.profiles&&(stu.profiles.display_name||stu.profiles.username))||"?"; if(close) close(); javaReviewSubmission(c.dataset.aid, c.dataset.sid, nm, classId); });
+  };
+  paintJvMatrixInto(document.getElementById("jvMatrixHost"), "", null);
+  { const ms=document.getElementById("jvMatrixSearch"); if(ms) ms.oninput=()=> paintJvMatrixInto(document.getElementById("jvMatrixHost"), ms.value, null); }
+  { const bx=document.getElementById("btnJvMatrixMax"); if(bx) bx.onclick=()=> openMatrixModal("📊 Abgabe-Matrix – "+cls.name, (host,q,close)=> paintJvMatrixInto(host,q,close)); }
+}
+function buildJavaMatrix(roster, asgs, subs, q){
+  q=(q||"").trim().toLowerCase();
+  const nmeOf=stu=>(stu.profiles&&(stu.profiles.display_name||stu.profiles.username))||"?";
+  const list = q ? roster.filter(stu=> nmeOfSafe(nmeOf(stu)).includes(q)) : roster;
+  if(!list.length) return `<div class="empty" style="padding:16px"><span class="ic">🔍</span>Keine Schüler:in gefunden.</div>`;
+  const head = asgs.map(a=>`<th title="${esc(a.title)}">${esc(a.title.length>14?a.title.slice(0,13)+"…":a.title)}</th>`).join("");
+  const seg=(n,color)=> n>0?`<div style="flex:${n};background:${color}"></div>`:"";
+  const rows = list.map(stu=>{
+    const cells = asgs.map(a=>{
+      const c=javaChecksOf(a);
+      const sub = subs.find(x=>x.assignment_id===a.id && x.student_id===stu.student_id);
+      if(c.mode!=="tests" || !c.tests.length){
+        if(!sub) return `<td><span title="noch nicht bearbeitet" style="color:var(--muted);font-weight:900">·</span></td>`;
+        return `<td><span class="sqcell" data-aid="${a.id}" data-sid="${stu.student_id}" title="abgegeben – ansehen" style="cursor:pointer;font-weight:900;color:var(--green-d)">✓</span></td>`;
+      }
+      const total=c.tests.length;
+      if(!sub) return `<td><span title="noch nicht bearbeitet (${total} Tests)" style="color:var(--muted);font-weight:900">·</span></td>`;
+      const res=sub.results||{}; let g=0,y=0; for(const t of c.tests){ const st=res[t.id]; if(st==="correct") g++; else if(st==="wrong") y++; }
+      const grey=total-g-y, done=(g===total);
+      const bar=`<div style="display:flex;height:7px;width:56px;border-radius:4px;overflow:hidden;margin:0 auto 3px;background:var(--line2)">${seg(g,"var(--green)")}${seg(y,"var(--gold)")}${seg(grey,"var(--line2)")}</div>`;
+      const cap=`<span style="font-size:11.5px;font-weight:800;color:${done?'var(--green-d)':'var(--muted)'}">${g}/${total}${done?' ★':''}</span>`;
+      const title=`✓ ${g} bestanden · ✗ ${y} fehlgeschlagen · · ${grey} offen (von ${total} sichtbaren Tests)`;
+      return `<td><span class="sqcell" data-aid="${a.id}" data-sid="${stu.student_id}" title="${esc(title)} – Abgabe ansehen" style="display:inline-block;min-width:60px;text-align:center;cursor:pointer">${bar}${cap}</span></td>`;
+    }).join("");
+    return `<tr><td class="stu">${esc(nmeOf(stu))}</td>${cells}</tr>`;
+  }).join("");
+  return `<div class="matrix-wrap"><table class="matrix"><thead><tr><th class="stu">Schüler:in</th>${head}</tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+
+/* ---------- Schüler:in: Klassenansicht ---------- */
+async function javaStudentClassView(classId){
+  shell(`<div class="center-load"><span class="spin"></span>Lädt…</div>`);
+  let cls, asgs=[], subs=[];
+  try{
+    const { data } = await sb.from("classes").select("*").eq("id",classId).single(); cls=data;
+    asgs = await api.javaStudentAssignments(classId);
+    if(asgs.length) subs = await api.javaMySubmissions(asgs.map(a=>a.id));
+  }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
+  let coms=[]; try{ if(subs.length) coms = await api.javaClassComments(subs.map(x=>x.id)); }catch(e){}
+  const list = asgs.length ? `<div class="list">${asgs.map(a=>{
+      const c=javaChecksOf(a);
+      const s=subs.find(x=>x.assignment_id===a.id);
+      const com = s ? coms.find(x=>x.submission_id===s.id && x.released) : null;
+      let badge;
+      if(!s) badge=`<span class="badge gray">offen</span>`;
+      else if(c.mode==="tests" && c.tests.length) badge = s.passed===true?`<span class="badge">Tests bestanden ✓</span>`:`<span class="badge gold">abgegeben</span>`;
+      else badge=`<span class="badge gold">abgegeben</span>`;
+      return `<div class="row clickrow" data-id="${a.id}" style="cursor:pointer">
+        <span class="grow"><span class="t">${esc(a.title)}</span>${a.description?`<span class="s">${esc(a.description.slice(0,70))}</span>`:""}${com?feedbackPreviewHtml(com.body):""}</span>
+        ${badge}<span style="margin-left:8px;color:#7a8aa0">→</span></div>`;
+    }).join("")}</div>`
+    : `<div class="empty"><span class="ic">📝</span>Noch keine Aufgaben. Schau später wieder rein!</div>`;
+  document.getElementById("view").innerHTML = `
+    <div class="page-head"><button class="crumb" id="back">← Meine Klassen</button></div>
+    <div class="page-head" style="margin-top:0"><h2>${esc(cls?cls.name:"Klasse")}${CLASS_REFRESH_BTN}</h2></div>
+    ${list}`;
+  document.getElementById("back").onclick = javaStudentHome;
+  wireClassRefresh(()=> javaStudentClassView(classId));
+  document.querySelectorAll(".clickrow[data-id]").forEach(r=> r.onclick=()=> javaSolveAssignment(r.dataset.id, classId));
+}
+
+/* ---------- Schüler:in: Aufgabe lösen (IDE) ---------- */
+let javaSolveState=null;
+async function javaSolveAssignment(aid, classId){
+  shell(`<div class="center-load"><span class="spin"></span>Aufgabe wird geladen…</div>`);
+  let a, sub=null;
+  try{ a = await api.javaGetAssignment(aid); sub = await api.javaGetMySubmission(aid); }
+  catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
+  const c = javaChecksOf(a);
+  let com=null; try{ if(sub) com = await api.javaGetComment(sub.id); }catch(e){}
+  const startFiles = (a.files_snapshot&&a.files_snapshot.length) ? a.files_snapshot : JAVA_DEFAULT_FILES();
+  const files = (sub && sub.files && sub.files.length) ? sub.files : JSON.parse(JSON.stringify(startFiles));
+  javaSolveState = { aid, classId, a, sub };
+  const testsHtml = (c.mode==="tests" && c.tests.length) ? `
+    <div class="card" style="margin-bottom:10px;padding:12px 16px">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><b>🧪 Testfälle</b><div class="spacer"></div>
+        <button class="btn btn-ghost btn-sm" id="btnJvCheck">Tests prüfen</button></div>
+      <div id="jvTestList" style="margin-top:8px"></div></div>` : "";
+  document.getElementById("view").innerHTML = `
+    <div class="page-head"><button class="crumb" id="back">← zurück zur Klasse</button></div>
+    <div class="page-head" style="margin-top:0"><h2>${esc(a.title)}</h2><div class="spacer"></div>
+      <span id="jvStatus">${sub?(sub.passed===true?'<span class="badge">Tests bestanden ✓</span>':'<span class="badge gold">abgegeben</span>'):'<span class="badge gray">offen</span>'}</span>
+      ${a.released?'<button class="btn btn-ghost btn-sm" id="btnJvSol" style="margin-left:8px">🏆 Musterlösung</button>':''}
+      <button class="btn btn-ghost btn-sm" id="btnJvReset" style="margin-left:8px" title="Zurück zu den Start-Dateien der Aufgabe">↺ Zurücksetzen</button>
+      <button class="btn btn-primary btn-sm" id="btnJvSubmit" style="margin-left:8px">📤 Abgeben</button></div>
+    ${a.description?`<div class="card" style="margin-bottom:10px;padding:12px 16px">${esc(a.description).replace(/\n/g,"<br>")}</div>`:""}
+    ${com&&com.released?`<div class="card" style="margin-bottom:10px;padding:12px 16px;border-left:4px solid var(--gold)"><b>💬 Rückmeldung deiner Lehrkraft:</b><br>${esc(com.body).replace(/\n/g,"<br>")}</div>`:""}
+    ${testsHtml}
+    <div id="jvHost" style="--jvMin:560px;height:70vh;min-height:560px"></div>`;
+  document.getElementById("back").onclick = ()=> javaStudentClassView(classId||a.class_id);
+  pageView = new JavaView(document.getElementById("jvHost"), { mode:"solve" });
+  pageView.setData({ files });
+  const renderTests=(results)=>{
+    const host=document.getElementById("jvTestList"); if(!host) return;
+    host.innerHTML = c.tests.map(t=>{
+      const st = results ? results[t.id] : (sub&&sub.results?sub.results[t.id]:null);
+      const ic = st==="correct"?"🟩":st==="wrong"?"🟧":"⬜";
+      return `<div class="row" style="padding:7px 10px"><span style="font-size:15px;margin-right:8px">${ic}</span><span class="grow"><span class="t" style="font-size:13.5px">${esc(t.name||"Test")}</span>${t.stdin?`<span class="s">Eingabe: ${esc(t.stdin.replace(/\n/g," ⏎ "))}</span>`:""}<span class="s">Erwartet${t.match==="contains"?" (enthält)":""}: ${esc((t.expected||"").slice(0,80))}</span></span></div>`;
+    }).join("");
+  };
+  renderTests(null);
+  { const bc=document.getElementById("btnJvCheck"); if(bc) bc.onclick=async()=>{
+      bc.disabled=true; bc.textContent="prüft…";
+      try{ const r = await javaRunTests(pageView.getData().files, c.tests); renderTests(r.results);
+        toast(r.passed?"Alle sichtbaren Tests bestanden! ⭐":(r.firstError?("Fehler: "+r.firstError.slice(0,120)):"Noch nicht alle Tests bestanden."), r.passed?"ok":"err"); }
+      catch(e){ toast(e.message||"Fehler","err"); }
+      bc.disabled=false; bc.textContent="Tests prüfen"; }; }
+  { const bs=document.getElementById("btnJvSol"); if(bs) bs.onclick=async()=>{
+      try{ const solFiles = await api.javaSolutionForStudent(aid);
+        if(!solFiles || !solFiles.length){ toast("Noch keine Musterlösung hinterlegt.","err"); return; }
+        /* Als Modal – der eigene Arbeitsstand im Editor bleibt unangetastet */
+        openModal(`<button class="x" onclick="closeModal()">✕</button><h3 style="margin:0 0 10px">🏆 Musterlösung – ${esc(a.title)}</h3><div id="jvSolHost" style="--jvMin:440px;height:60vh;min-height:440px"></div>`, true);
+        modalView = new JavaView(document.getElementById("jvSolHost"), { mode:"view" });
+        modalView.setData({ files: solFiles }); }
+      catch(e){ toast(e.message||"Fehler","err"); } }; }
+  document.getElementById("btnJvReset").onclick = ()=>{ if(!confirm("Deinen Code verwerfen und die Start-Dateien der Aufgabe laden?")) return; pageView.setData({ files: JSON.parse(JSON.stringify(startFiles)) }); };
+  document.getElementById("btnJvSubmit").onclick = async()=>{
+    const btn=document.getElementById("btnJvSubmit"); btn.disabled=true; btn.textContent="gibt ab…";
+    try{
+      const myFiles = pageView.getData().files;
+      let results={}, passed=null;
+      if(c.mode==="tests" && c.tests.length){ const r=await javaRunTests(myFiles, c.tests); results=r.results; passed=r.passed; renderTests(results); }
+      await api.javaSaveSubmission(aid, myFiles, results, passed);
+      sub = await api.javaGetMySubmission(aid);
+      document.getElementById("jvStatus").innerHTML = passed===true?'<span class="badge">Tests bestanden ✓</span>':'<span class="badge gold">abgegeben</span>';
+      toast(passed===true?"Abgegeben – alle sichtbaren Tests bestanden! ⭐":"Abgabe gespeichert 📤","ok");
+    }catch(e){ toast(e.message||"Fehler","err"); }
+    btn.disabled=false; btn.textContent="📤 Abgeben";
+  };
+}
+
+/* ---------- Lehrkraft: Abgabe einsehen (mit authoritativer Auswertung) ---------- */
+async function javaReviewSubmission(aid, sid, studentName, classId){
+  shell(`<div class="center-load"><span class="spin"></span>Abgabe wird geladen…</div>`);
+  let a, sub, solRow=null;
+  try{ a = await api.javaGetAssignment(aid); sub = await api.javaGetSubmission(aid, sid); solRow = await api.javaGetSolution(aid); }
+  catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
+  if(!sub){ document.getElementById("view").innerHTML=errBox({message:"Keine Abgabe vorhanden."}); return; }
+  const c = javaChecksOf(a);
+  const sol = (solRow&&solRow.data)||{};
+  const hiddenTests = Array.isArray(sol.hidden_tests)?sol.hidden_tests:[];
+  let com=null; try{ com = await api.javaGetComment(sub.id); }catch(e){}
+  const hasChecks = (c.mode==="tests" && (c.tests.length||hiddenTests.length)) || (c.mode==="solution" && sol.files && sol.files.length);
+  document.getElementById("view").innerHTML = `
+    <div class="page-head"><button class="crumb" id="back">← zurück zur Klasse</button></div>
+    <div class="page-head" style="margin-top:0"><h2>Abgabe von ${esc(studentName)}</h2><div class="spacer"></div>
+      <span class="muted" style="font-size:12.5px">${esc(fmtDateTime(sub.updated_at))}</span></div>
+    <div class="card" style="margin-bottom:10px;padding:12px 16px"><b>Aufgabe:</b> ${esc(a.title)}${a.description?` – ${esc(a.description.slice(0,140))}`:""}
+      <span class="muted" style="font-size:12px;display:block;margin-top:3px">🛠️ Du kannst den Code hier ausführen (▶) – Änderungen werden nicht gespeichert.</span></div>
+    ${hasChecks?`<div class="card" style="margin-bottom:10px;padding:12px 16px"><div style="display:flex;align-items:center;gap:8px"><b>🧪 Auto-Check (authoritativ neu ausgeführt)</b><div class="spacer"></div><span id="jvRevSpin"><span class="spin" style="width:14px;height:14px"></span></span></div><div id="jvRevChecks" style="margin-top:8px"><span class="muted" style="font-size:13px">Tests laufen…</span></div></div>`:""}
+    <div id="jvHost" style="--jvMin:520px;height:62vh;min-height:520px"></div>
+    <div class="card" style="margin-top:14px;padding:14px 16px">
+      <b>💬 Rückmeldung an ${esc(studentName)}</b>
+      <textarea class="input" id="jvComBody" style="margin-top:8px;min-height:80px">${esc(com?com.body:"")}</textarea>
+      <div style="display:flex;align-items:center;gap:10px;margin-top:8px;flex-wrap:wrap">
+        <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:700"><input type="checkbox" id="jvComRel" ${com&&com.released?"checked":""}> Für Schüler:in sichtbar</label>
+        <div class="spacer"></div>
+        <button class="btn btn-ghost btn-sm" id="jvComDel" style="color:var(--red-d)">löschen</button>
+        <button class="btn btn-primary btn-sm" id="jvComSave">💾 Speichern</button>
+      </div></div>`;
+  document.getElementById("back").onclick = ()=> javaTeacherClassView(classId);
+  pageView = new JavaView(document.getElementById("jvHost"), { mode:"view" });
+  pageView.setData({ files: sub.files||[] });
+  document.getElementById("jvComSave").onclick = async()=>{
+    const body=document.getElementById("jvComBody").value.trim();
+    if(!body){ toast("Bitte erst eine Rückmeldung schreiben.","err"); return; }
+    try{ await api.javaSaveComment(sub.id, body, document.getElementById("jvComRel").checked); toast("Rückmeldung gespeichert ✓","ok"); }
+    catch(e){ toast(e.message||"Fehler","err"); }
+  };
+  { const bd=document.getElementById("jvComDel"); if(bd) bd.onclick=async()=>{ if(!confirm("Rückmeldung löschen?")) return; try{ await api.javaDeleteComment(sub.id); toast("Gelöscht","ok"); javaReviewSubmission(aid,sid,studentName,classId); }catch(e){ toast(e.message||"Fehler","err"); } }; }
+  /* authoritative Auswertung (sichtbare + versteckte Tests bzw. Musterlösungs-Vergleich) */
+  if(hasChecks)(async()=>{
+    const host=document.getElementById("jvRevChecks"); const spin=document.getElementById("jvRevSpin");
+    const rows=[];
+    try{
+      /* Manipulationsschutz: 🔒-Vorgabedateien werden für die Auswertung IMMER aus dem
+         Original-Snapshot wiederhergestellt; Abweichungen werden der Lehrkraft gemeldet. */
+      const snap=Array.isArray(a.files_snapshot)?a.files_snapshot:[];
+      const roMap=new Map(snap.filter(f=>f.readonly).map(f=>[f.name, f.content]));
+      let tampered=false;
+      const stuFiles=(sub.files||[]).map(f=>{
+        if(roMap.has(f.name)){
+          if(javaNorm(f.content)!==javaNorm(roMap.get(f.name))) tampered=true;
+          return {name:f.name, content:roMap.get(f.name)};
+        }
+        return {name:f.name, content:f.content};
+      });
+      snap.filter(f=>f.readonly && !stuFiles.some(s2=>s2.name===f.name)).forEach(f=>{ tampered=true; stuFiles.push({name:f.name, content:f.content}); });
+      if(tampered) rows.push('<div class="row" style="padding:7px 10px;background:#fff0f0;border-radius:8px"><span style="font-size:15px;margin-right:8px">⚠️</span><span class="grow"><span class="t" style="font-size:13.5px;color:var(--red-d)">Schreibgeschützte Vorgabedatei wurde verändert!</span><span class="s">Für die Auswertung wurde das Original wiederhergestellt – bitte die Abgabe genau ansehen.</span></span></div>');
+      if(c.mode==="tests"){
+        const all=[...c.tests.map(t=>({t,hid:false})), ...hiddenTests.map(t=>({t,hid:true}))];
+        for(const {t,hid} of all){
+          const r=await JavaEngine.runHeadless(stuFiles, javaStdinLines(t.stdin));
+          const ok=r.ok&&javaTestOk(t,r.output);
+          rows.push(`<div class="row" style="padding:7px 10px"><span style="font-size:15px;margin-right:8px">${ok?"🟩":"🟧"}</span><span class="grow"><span class="t" style="font-size:13.5px">${esc(t.name||"Test")}${hid?' <span class="badge gray" title="für Schüler:innen unsichtbar">🙈 versteckt</span>':""}</span>${t.stdin?`<span class="s">Eingabe: ${esc(String(t.stdin).replace(/\n/g," ⏎ "))}</span>`:""}<span class="s">${r.ok?("Ausgabe: "+esc(javaNorm(r.output).slice(0,120))):("⚠️ "+esc((r.errorText||"Fehler").slice(0,140)))}</span></span></div>`);
+        }
+      } else {
+        const solFiles=(sol.files||[]).map(f=>({name:f.name,content:f.content}));
+        const runs=c.runs.length?c.runs:[{stdin:""}];
+        for(let i=0;i<runs.length;i++){
+          const stdin=javaStdinLines(runs[i].stdin);
+          const rs=await JavaEngine.runHeadless(solFiles, stdin.slice());
+          const ru=await JavaEngine.runHeadless(stuFiles, stdin.slice());
+          const ok=rs.ok&&ru.ok&&javaNorm(rs.output)===javaNorm(ru.output);
+          rows.push(`<div class="row" style="padding:7px 10px"><span style="font-size:15px;margin-right:8px">${ok?"🟩":"🟧"}</span><span class="grow"><span class="t" style="font-size:13.5px">Lauf ${i+1}${runs[i].stdin?` · Eingabe: ${esc(String(runs[i].stdin).replace(/\n/g," ⏎ "))}`:""}</span><span class="s">Erwartet (Musterlösung): ${rs.ok?esc(javaNorm(rs.output).slice(0,100)):"⚠️ Musterlösung fehlerhaft"}</span><span class="s">Schüler:in: ${ru.ok?esc(javaNorm(ru.output).slice(0,100)):("⚠️ "+esc((ru.errorText||"Fehler").slice(0,120)))}</span></span></div>`);
+        }
+      }
+      if(host) host.innerHTML = rows.join("") || '<span class="muted" style="font-size:13px">Keine Tests definiert.</span>';
+    }catch(e){ if(host) host.innerHTML = `<span class="muted" style="font-size:13px">⚠️ ${esc(e.message||"Fehler bei der Auswertung")}</span>`; }
+    if(spin) spin.innerHTML="";
+  })();
+}
+
+/* ---------- Lehrkraft: Schüler-Profil ---------- */
+async function javaStudentProfilePage(classId, sid, name, username){
+  shell(`<div class="center-load"><span class="spin"></span>Profil…</div>`);
+  let ov=null, asgs=[], subs=[], note=null;
+  try{
+    try{ ov = await api.studentOverview(sid); }catch(e){}
+    asgs = await api.javaListAssignments(classId);
+    if(asgs.length){ const all = await api.javaClassSubmissions(asgs.map(a=>a.id)); subs = all.filter(s=>s.student_id===sid); }
+    try{ note = await api.getStudentNote(classId, sid); }catch(e){}
+  }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
+  const rows = asgs.map(a=>{
+    const c=javaChecksOf(a);
+    const s=subs.find(x=>x.assignment_id===a.id);
+    let st;
+    if(!s) st='<span class="badge gray">offen</span>';
+    else if(c.mode==="tests"&&c.tests.length){ const res=s.results||{}; const g=c.tests.filter(t=>res[t.id]==="correct").length; st=`<span class="badge ${g===c.tests.length?"":"gold"}">${g}/${c.tests.length} Tests</span>`; }
+    else st='<span class="badge gold">abgegeben</span>';
+    return `<div class="row ${s?'clickrow':''}" ${s?`data-aopen="${a.id}"`:""} style="${s?'cursor:pointer':''}"><span class="grow"><span class="t">${esc(a.title)}</span></span>${st}${s?'<span style="margin-left:8px;color:#7a8aa0">→</span>':""}</div>`;
+  }).join("");
+  document.getElementById("view").innerHTML = `
+    <div class="page-head"><button class="crumb" id="back">← zurück zur Klasse</button></div>
+    <div class="page-head" style="margin-top:0"><h2>${esc(name)}</h2></div>
+    <div class="grid" style="grid-template-columns:1fr 1fr;gap:14px;align-items:start">
+      <div>
+        <div class="card" style="margin-bottom:14px;padding:14px 16px"><b>🪪 Benutzername</b><div style="font-family:monospace;font-size:15px;margin-top:6px">${esc(username||"?")}</div></div>
+        <div class="card" style="margin-bottom:14px;padding:14px 16px"><b>🕒 Aktivität</b>
+          <div class="muted" style="font-size:13px;margin-top:6px">Letzter Login: ${ov&&ov.last_login?esc(fmtDateTime(ov.last_login)):"–"}<br>Letzte Abgabe: ${ov&&ov.last_submission?esc(fmtDateTime(ov.last_submission)):"–"}</div></div>
+        <div class="card" style="padding:14px 16px"><b>🗒️ Private Notizen</b> <span class="muted" style="font-size:11.5px">(nur für Lehrkräfte dieser Klasse)</span>
+          <textarea class="input" id="jvNote" style="margin-top:8px;min-height:90px">${esc(note?note.body:"")}</textarea>
+          <button class="btn btn-primary btn-sm" id="jvNoteSave" style="margin-top:8px">💾 Speichern</button></div>
+      </div>
+      <div class="card" style="padding:14px 16px"><b>📝 Aufgaben</b><div class="list" style="margin-top:8px">${rows||'<div class="muted" style="font-size:13px">Noch keine Aufgaben.</div>'}</div></div>
+    </div>`;
+  document.getElementById("back").onclick = ()=> javaTeacherClassView(classId);
+  document.getElementById("jvNoteSave").onclick = async()=>{ try{ await api.saveStudentNote(classId, sid, document.getElementById("jvNote").value); toast("Notiz gespeichert ✓","ok"); }catch(e){ toast(e.message||"Fehler","err"); } };
+  document.querySelectorAll("[data-aopen]").forEach(r=> r.onclick=()=> javaReviewSubmission(r.dataset.aopen, sid, name, classId));
+}
+
+/* ---------- Vorlagen ---------- */
+async function javaTemplatesPage(back){
+  const b = subBack(javaTemplatesPage, back) || {label:"← Java · Meine Klassen", go:javaTeacherHome};
+  shell(`<div class="center-load"><span class="spin"></span>Vorlagen…</div>`);
+  let list=[]; try{ list=await api.javaListTemplates(); }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
+  const rows = list.length ? `<div class="list">${list.map(t=>`
+      <div class="row"><span class="grow"><span class="t${(t.mine||ME.is_admin)?" clickable":""}"${(t.mine||ME.is_admin)?` data-edit="${t.id}" title="bearbeiten"`:""}>${esc(t.title)}</span><span class="s">${t.test_count} Test(s) · von ${esc(t.owner_name)}${t.mine?" (du)":""} · ${t.shared?"🌍 geteilt":"🔒 privat"} · ${esc(fmtDateTime(t.updated_at))}</span></span>
+        ${(t.mine||ME.is_admin)?`<button class="abtn" data-edit="${t.id}" title="bearbeiten">✏️</button><button class="abtn" data-share="${t.id}" data-on="${t.shared?1:0}" title="${t.shared?'Freigabe zurücknehmen':'für andere Lehrkräfte freigeben'}">${t.shared?'🌍':'🔒'}</button><button class="abtn" data-del="${t.id}" data-nm="${esc(t.title)}" title="löschen">🗑️</button>`:""}
+      </div>`).join("")}</div>`
+    : `<div class="empty"><span class="ic">📋</span>Noch keine Vorlagen. Lege eine über „+ Neue Vorlage" an – oder wähle in einer Aufgabe „⭐ Als Vorlage".</div>`;
+  document.getElementById("view").innerHTML = `
+    <div class="page-head"><button class="crumb" id="back">${esc(b.label)}</button></div>
+    <div class="page-head" style="margin-top:0"><h2>📋 Aufgaben-Vorlagen</h2><div class="spacer"></div><button class="btn btn-primary" id="btnNewTpl">+ Neue Vorlage</button></div>
+    <div class="card" style="margin-bottom:12px;padding:12px 16px"><span class="muted" style="font-size:13px">Vorlagen sind wiederverwendbare Aufgaben (Start-Dateien + Tests + Musterlösung). In einer Klasse legst du über <b>📋 aus Vorlage</b> eine neue Aufgabe daraus an. <b>Geteilte</b> Vorlagen können auch andere Lehrkräfte verwenden.</span></div>
+    ${rows}`;
+  document.getElementById("back").onclick = b.go;
+  document.getElementById("btnNewTpl").onclick = ()=> javaAssignmentEditorPage(null, null, null, true);
+  document.querySelectorAll("[data-edit]").forEach(bt=> bt.onclick=()=> javaAssignmentEditorPage(null, {id:bt.dataset.edit}, null, true));
+  document.querySelectorAll("[data-share]").forEach(bt=> bt.onclick=async()=>{ const on=bt.dataset.on==="1"; try{ await api.javaUpdateTemplate(bt.dataset.share,{shared:!on}); toast(on?"Freigabe zurückgenommen":"Vorlage freigegeben 🌍","ok"); javaTemplatesPage(); }catch(e){ toast(e.message||"Fehler","err"); } });
+  document.querySelectorAll("[data-del]").forEach(bt=> bt.onclick=async()=>{ if(!confirm(`Vorlage „${bt.dataset.nm}" wirklich löschen?`)) return; try{ await api.javaDeleteTemplate(bt.dataset.del); toast("Vorlage gelöscht","ok"); javaTemplatesPage(); }catch(e){ toast(e.message||"Fehler","err"); } });
+}
+async function javaPickTemplate(classId){
+  openModal(`<button class="x" id="tplPickX">×</button><h3 style="margin:0 0 12px">📋 Aufgabe aus Vorlage</h3><div id="tplPickHost"><div class="center-load"><span class="spin"></span>Vorlagen…</div></div>`);
+  { const x=document.getElementById("tplPickX"); if(x) x.onclick=closeModal; }
+  let list=[]; try{ list=await api.javaListTemplates(); }catch(e){ const h=document.getElementById("tplPickHost"); if(h) h.innerHTML=errBox(e); return; }
+  const host=document.getElementById("tplPickHost"); if(!host) return;
+  if(!list.length){ host.innerHTML=`<div class="empty"><span class="ic">📋</span>Noch keine Vorlagen. Öffne eine Aufgabe und wähle „⭐ Als Vorlage", um eine anzulegen.</div>`; return; }
+  host.innerHTML=`<div class="muted" style="font-size:12.5px;margin-bottom:8px">Wähle eine Vorlage – sie wird als neue Aufgabe in dieser Klasse geöffnet (du kannst sie vor dem Speichern anpassen).</div>
+    <div class="list">${list.map(t=>`
+      <div class="row clickrow" data-tpl="${t.id}" style="cursor:pointer"><span class="grow"><span class="t">${esc(t.title)}</span><span class="s">${t.test_count} Test(s) · von ${esc(t.owner_name)}${t.mine?" (du)":""}${t.shared?" · 🌍 geteilt":""}</span></span><span style="margin-left:8px;color:#7a8aa0">→</span></div>`).join("")}</div>`;
+  host.querySelectorAll(".clickrow[data-tpl]").forEach(r=> r.onclick=async()=>{ try{ const tpl=await api.javaGetTemplate(r.dataset.tpl); closeModal(); javaAssignmentEditorPage(classId, null, tpl, false); }catch(e){ toast(e.message||"Fehler","err"); } });
+}
+
+/* ---------- Aufgaben-/Vorlagen-Editor ---------- */
+let javaEditState=null;
+async function javaAssignmentEditorPage(classId, existing, prefillTpl, isTemplate){
+  shell(`<div class="center-load"><span class="spin"></span>Editor…</div>`);
+  let a=null, sol={files:[],hidden_tests:[]}, tpl=null;
+  try{
+    if(existing && existing.id){
+      if(isTemplate){
+        tpl=await api.javaGetTemplate(existing.id);
+        if(tpl&&tpl.solution_data) sol={files:tpl.solution_data.files||[],hidden_tests:tpl.solution_data.hidden_tests||[]};   // sonst zerstört Speichern die Musterlösung!
+      }
+      else{ a=await api.javaGetAssignment(existing.id); const sr=await api.javaGetSolution(existing.id); if(sr&&sr.data) sol={files:sr.data.files||[],hidden_tests:sr.data.hidden_tests||[]}; }
+    }
+  }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
+  const src = a || tpl || prefillTpl || null;
+  const checks0 = src ? javaChecksOf({checks: src.checks}) : {mode:"none",tests:[],runs:[]};
+  if(prefillTpl && prefillTpl.solution_data) sol = { files:(prefillTpl.solution_data.files||[]), hidden_tests:(prefillTpl.solution_data.hidden_tests||[]) };
+  const s = javaEditState = {
+    classId, isTemplate: !!isTemplate,
+    assignId: a?a.id:null, templateId: tpl?tpl.id:null,
+    title: src?src.title:"", description: (src&&src.description)||"",
+    mode: checks0.mode,
+    tests: JSON.parse(JSON.stringify(checks0.tests.concat((sol.hidden_tests||[]).map(t=>Object.assign({},t,{hidden:true}))))),
+    runs: JSON.parse(JSON.stringify(checks0.runs.length?checks0.runs:[{stdin:""}])),
+    startFiles: JSON.parse(JSON.stringify((src&&src.files_snapshot&&src.files_snapshot.length)?src.files_snapshot:JAVA_DEFAULT_FILES())),
+    solFiles: JSON.parse(JSON.stringify((sol.files&&sol.files.length)?sol.files:JAVA_DEFAULT_FILES())),
+    sub: "start",
+  };
+  s.tests.forEach((t,i)=>{ if(!t.id) t.id="t"+Date.now()+"_"+i; });
+  const backTo = ()=> s.isTemplate ? javaTemplatesPage() : javaTeacherClassView(classId);
+  document.getElementById("view").innerHTML = `
+    <div class="page-head"><button class="crumb" id="back">${s.isTemplate?"← Vorlagen":"← zurück zur Klasse"}</button></div>
+    <div class="page-head" style="margin-top:0"><h2>${s.assignId||s.templateId?"✏️ ":"➕ "}${s.isTemplate?"Vorlage":"Aufgabe"}</h2><div class="spacer"></div>
+      ${!s.isTemplate?'<button class="btn btn-ghost btn-sm" id="btnAsTpl">⭐ Als Vorlage</button>':''}
+      <button class="btn btn-primary btn-sm" id="btnJvSave" style="margin-left:8px">💾 Speichern</button></div>
+    <div class="card" style="margin-bottom:12px;padding:14px 16px">
+      <div class="field"><label>Titel</label><input class="input" id="jvTitle" maxlength="120" value="${esc(s.title)}"></div>
+      <div class="field" style="margin-bottom:0"><label>Beschreibung / Arbeitsauftrag</label><textarea class="input" id="jvDesc" style="min-height:70px">${esc(s.description)}</textarea></div>
+    </div>
+    <div class="card" style="margin-bottom:12px;padding:14px 16px">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><b>🧪 Auto-Check</b>
+        <select class="input" id="jvMode" style="max-width:340px">
+          <option value="none" ${s.mode==="none"?"selected":""}>Kein Auto-Check (Bewertung durch Lehrkraft)</option>
+          <option value="tests" ${s.mode==="tests"?"selected":""}>Testfälle: Eingaben → erwartete Ausgabe</option>
+          <option value="solution" ${s.mode==="solution"?"selected":""}>Musterlösungs-Vergleich (Ausgaben müssen übereinstimmen)</option>
+        </select></div>
+      <div id="jvCheckHost" style="margin-top:10px"></div>
+    </div>
+    <div class="card" style="margin-bottom:12px;padding:10px 16px">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span class="acts"><button class="abtn on" id="jvSubStart" title="Dateien, die Schüler:innen bekommen">📝 Startdateien</button><button class="abtn" id="jvSubSol" title="Deine Lösung (Schüler:innen sehen sie nie – außer du gibst sie frei)">🏆 Musterlösung</button></span>
+        <span class="muted" style="font-size:12px" id="jvSubHint">Diese Dateien bekommen die Schüler:innen als Start.</span></div>
+    </div>
+    <div id="jvHost" style="--jvMin:480px;height:60vh;min-height:480px"></div>`;
+  document.getElementById("back").onclick = ()=>{ syncJavaEditor(); backTo(); };
+  pageView = new JavaView(document.getElementById("jvHost"), { mode:"edit" });
+  pageView.setData({ files: s.startFiles });
+  function syncJavaEditor(){
+    const d = pageView.getData().files;
+    if(s.sub==="start") s.startFiles=d; else s.solFiles=d;
+    s.title=document.getElementById("jvTitle").value.trim();
+    s.description=document.getElementById("jvDesc").value.trim();
+  }
+  function setSub(which){
+    syncJavaEditor();
+    s.sub=which;
+    document.getElementById("jvSubStart").classList.toggle("on", which==="start");
+    document.getElementById("jvSubSol").classList.toggle("on", which==="sol");
+    document.getElementById("jvSubHint").textContent = which==="start" ? "Diese Dateien bekommen die Schüler:innen als Start." : "Deine Musterlösung – für Schüler:innen unsichtbar (außer nach Freigabe 🏆).";
+    pageView.setData({ files: which==="start"?s.startFiles:s.solFiles });
+  }
+  document.getElementById("jvSubStart").onclick=()=>setSub("start");
+  document.getElementById("jvSubSol").onclick=()=>setSub("sol");
+  const renderChecks=()=>{
+    const host=document.getElementById("jvCheckHost");
+    if(s.mode==="none"){ host.innerHTML='<span class="muted" style="font-size:13px">Abgaben werden nur gesammelt – die Bewertung machst du selbst (Matrix zeigt „abgegeben").</span>'; return; }
+    if(s.mode==="solution"){
+      host.innerHTML = `<div class="muted" style="font-size:13px;margin-bottom:8px">Die erwartete Ausgabe kommt aus deiner <b>🏆 Musterlösung</b> (unten hinterlegen!). Für Programme mit Scanner-Eingaben kannst du mehrere Eingabe-Läufe definieren – jede Zeile = eine Eingabe.</div>
+        <div id="jvRuns">${s.runs.map((r,i)=>`<div class="row" style="padding:7px 10px;align-items:flex-start"><span style="font-weight:800;font-size:12.5px;margin:6px 8px 0 0">Lauf ${i+1}</span><textarea class="input" data-run="${i}" style="min-height:44px;font-family:monospace;font-size:12.5px" placeholder="(keine Eingaben)">${esc(r.stdin||"")}</textarea><button class="abtn" data-rundel="${i}" title="Lauf entfernen" style="margin-left:6px">🗑️</button></div>`).join("")}</div>
+        <button class="btn btn-ghost btn-sm" id="jvAddRun" style="margin-top:6px">+ Eingabe-Lauf</button>`;
+      host.querySelectorAll("[data-run]").forEach(t=> t.oninput=()=>{ s.runs[+t.dataset.run].stdin=t.value; });
+      host.querySelectorAll("[data-rundel]").forEach(bt=> bt.onclick=()=>{ if(s.runs.length<=1){ toast("Mindestens ein Lauf.","err"); return; } s.runs.splice(+bt.dataset.rundel,1); renderChecks(); });
+      document.getElementById("jvAddRun").onclick=()=>{ s.runs.push({stdin:""}); renderChecks(); };
+      return;
+    }
+    host.innerHTML = `<div id="jvTests">${s.tests.map((t,i)=>`
+      <div class="card" style="margin-bottom:8px;padding:10px 12px;background:var(--line2)">
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <input class="input" data-tf="name" data-i="${i}" placeholder="Name des Tests" style="max-width:220px;font-weight:800" value="${esc(t.name||"")}">
+          <select class="input" data-tf="match" data-i="${i}" style="max-width:170px"><option value="exact" ${t.match!=="contains"?"selected":""}>Ausgabe exakt</option><option value="contains" ${t.match==="contains"?"selected":""}>Ausgabe enthält</option></select>
+          <label style="display:inline-flex;align-items:center;gap:5px;font-size:12.5px;font-weight:700"><input type="checkbox" data-tf="hidden" data-i="${i}" ${t.hidden?"checked":""}> 🙈 versteckt</label>
+          <div class="spacer"></div><button class="abtn" data-tdel="${i}" title="Test löschen">🗑️</button></div>
+        <div style="display:flex;gap:8px;margin-top:7px;flex-wrap:wrap">
+          <div style="flex:1;min-width:200px"><label style="font-size:11px;font-weight:800;color:var(--muted)">EINGABEN (eine je Zeile, für Scanner)</label><textarea class="input" data-tf="stdin" data-i="${i}" style="min-height:44px;font-family:monospace;font-size:12.5px">${esc(t.stdin||"")}</textarea></div>
+          <div style="flex:1;min-width:200px"><label style="font-size:11px;font-weight:800;color:var(--muted)">ERWARTETE AUSGABE</label><textarea class="input" data-tf="expected" data-i="${i}" style="min-height:44px;font-family:monospace;font-size:12.5px">${esc(t.expected||"")}</textarea></div>
+        </div></div>`).join("")}</div>
+      <button class="btn btn-ghost btn-sm" id="jvAddTest">+ Testfall</button>
+      <span class="muted" style="font-size:12px;margin-left:10px">🙈 Versteckte Tests sehen Schüler:innen nicht – sie zählen nur in deiner Einsicht.</span>`;
+    host.querySelectorAll("[data-tf]").forEach(el=>{
+      const i=+el.dataset.i, f=el.dataset.tf;
+      el[el.type==="checkbox"?"onchange":"oninput"]=()=>{ s.tests[i][f]= el.type==="checkbox"?el.checked:el.value; };
+    });
+    host.querySelectorAll("[data-tdel]").forEach(bt=> bt.onclick=()=>{ s.tests.splice(+bt.dataset.tdel,1); renderChecks(); });
+    document.getElementById("jvAddTest").onclick=()=>{ s.tests.push({id:"t"+Date.now(),name:"Test "+(s.tests.length+1),stdin:"",expected:"",match:"exact",hidden:false}); renderChecks(); };
+  };
+  renderChecks();
+  document.getElementById("jvMode").onchange=function(){ s.mode=this.value; renderChecks(); };
+  const buildPayload=()=>{
+    syncJavaEditor();
+    if(!s.title){ toast("Bitte einen Titel eingeben.","err"); return null; }
+    const visTests=s.tests.filter(t=>!t.hidden).map(t=>({id:t.id,name:t.name,stdin:t.stdin||"",expected:t.expected||"",match:t.match==="contains"?"contains":"exact"}));
+    const hidTests=s.tests.filter(t=>t.hidden).map(t=>({id:t.id,name:t.name,stdin:t.stdin||"",expected:t.expected||"",match:t.match==="contains"?"contains":"exact"}));
+    const checks={mode:s.mode, tests:s.mode==="tests"?visTests:[], runs:s.mode==="solution"?s.runs.map(r=>({stdin:r.stdin||""})):[]};
+    if(s.mode!=="tests" && s.tests.length && !confirm("Hinweis: Du hast Testfälle angelegt, aber einen anderen Auto-Check-Modus gewählt.\n\nBeim Speichern werden die Testfälle NICHT übernommen. Trotzdem speichern?")) return null;
+    return { checks, hidTests: s.mode==="tests"?hidTests:[], files_snapshot:s.startFiles, solFiles:s.solFiles };
+  };
+  document.getElementById("btnJvSave").onclick=async()=>{
+    const btn=document.getElementById("btnJvSave");
+    if(btn.disabled) return;
+    const p=buildPayload(); if(!p) return;
+    btn.disabled=true;
+    try{
+      if(s.isTemplate){
+        const row={title:s.title, description:s.description, files_snapshot:p.files_snapshot, checks:p.checks, solution_data:{files:p.solFiles, hidden_tests:p.hidTests}};
+        if(s.templateId) await api.javaUpdateTemplate(s.templateId, row);
+        else{ const t=await api.javaCreateTemplate(row); s.templateId=t.id; }
+        toast("Vorlage gespeichert ⭐","ok"); javaTemplatesPage(); return;
+      }
+      const row={class_id:classId, title:s.title, description:s.description, files_snapshot:p.files_snapshot, checks:p.checks};
+      let id=s.assignId;
+      if(id) await api.javaUpdateAssignment(id, row);
+      else{ const na=await api.javaCreateAssignment(row); id=na.id; s.assignId=id; }
+      await api.javaSaveSolution(id, {files:p.solFiles, hidden_tests:p.hidTests});
+      toast("Aufgabe gespeichert ✓","ok"); javaTeacherClassView(classId);
+    }catch(e){ toast(e.message||"Fehler","err"); }
+    finally{ btn.disabled=false; }
+  };
+  { const bt=document.getElementById("btnAsTpl"); if(bt) bt.onclick=async()=>{
+      const p=buildPayload(); if(!p) return;
+      try{ await api.javaCreateTemplate({title:s.title, description:s.description, files_snapshot:p.files_snapshot, checks:p.checks, solution_data:{files:p.solFiles, hidden_tests:p.hidTests}});
+        toast("Als Vorlage gespeichert ⭐","ok"); }
+      catch(e){ toast(e.message||"Fehler","err"); } }; }
+}
+
+/* ---------- Sandbox ---------- */
+async function javaSandbox(back){
+  const b = subBack(javaSandbox, back) || {label:"← Zurück", go:()=> (ME.role==="teacher"?javaTeacherHome():javaStudentHome())};
+  shell(`<div class="center-load"><span class="spin"></span>Sandbox…</div>`);
+  let projects=[]; try{ projects=await api.javaListSandboxProjects(); }catch(e){}
+  const list = projects.length ? `<div class="list">${projects.map(p=>`
+      <div class="row clickrow" data-id="${p.id}" style="cursor:pointer"><span class="grow"><span class="t">${esc(p.title)}</span><span class="s">${esc(fmtDateTime(p.updated_at))}</span></span>
+        <button class="btn btn-sm btn-ghost" data-del="${p.id}" title="löschen">🗑️</button><span style="margin-left:8px;color:#7a8aa0">→</span></div>`).join("")}</div>`
+    : `<div class="empty"><span class="ic">🧪</span>Noch keine Projekte. Leg dein erstes an!</div>`;
+  document.getElementById("view").innerHTML = `
+    <div class="page-head"><button class="crumb" id="back">${esc(b.label)}</button></div>
+    <div class="page-head" style="margin-top:0"><h2>🧪 Java-Sandbox</h2><div class="spacer"></div><button class="btn btn-primary" id="btnNewSbx">+ Neues Projekt</button></div>
+    <div class="card" style="margin-bottom:12px;padding:12px 16px"><span class="muted" style="font-size:13px">Programmiere frei in Java – mehrere Dateien, Konsole, Scanner-Eingaben – und speichere deine eigenen Projekte.</span></div>
+    ${list}`;
+  document.getElementById("back").onclick = b.go;
+  document.getElementById("btnNewSbx").onclick = ()=> javaSandboxProject(null);
+  document.querySelectorAll(".clickrow[data-id]").forEach(r=> r.onclick=(e)=>{ if(e.target.closest("[data-del]")) return; javaSandboxProject(r.dataset.id); });
+  document.querySelectorAll("[data-del]").forEach(bt=> bt.onclick=async(e)=>{ e.stopPropagation(); if(!confirm("Projekt löschen?")) return; try{ await api.javaDeleteSandboxProject(bt.dataset.del); javaSandbox(); }catch(err){ toast(err.message||"Fehler","err"); } });
+}
+let javaSbxState=null;
+async function javaSandboxProject(projectId){
+  shell(`<div class="center-load"><span class="spin"></span>Lädt…</div>`);
+  let proj=null;
+  if(projectId){ try{ proj=await api.javaGetSandboxProject(projectId); }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; } }
+  javaSbxState = { projectId: proj?proj.id:null, title: proj?proj.title:"Mein Projekt" };
+  document.getElementById("view").innerHTML = `
+    <div class="page-head"><button class="crumb" id="back">← zur Sandbox</button></div>
+    <div class="page-head" style="margin-top:0">
+      <input class="input" id="jvSbxTitle" style="max-width:280px;font-weight:800" maxlength="80">
+      <div class="spacer"></div>
+      <button class="btn btn-primary btn-sm" id="jvSbxSave">💾 Speichern</button>
+    </div>
+    <div id="jvHost" style="--jvMin:560px;height:72vh;min-height:560px"></div>`;
+  document.getElementById("jvSbxTitle").value = javaSbxState.title;
+  pageView = new JavaView(document.getElementById("jvHost"), { mode:"free" });
+  pageView.setData({ files: (proj&&proj.files&&proj.files.length)?proj.files:JAVA_DEFAULT_FILES() });
+  document.getElementById("back").onclick = ()=> javaSandbox();
+  document.getElementById("jvSbxSave").onclick = async()=>{
+    const title=(document.getElementById("jvSbxTitle").value||"").trim()||"Mein Projekt";
+    const files=pageView.getData().files;
+    try{
+      if(javaSbxState.projectId) await api.javaUpdateSandboxProject(javaSbxState.projectId,{title,files});
+      else{ const p=await api.javaCreateSandboxProject({title,files}); javaSbxState.projectId=p.id; }
+      toast("Projekt gespeichert ✓","ok");
+    }catch(e){ toast(e.message||"Fehler","err"); }
+  };
+}
+
 const PATCH_NOTES = [
+  { v:"2.32", date:"9. August 2026", title:"☕ NEU: Java – die vierte Werkstatt (echte Programmier-IDE)", items:[
+    `<b>Java ist da!</b> In der Tool-Auswahl gibt es jetzt <b>☕ Java</b> – eine richtige Programmier-IDE im Browser (angelehnt an Codeboard): <b>mehrere Dateien</b>, Editor mit Zeilennummern &amp; Undo, <b>Konsole mit Eingaben</b> (Scanner), ▶ Ausführen/⏹ Stopp.`,
+    `<b>Volles Schul-Java:</b> Klassen &amp; Objekte, <b>Vererbung</b> (extends/super/Überschreiben), abstrakte Klassen, Polymorphie, static, private/protected, Arrays (auch 2D), ArrayList, String-/Math-Methoden, switch, for-each – mit deutschen Fehlermeldungen samt Datei + Zeile.`,
+    `<b>Aufgaben wie gewohnt:</b> Klassen, Aufgaben mit Start-Dateien (auch schreibgeschützt/versteckt), Abgaben, Abgabe-Matrix, Rückmeldungen, Vorlagen, Sandbox.`,
+    `<b>Auto-Check pro Aufgabe wählbar:</b> <b>Testfälle</b> (Eingaben → erwartete Ausgabe, exakt oder „enthält", optional 🙈 versteckte Tests) <b>oder</b> <b>Musterlösungs-Vergleich</b> (deine Lösung liefert die Soll-Ausgabe) – oder ganz ohne.`,
+    `<b>Sicher:</b> Musterlösungen und versteckte Tests liegen serverseitig geschützt (nur Lehrkräfte) – Schüler:innen können sie nicht über die API auslesen.`,
+  ]},
   { v:"2.31", date:"16. Juli 2026", title:"🧭 Navigation, Vollbild-Matrix & Vorlagen", items:[
     `<b>Zurück führt jetzt richtig:</b> Öffnest du <b>Vorlagen, Sandbox, Datenbanken oder Netzwerke</b> aus einer Klasse heraus, bringt „zurück" dich wieder in <b>diese Klasse</b> – statt in die Klassenübersicht.`,
     `<b>Abgabe-Matrix im Vollbild:</b> In jeder Klassenansicht (alle Tools) öffnet <b>⛶ Vergrößern</b> die Abgabe-Matrix über die <b>gesamte Bildschirmbreite</b> – mit Namenssuche; ein Klick auf eine Zelle öffnet wie gewohnt die Abgabe.`,
@@ -3565,7 +4232,7 @@ function patchNotesDialog(){
 }
 
 /* ---------- Footer: Versionsnummer (aus den Patch-Notes) + Copyright ---------- */
-const APP_BUILD = "2026-07-16 16:05";   // letztes Update (im Patch-Notes-Dialog angezeigt)
+const APP_BUILD = "2026-08-09 22:30";   // letztes Update (im Patch-Notes-Dialog angezeigt)
 (function(){ const f=document.getElementById("appfoot"); if(f){ const v=(typeof PATCH_NOTES!=="undefined"&&PATCH_NOTES[0])?PATCH_NOTES[0].v:""; f.textContent='© 2026 Laurens Offinger · Version '+v; } })();
 
 boot();
