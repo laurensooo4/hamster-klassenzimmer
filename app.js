@@ -18,6 +18,28 @@ const CLASS_REFRESH_BTN = '<button class="btn btn-ghost btn-sm" id="btnClassRefr
 function wireClassRefresh(fn){ const b=document.getElementById("btnClassRefresh"); if(b) b.onclick=fn; }
 /* Vorschau der (freigegebenen) Lehrer-Rückmeldung in der Aufgabenliste */
 function feedbackPreviewHtml(body){ const t=(body||"").trim(); if(!t) return ""; const short=t.length>90?t.slice(0,90)+"…":t; return `<span class="s" style="color:var(--gold-d);font-weight:800">💬 Rückmeldung: ${esc(short)}</span>`; }
+/* Rücksprung-Ziel für Unterseiten (Vorlagen/Sandbox/Datenbanken/Netzwerke): merkt sich,
+   von wo die Seite geöffnet wurde, damit „zurück" dorthin führt (Übersicht ODER Klasse).
+   back = {label, go} beim externen Aufruf; undefined bei internem Neu-Rendern (behält Ziel). */
+function subBack(fn, back){ if(back && typeof back.go==="function") fn._back = back; return fn._back || null; }   // ignoriert Events/Müll – nur echte {label,go}-Objekte werden gespeichert
+/* Vollbild-Overlay für die Abgabe-Matrix (über die gesamte Bildschirmbreite).
+   paint(host, q, close) rendert die Matrix in host und verdrahtet die Zellen (ruft close() vor Navigation). */
+function openMatrixModal(title, paint){
+  if(document.querySelector(".matrix-modal")) return;   // nie doppelt öffnen (z. B. Enter auf fokussiertem ⛶-Button)
+  const prevFocus = document.activeElement;
+  const ov=document.createElement("div"); ov.className="matrix-modal";
+  ov.innerHTML=`<div class="mm-head"><h2>${esc(title)}</h2><input class="input" id="mmSearch" placeholder="🔍 Schüler:in suchen" style="max-width:260px"><div style="flex:1"></div><button class="btn btn-ghost btn-sm" id="mmClose" title="Schließen (Esc)">✕ Schließen</button></div><div class="mm-body" id="mmHost"></div>`;
+  document.body.appendChild(ov);
+  const appEl=document.getElementById("app"); if(appEl) appEl.inert=true;   // Seite dahinter aus der Tab-Reihenfolge nehmen (keine unsichtbaren Dialoge)
+  const host=ov.querySelector("#mmHost"); let done=false;
+  const close=()=>{ if(done) return; done=true; try{ ov.remove(); }catch(e){} document.removeEventListener("keydown", onKey); if(appEl) appEl.inert=false; if(prevFocus&&prevFocus.focus){ try{ prevFocus.focus(); }catch(e){} } };
+  function onKey(e){ if(e.key==="Escape"){ e.stopPropagation(); close(); } }
+  const repaint=(q)=> paint(host, q, close);
+  repaint("");
+  { const s=ov.querySelector("#mmSearch"); if(s){ s.oninput=()=> repaint(s.value); s.focus(); } }
+  ov.querySelector("#mmClose").onclick=close;
+  document.addEventListener("keydown", onKey);
+}
 const normUser = u => u.trim().toLowerCase();
 const userEmail = u => normUser(u) + "@" + CONFIG.EMAIL_DOMAIN;
 const initials = s => (s||"?").trim().slice(0,1).toUpperCase();
@@ -105,21 +127,25 @@ function classViewFor(tool){ return tool==="sql"?sqlTeacherClassView : tool==="f
    ============================================================================ */
 let authState = { mode:"login", role:"student" };
 function renderAuth(){
-  const s=authState; const isReg = s.mode==="register";
+  const s=authState; const cfg=window.HAMSTER_CONFIG||{};
+  const allowReg = cfg.ALLOW_REGISTRATION !== false;   // Release/Schulserver kann Selbst-Registrierung abschalten (nur Login)
+  if(!allowReg) s.mode="login";
+  const isReg = allowReg && s.mode==="register";
+  const logo = cfg.LOGO_URL ? `<img src="${esc(cfg.LOGO_URL)}" alt="Logo" style="max-height:92px;max-width:82%;object-fit:contain" onerror="this.outerHTML='${HAMSTER}'">` : HAMSTER;
   const codeField = isReg ? (s.role==="teacher"
       ? `<div class="field"><label>Lehrer-Code</label><input class="input" id="auCode" placeholder="Code von der Schulleitung" autocomplete="off"></div>`
       : `<div class="field"><label>Klassencode <span style="color:#7a8aa0;font-weight:600;text-transform:none;letter-spacing:0">(optional)</span></label><input class="input" id="auCode" placeholder="z. B. K7Q2MX – kann leer bleiben" autocomplete="off" style="text-transform:uppercase;letter-spacing:2px;font-family:monospace"></div>`) : "";
   const foot = isReg ? (s.role==="teacher" ? "Lehrer:innen brauchen den Lehrer-Code." : "Mit Klassencode trittst du direkt bei – oder ohne starten und später beitreten.")
-                     : 'Noch kein Account? Tippe oben auf "Registrieren".';
+                     : (allowReg ? 'Noch kein Account? Tippe oben auf "Registrieren".' : 'Deine Zugangsdaten bekommst du von deiner Schule.');
   app().innerHTML = `
   <div class="auth-wrap"><div class="auth-card">
-    <div class="mascot">${HAMSTER}</div>
+    <div class="mascot">${logo}</div>
     <h1>Informatik am Gymnasium Wesermünde</h1>
     <p class="sub">${isReg?"Lass uns loslegen!":"Willkommen zurück!"}</p>
-    <div class="tabs">
+    ${allowReg?`<div class="tabs">
       <button data-m="login" class="${!isReg?"active":""}">Anmelden</button>
       <button data-m="register" class="${isReg?"active":""}">Registrieren</button>
-    </div>
+    </div>`:""}
     <div class="auth-msg" id="authMsg"></div>
     ${isReg ? `<div class="field"><label>Ich bin…</label>
         <div class="role-pick">
@@ -632,7 +658,8 @@ function assignmentEditorPage(classId, onDone, existing, tplMode){
 }
 
 /* ---------- Lehrer: Vorlagen-Übersicht ---------- */
-async function templatesPage(){
+async function templatesPage(back){
+  const b = subBack(templatesPage, back) || {label:"← Meine Klassen", go:teacherHome};
   shell(`<div class="center-load"><span class="spin"></span>Vorlagen…</div>`);
   let tpls=[];
   try{ tpls=await api.listTemplates(); }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
@@ -641,11 +668,11 @@ async function templatesPage(){
         <span class="acts"><button class="abtn" data-edit="${t.id}" title="bearbeiten">✏️</button><button class="abtn" data-del="${t.id}" title="löschen">🗑️</button></span></div>`).join("")}</div>`
     : `<div class="empty"><span class="ic">📋</span>Noch keine Vorlagen. Erstelle deine erste!</div>`;
   document.getElementById("view").innerHTML = `
-    <div class="page-head"><button class="crumb" id="back">← Meine Klassen</button></div>
+    <div class="page-head"><button class="crumb" id="back">${esc(b.label)}</button></div>
     <div class="page-head" style="margin-top:0"><h2>📋 Aufgaben-Vorlagen</h2><div class="spacer"></div><button class="btn btn-primary" id="btnNewTpl">+ Neue Vorlage</button></div>
     <div class="card" style="margin-bottom:12px;padding:12px 16px"><span class="muted" style="font-size:13px">Vorlagen sind wiederverwendbare Aufgaben-Bausteine. Beim Erstellen einer Aufgabe kannst du oben „Aus Vorlage laden" wählen.</span></div>
     ${list}`;
-  document.getElementById("back").onclick = teacherHome;
+  document.getElementById("back").onclick = b.go;
   document.getElementById("btnNewTpl").onclick = ()=> assignmentEditorPage(null, templatesPage, null, true);
   document.querySelectorAll("[data-edit]").forEach(b=> b.onclick=()=>{ const t=tpls.find(x=>x.id===b.dataset.edit); assignmentEditorPage(null, templatesPage, t, true); });
   document.querySelectorAll("[data-del]").forEach(b=> b.onclick=async()=>{ if(!confirm("Vorlage löschen?")) return; try{ await api.deleteTemplate(b.dataset.del); templatesPage(); }catch(e){ toast(e.message||"Fehler","err"); } });
@@ -1194,13 +1221,13 @@ async function teacherHome(){
   try{ classes = await api.myTeacherClasses(); }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
   document.getElementById("view").innerHTML = `
     <div class="page-head"><h2>Meine Klassen</h2><div class="spacer"></div>
-      <button class="btn btn-ghost" id="btnSandbox">🧪 Sandbox</button>
-      <button class="btn btn-ghost" id="btnTemplates" style="margin-left:8px">📋 Vorlagen</button>
+      <button class="btn btn-ghost" id="btnTemplates">📋 Vorlagen</button>
+      <button class="btn btn-ghost" id="btnSandbox" style="margin-left:8px">🧪 Sandbox</button>
       <button class="btn btn-primary" id="btnNewClass" style="margin-left:8px">+ Neue Klasse</button></div>
     ${classes.length>1?`<div class="page-head" style="margin:0 0 12px">${classSearchSortControls()}</div>`:""}
     <div id="clsHost"></div>`;
   document.getElementById("btnSandbox").onclick = ()=> sandboxHome(null);
-  document.getElementById("btnTemplates").onclick = templatesPage;
+  document.getElementById("btnTemplates").onclick = ()=> templatesPage({label:"← Meine Klassen", go:teacherHome});
   document.getElementById("btnNewClass").onclick = newClassDialog;
   wireClassOverview(classes, c=>`
       <div class="card click" data-id="${c.id}">
@@ -1267,7 +1294,7 @@ async function teacherClassView(classId){
         </span></div>`).join("")}</div>`
     : `<div class="empty" style="padding:16px"><span class="ic">📝</span>Noch keine Aufgaben.</div>`;
   document.getElementById("view").innerHTML = `
-    <div class="page-head"><button class="crumb" id="back">${viewFromAdmin?"← Admin-Bereich":"← Meine Klassen"}</button></div>
+    <div class="page-head"><button class="crumb" id="back">${viewFromAdmin?"← Admin-Bereich":"← Meine Klassen"}</button><div class="spacer"></div><button class="btn btn-ghost btn-sm" id="btnTplTop">📋 Vorlagen</button></div>
     <div class="page-head" style="margin-top:0">
       <h2>${esc(cls.name)} <button class="btn btn-ghost btn-sm" id="btnRename" title="Klasse umbenennen" style="vertical-align:middle">✏️</button>${CLASS_REFRESH_BTN}</h2>
       <div class="spacer"></div>
@@ -1279,7 +1306,7 @@ async function teacherClassView(classId){
       <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px"><span class="sectoggle" data-sec="auf" style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;user-select:none"><span class="secarrow">${secOpen.auf?"▼":"▶"}</span><h3 style="margin:0">📝 Aufgaben <span class="badge gray">${assignments.length}</span></h3></span><div style="flex:1"></div><button class="btn btn-blue btn-sm" id="btnNewAssign">+ Aufgabe stellen</button></div>
       <div id="sec-auf" style="margin-top:12px${secOpen.auf?"":";display:none"}">${assignHtml}</div></div>
     <div class="card" style="margin-bottom:14px">
-      <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px"><span class="sectoggle" data-sec="mat" style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;user-select:none"><span class="secarrow">${secOpen.mat?"▼":"▶"}</span><h3 style="margin:0">📊 Abgabe-Matrix</h3></span><div style="flex:1"></div></div>
+      <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px"><span class="sectoggle" data-sec="mat" style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;user-select:none"><span class="secarrow">${secOpen.mat?"▼":"▶"}</span><h3 style="margin:0">📊 Abgabe-Matrix</h3></span><div style="flex:1"></div>${(assignments.length&&roster.length)?'<button class="btn btn-ghost btn-sm" id="btnMatrixMax" title="Matrix im Vollbild öffnen">⛶ Vergrößern</button>':''}</div>
       <div id="sec-mat" style="margin-top:12px${secOpen.mat?"":";display:none"}">${(assignments.length&&roster.length)?`<div style="display:flex;margin-bottom:10px"><div style="flex:1"></div><input class="input" id="matrixSearch" placeholder="🔍 Schüler:in suchen" style="max-width:240px"></div>`:""}<div id="matrixHost"></div></div></div>
     <div class="card" style="margin-bottom:14px">
       <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px"><span class="sectoggle" data-sec="stu" style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;user-select:none"><span class="secarrow">${secOpen.stu?"▼":"▶"}</span><h3 style="margin:0">🎒 Schüler:innen <span class="badge gray">${roster.length}</span></h3></span><div style="flex:1"></div><button class="btn btn-ghost btn-sm" id="btnImport">📥 Importieren</button></div>
@@ -1288,6 +1315,7 @@ async function teacherClassView(classId){
       <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px"><span class="sectoggle" data-sec="leh" style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;user-select:none"><span class="secarrow">${secOpen.leh?"▼":"▶"}</span><h3 style="margin:0">👩‍🏫 Lehrkräfte <span class="badge gray">${teachers.length}</span></h3></span><div style="flex:1"></div>${canTeam?'<button class="btn btn-ghost btn-sm" id="btnTeachers">+ verwalten</button>':''}</div>
       <div id="sec-leh" class="list" style="margin-top:12px${secOpen.leh?"":";display:none"}">${teachers.length?teachers.map(t=>`<div class="row"><span class="chip"><span class="av">${esc(initials(t.display_name||t.username))}</span>${esc(t.display_name||t.username)}</span><div class="grow"></div>${t.is_owner?'<span class="badge blue">Ersteller:in</span>':'<span class="badge gray">Co-Lehrkraft</span>'}</div>`).join(""):'<div class="muted" style="font-size:13px">—</div>'}</div></div>`;
   document.getElementById("back").onclick = ()=> (viewFromAdmin?adminHome():teacherHome());
+  document.getElementById("btnTplTop").onclick = ()=> templatesPage({label:"← zurück zur Klasse", go:()=> teacherClassView(classId)});
   document.getElementById("copyCode").onclick = ()=>{ if(navigator.clipboard) navigator.clipboard.writeText(cls.code); toast("Code kopiert: "+cls.code,"ok"); };
   document.getElementById("btnRename").onclick = ()=> renameClassDialog(classId, cls.name, cls.tool);
   wireClassRefresh(()=> teacherClassView(classId));
@@ -1310,17 +1338,15 @@ async function teacherClassView(classId){
   const nameOf=(sid)=>{ const stu=roster.find(r=>r.student_id===sid); return (stu&&stu.profiles&&(stu.profiles.display_name||stu.profiles.username))||"?"; };
   const userOf=(sid)=>{ const stu=roster.find(r=>r.student_id===sid); return (stu&&stu.profiles&&stu.profiles.username)||""; };
   const openProfile=(sid)=> studentProfilePage(classId, sid, nameOf(sid), userOf(sid));
-  const wireMatrixHost=()=>{ const host=document.getElementById("matrixHost"); if(!host) return;
-    host.querySelectorAll(".cell[data-aid]").forEach(c=> c.onclick=()=>{ const aid=c.dataset.aid, sid=c.dataset.sid; const a=assignments.find(x=>x.id===aid); const hist=subs.filter(x=>x.assignment_id===aid && x.student_id===sid); if(!a||!hist.length) return; reviewSubmission(a, hist, nameOf(sid), classId); });
-    host.querySelectorAll("[data-prof]").forEach(b=> b.onclick=()=> openProfile(b.dataset.prof));
-  };
-  const paintMatrix=(q)=>{ const host=document.getElementById("matrixHost"); if(!host) return;
+  const paintMatrixInto=(host, q, close)=>{ if(!host) return;
     host.innerHTML = (assignments.length&&roster.length) ? buildMatrix(roster, assignments, subs, q)
       : `<div class="empty"><span class="ic">📊</span>${!assignments.length?"Stelle Aufgaben – dann erscheint hier, wer was abgegeben hat.":"Noch keine Schüler:innen in der Klasse."}</div>`;
-    wireMatrixHost();
+    host.querySelectorAll(".cell[data-aid]").forEach(c=> c.onclick=()=>{ const aid=c.dataset.aid, sid=c.dataset.sid; const a=assignments.find(x=>x.id===aid); const hist=subs.filter(x=>x.assignment_id===aid && x.student_id===sid); if(!a||!hist.length) return; if(close) close(); reviewSubmission(a, hist, nameOf(sid), classId); });
+    host.querySelectorAll("[data-prof]").forEach(b=> b.onclick=()=>{ if(close) close(); openProfile(b.dataset.prof); });
   };
-  paintMatrix("");
-  { const ms=document.getElementById("matrixSearch"); if(ms) ms.oninput=()=> paintMatrix(ms.value); }
+  paintMatrixInto(document.getElementById("matrixHost"), "", null);
+  { const ms=document.getElementById("matrixSearch"); if(ms) ms.oninput=()=> paintMatrixInto(document.getElementById("matrixHost"), ms.value, null); }
+  { const bx=document.getElementById("btnMatrixMax"); if(bx) bx.onclick=()=> openMatrixModal("📊 Abgabe-Matrix – "+cls.name, (host,q,close)=> paintMatrixInto(host,q,close)); }
   document.querySelectorAll(".chip[data-prof]").forEach(b=> b.onclick=()=> openProfile(b.dataset.prof));
   document.querySelectorAll("[data-stu]").forEach(b=> b.onclick=()=> resetStudentPw(b.dataset.stu, b.dataset.nm));
 }
@@ -1786,8 +1812,8 @@ async function sqlTeacherHome(){
       <button class="btn btn-primary" id="btnNewClass" style="margin-left:8px">+ Neue Klasse</button></div>
     ${classes.length?`<div class="page-head" style="margin:0 0 12px">${classSearchSortControls()}</div>`:""}
     <div id="clsHost"></div>`;
-  document.getElementById("btnSqlDatabases").onclick = ()=> sqlDatabasesPage();
-  document.getElementById("btnSqlTemplates").onclick = ()=> sqlTemplatesPage();
+  document.getElementById("btnSqlDatabases").onclick = ()=> sqlDatabasesPage({label:"← SQL · Meine Klassen", go:sqlTeacherHome});
+  document.getElementById("btnSqlTemplates").onclick = ()=> sqlTemplatesPage({label:"← SQL · Meine Klassen", go:sqlTeacherHome});
   document.getElementById("btnSqlSandbox").onclick = ()=> sqlSandbox();
   document.getElementById("btnNewClass").onclick = newClassDialog;
   wireClassOverview(classes, c=>`
@@ -1865,7 +1891,7 @@ async function sqlTeacherClassView(classId){
       <div style="display:flex;align-items:center;gap:8px"><h3 style="margin:0">📝 Aufgaben <span class="badge gray">${asgs.length}</span></h3><div style="flex:1"></div><button class="btn btn-ghost btn-sm" id="btnSqlFromTpl">📋 aus Vorlage</button><button class="btn btn-blue btn-sm" id="btnNewSqlAssign" style="margin-left:8px">+ Aufgabe stellen</button></div>
       <div style="margin-top:12px">${asgHtml}</div></div>
     <div class="card" style="margin-bottom:14px">
-      <div style="display:flex;align-items:center;gap:8px"><h3 style="margin:0">📊 Abgabe-Matrix</h3><div style="flex:1"></div></div>
+      <div style="display:flex;align-items:center;gap:8px"><h3 style="margin:0">📊 Abgabe-Matrix</h3><div style="flex:1"></div>${(asgs.length&&roster.length)?'<button class="btn btn-ghost btn-sm" id="btnSqlMatrixMax" title="Matrix im Vollbild öffnen">⛶ Vergrößern</button>':''}</div>
       <div style="margin-top:12px">
         ${(asgs.length&&roster.length)?'<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap"><span class="muted" style="font-size:12.5px">🟩 richtig · 🟧 bearbeitet · ⬜ offen · ★ = alles richtig</span><div style="flex:1"></div><input class="input" id="sqlMatrixSearch" placeholder="🔍 Schüler:in suchen" style="max-width:240px"></div>':''}
         <div id="sqlMatrixHost"></div>
@@ -1882,8 +1908,8 @@ async function sqlTeacherClassView(classId){
   { const bn=document.getElementById("btnCodeNew"); if(bn) bn.onclick=async()=>{ if(!confirm(`Neuen Einlade-Code für „${cls.name}" erzeugen?\n\nDer bisherige Code ${cls.code} wird sofort ungültig – verteile danach den neuen Code. Bereits beigetretene Schüler:innen bleiben in der Klasse.`)) return; try{ const nc=await api.regenerateClassCode(classId); toast("Neuer Code: "+nc,"ok"); sqlTeacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } }; }
   { const bl=document.getElementById("btnLeaveClass"); if(bl) bl.onclick=async()=>{ if(!confirm(`Klasse „${cls.name}" wirklich verlassen? Du bist danach keine Co-Lehrkraft mehr und siehst die Klasse nicht mehr.`)) return; try{ await api.removeClassTeacher(classId, ME.id); toast("Klasse verlassen","ok"); sqlTeacherHome(); }catch(e){ toast(e.message||"Fehler","err"); } }; }
   { const bt=document.getElementById("btnTeachers"); if(bt) bt.onclick=()=> classTeachersDialog(classId, cls); }
-  document.getElementById("btnSqlDbs2").onclick = ()=> sqlDatabasesPage();
-  document.getElementById("btnSqlTpl2").onclick = ()=> sqlTemplatesPage();
+  document.getElementById("btnSqlDbs2").onclick = ()=> sqlDatabasesPage({label:"← zurück zur Klasse", go:()=> sqlTeacherClassView(classId)});
+  document.getElementById("btnSqlTpl2").onclick = ()=> sqlTemplatesPage({label:"← zurück zur Klasse", go:()=> sqlTeacherClassView(classId)});
   { const bi=document.getElementById("btnSqlImport"); if(bi) bi.onclick=()=> importStudentsDialog(classId, cls.code, ()=>sqlTeacherClassView(classId)); }
   document.querySelectorAll(".chip[data-prof]").forEach(b=> b.onclick=()=>{ const m=roster.find(r=>r.student_id===b.dataset.prof); const p=(m&&m.profiles)||{}; sqlStudentProfilePage(classId, b.dataset.prof, p.display_name||p.username||"?", p.username||""); });
   document.querySelectorAll("[data-stu]").forEach(b=> b.onclick=()=> resetStudentPw(b.dataset.stu, b.dataset.nm));
@@ -1896,13 +1922,14 @@ async function sqlTeacherClassView(classId){
   document.querySelectorAll("[data-pub]").forEach(b=> b.onclick=async()=>{ try{ await api.sqlUpdateAssignment(b.dataset.pub,{published:b.dataset.on!=="1"}); sqlTeacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } });
   document.querySelectorAll("[data-rel]").forEach(b=> b.onclick=async()=>{ const on=b.dataset.relon==="1"; if(!on && !confirm("Musterlösungen dieser Aufgabe für ALLE Schüler:innen sichtbar machen?")) return; try{ await api.sqlUpdateAssignment(b.dataset.rel,{released:!on}); toast(on?"Musterlösung verborgen 🔒":"Musterlösung freigegeben 🏆","ok"); sqlTeacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } });
   document.querySelectorAll("[data-del]").forEach(b=> b.onclick=async()=>{ if(!confirm("Aufgabe wirklich löschen?")) return; try{ await api.sqlDeleteAssignment(b.dataset.del); sqlTeacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } });
-  const paintSqlMatrix=(q)=>{ const host=document.getElementById("sqlMatrixHost"); if(!host) return;
+  const paintSqlMatrixInto=(host, q, close)=>{ if(!host) return;
     host.innerHTML = (asgs.length&&roster.length) ? buildSqlMatrix(roster, asgs, subs, subtasksByAsg, q)
       : `<div class="empty"><span class="ic">📊</span>${!asgs.length?"Stelle Aufgaben – dann erscheint hier, wer welche Teilaufgaben gelöst hat.":"Noch keine Schüler:innen in der Klasse."}</div>`;
-    host.querySelectorAll(".sqcell[data-aid]").forEach(c=> c.onclick=()=>{ const stu=roster.find(r=>r.student_id===c.dataset.sid); const nm=(stu&&stu.profiles&&(stu.profiles.display_name||stu.profiles.username))||"?"; sqlReviewSubmission(c.dataset.aid, c.dataset.sid, nm, classId); });
+    host.querySelectorAll(".sqcell[data-aid]").forEach(c=> c.onclick=()=>{ const stu=roster.find(r=>r.student_id===c.dataset.sid); const nm=(stu&&stu.profiles&&(stu.profiles.display_name||stu.profiles.username))||"?"; if(close) close(); sqlReviewSubmission(c.dataset.aid, c.dataset.sid, nm, classId); });
   };
-  paintSqlMatrix("");
-  { const ms=document.getElementById("sqlMatrixSearch"); if(ms) ms.oninput=()=> paintSqlMatrix(ms.value); }
+  paintSqlMatrixInto(document.getElementById("sqlMatrixHost"), "", null);
+  { const ms=document.getElementById("sqlMatrixSearch"); if(ms) ms.oninput=()=> paintSqlMatrixInto(document.getElementById("sqlMatrixHost"), ms.value, null); }
+  { const bx=document.getElementById("btnSqlMatrixMax"); if(bx) bx.onclick=()=> openMatrixModal("📊 Abgabe-Matrix – "+cls.name, (host,q,close)=> paintSqlMatrixInto(host,q,close)); }
 }
 function buildSqlMatrix(roster, asgs, subs, subtasksByAsg, q){
   q=(q||"").trim().toLowerCase();
@@ -1941,7 +1968,8 @@ async function sqlPickTemplate(classId){
       <div class="row clickrow" data-tpl="${t.id}" style="cursor:pointer"><span class="grow"><span class="t">${esc(t.title)}</span><span class="s">${t.subtask_count} Teilaufgabe(n) · von ${esc(t.owner_name)}${t.mine?" (du)":""}${t.shared?" · 🌍 geteilt":""}</span></span><span style="margin-left:8px;color:#7a8aa0">→</span></div>`).join("")}</div>`;
   host.querySelectorAll(".clickrow[data-tpl]").forEach(r=> r.onclick=async()=>{ try{ const tpl=await api.sqlGetTemplate(r.dataset.tpl); closeModal(); sqlAssignmentEditorPage(classId, null, tpl); }catch(e){ toast(e.message||"Fehler","err"); } });
 }
-async function sqlTemplatesPage(){
+async function sqlTemplatesPage(back){
+  const b = subBack(sqlTemplatesPage, back) || {label:"← SQL · Meine Klassen", go:sqlTeacherHome};
   shell(`<div class="center-load"><span class="spin"></span>Vorlagen…</div>`);
   let list=[]; try{ list=await api.sqlListTemplates(); }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
   const rows = list.length ? `<div class="list">${list.map(t=>`
@@ -1950,11 +1978,11 @@ async function sqlTemplatesPage(){
       </div>`).join("")}</div>`
     : `<div class="empty"><span class="ic">📋</span>Noch keine Vorlagen. Lege eine über „+ Neue Vorlage" an – oder wähle in einer Aufgabe „⭐ Als Vorlage".</div>`;
   document.getElementById("view").innerHTML = `
-    <div class="page-head"><button class="crumb" id="back">← SQL · Meine Klassen</button></div>
+    <div class="page-head"><button class="crumb" id="back">${esc(b.label)}</button></div>
     <div class="page-head" style="margin-top:0"><h2>📋 Aufgaben-Vorlagen</h2><div class="spacer"></div><button class="btn btn-primary" id="btnNewTpl">+ Neue Vorlage</button></div>
     <div class="card" style="margin-bottom:12px;padding:12px 16px"><span class="muted" style="font-size:13px">Vorlagen sind wiederverwendbare Aufgaben (mit Datenbank + Teilaufgaben). In einer Klasse legst du über <b>📋 aus Vorlage</b> eine neue Aufgabe daraus an. <b>Geteilte</b> Vorlagen können auch andere Lehrkräfte verwenden.</span></div>
     ${rows}`;
-  document.getElementById("back").onclick = sqlTeacherHome;
+  document.getElementById("back").onclick = b.go;
   document.getElementById("btnNewTpl").onclick = ()=> sqlTemplateEditorPage(null);
   document.querySelectorAll("[data-edit]").forEach(b=> b.onclick=()=> sqlTemplateEditorPage({id:b.dataset.edit}));
   document.querySelectorAll("[data-share]").forEach(b=> b.onclick=async()=>{ const on=b.dataset.on==="1"; try{ await api.sqlUpdateTemplate(b.dataset.share,{shared:!on}); toast(on?"Freigabe zurückgenommen":"Vorlage freigegeben 🌍","ok"); sqlTemplatesPage(); }catch(e){ toast(e.message||"Fehler","err"); } });
@@ -2206,7 +2234,8 @@ async function saveSqlAnswer(){
 }
 
 /* ---------- SQL-Sandbox: private Projekte (frei ausprobieren + speichern) ---------- */
-async function sqlSandbox(){
+async function sqlSandbox(back){
+  const b = subBack(sqlSandbox, back) || {label:"← Zurück", go:()=> (ME.role==="teacher"?sqlTeacherHome():sqlStudentHome())};
   shell(`<div class="center-load"><span class="spin"></span>Sandbox…</div>`);
   let projects=[]; try{ projects=await api.listSqlSandboxProjects(); }catch(e){}
   const list = projects.length ? `<div class="list">${projects.map(p=>`
@@ -2214,11 +2243,11 @@ async function sqlSandbox(){
         <button class="btn btn-sm btn-ghost" data-del="${p.id}" title="löschen">🗑️</button><span style="margin-left:8px;color:#7a8aa0">→</span></div>`).join("")}</div>`
     : `<div class="empty"><span class="ic">🧪</span>Noch keine Projekte. Leg dein erstes an!</div>`;
   document.getElementById("view").innerHTML = `
-    <div class="page-head"><button class="crumb" id="back">← Zurück</button></div>
+    <div class="page-head"><button class="crumb" id="back">${esc(b.label)}</button></div>
     <div class="page-head" style="margin-top:0"><h2>🧪 SQL-Sandbox</h2><div class="spacer"></div><button class="btn btn-primary" id="btnNewSbx">+ Neues Projekt</button></div>
     <div class="card" style="margin-bottom:12px;padding:12px 16px"><span class="muted" style="font-size:13px">Probiere SQL frei aus – Datenbank wählen, Abfragen schreiben, ausführen – und speichere deine eigenen Projekte.</span></div>
     ${list}`;
-  document.getElementById("back").onclick = ()=> (ME.role==="teacher"?sqlTeacherHome():sqlStudentHome());
+  document.getElementById("back").onclick = b.go;
   document.getElementById("btnNewSbx").onclick = ()=> sqlSandboxProject(null);
   document.querySelectorAll(".clickrow[data-id]").forEach(r=> r.onclick=(e)=>{ if(e.target.closest("[data-del]")) return; sqlSandboxProject(r.dataset.id); });
   document.querySelectorAll("[data-del]").forEach(b=> b.onclick=async(e)=>{ e.stopPropagation(); if(!confirm("Projekt löschen?")) return; try{ await api.deleteSqlSandboxProject(b.dataset.del); sqlSandbox(); }catch(err){ toast(err.message||"Fehler","err"); } });
@@ -2283,7 +2312,8 @@ async function saveSqlSandboxProject(){
 }
 
 /* ---------- SQL-Playground: Datenbank-Bibliothek (Lehrkräfte) ---------- */
-async function sqlDatabasesPage(){
+async function sqlDatabasesPage(back){
+  const b = subBack(sqlDatabasesPage, back) || {label:"← SQL · Meine Klassen", go:sqlTeacherHome};
   shell(`<div class="center-load"><span class="spin"></span>Datenbanken…</div>`);
   let list=[]; try{ list=await api.sqlListDatabases(); }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
   const rows = list.length ? `<div class="list">${list.map(d=>`
@@ -2293,12 +2323,12 @@ async function sqlDatabasesPage(){
         <span style="margin-left:8px;color:#7a8aa0">→</span></div>`).join("")}</div>`
     : `<div class="empty"><span class="ic">🗄️</span>Noch keine Datenbanken. Lege deine erste an!</div>`;
   document.getElementById("view").innerHTML = `
-    <div class="page-head"><button class="crumb" id="back">← SQL · Meine Klassen</button></div>
+    <div class="page-head"><button class="crumb" id="back">${esc(b.label)}</button></div>
     <div class="page-head" style="margin-top:0"><h2>🗄️ Datenbanken</h2><div class="spacer"></div>
       <button class="btn btn-primary" id="btnNewDb">+ Neue Datenbank</button></div>
     <div class="card" style="margin-bottom:12px;padding:12px 16px"><span class="muted" style="font-size:13px">Datenbanken für SQL-Aufgaben. <b>Geteilte</b> Datenbanken können andere Lehrkräfte verwenden und stehen <b>allen in der 🧪 Sandbox</b> zur Verfügung; <b>private</b> nur dir (auch in deiner Sandbox). Schüler:innen sehen in der Sandbox zusätzlich alle DBs, zu denen sie eine Aufgabe haben.</span></div>
     ${rows}`;
-  document.getElementById("back").onclick = sqlTeacherHome;
+  document.getElementById("back").onclick = b.go;
   document.getElementById("btnNewDb").onclick = ()=> sqlDatabaseEditorPage(null);
   document.querySelectorAll(".clickrow[data-open]").forEach(r=> r.onclick=(e)=>{ if(e.target.closest("[data-del]")) return; const d=list.find(x=>x.id===r.dataset.open); sqlDatabaseEditorPage(d); });
   document.querySelectorAll("[data-del]").forEach(b=> b.onclick=async(e)=>{ e.stopPropagation(); if(!confirm(`Datenbank „${b.dataset.nm}" wirklich löschen?`)) return; try{ await api.sqlDeleteDatabase(b.dataset.del); toast("Datenbank gelöscht","ok"); sqlDatabasesPage(); }catch(err){ toast(err.message||"Fehler","err"); } });
@@ -2329,7 +2359,7 @@ async function sqlDatabaseEditorPage(meta){
     <div id="dbSchema"><div class="sqv-note" style="color:var(--muted);font-size:13px;padding:8px 2px">Führe den SQL-Code mit ▶ aus, um das Schema zu sehen.</div></div>
     ${canEdit?`<div style="margin-top:16px"><button class="btn btn-primary btn-lg" id="dbSave">💾 Datenbank speichern</button></div>`:""}`;
   document.getElementById("dbSql").value = sqlText;
-  document.getElementById("back").onclick = sqlDatabasesPage;
+  document.getElementById("back").onclick = ()=> sqlDatabasesPage();   // Pfeil-Wrapper: Klick-Event darf NICHT als back-Parameter durchrutschen
   const runDb = async ()=>{
     const txt=document.getElementById("dbSql").value, out=document.getElementById("dbSchema");
     out.innerHTML='<div class="center-load"><span class="spin"></span>Wird ausgeführt…</div>';
@@ -2574,8 +2604,8 @@ async function filiusTeacherHome(){
       <button class="btn btn-primary" id="btnNewClass" style="margin-left:8px">+ Neue Klasse</button></div>
     ${classes.length?`<div class="page-head" style="margin:0 0 12px">${classSearchSortControls()}</div>`:""}
     <div id="clsHost"></div>`;
-  document.getElementById("btnFilNets").onclick = ()=> filiusNetworksPage();
-  document.getElementById("btnFilTpl").onclick = ()=> filiusTemplatesPage();
+  document.getElementById("btnFilNets").onclick = ()=> filiusNetworksPage({label:"← Filius · Meine Klassen", go:filiusTeacherHome});
+  document.getElementById("btnFilTpl").onclick = ()=> filiusTemplatesPage({label:"← Filius · Meine Klassen", go:filiusTeacherHome});
   document.getElementById("btnFilSbx").onclick = ()=> filiusSandbox();
   document.getElementById("btnNewClass").onclick = newClassDialog;
   wireClassOverview(classes, c=>`
@@ -2651,7 +2681,7 @@ async function filiusTeacherClassView(classId){
       <div style="display:flex;align-items:center;gap:8px"><h3 style="margin:0">📝 Aufgaben <span class="badge gray">${asgs.length}</span></h3><div style="flex:1"></div><button class="btn btn-ghost btn-sm" id="btnFilFromTpl">📋 aus Vorlage</button><button class="btn btn-blue btn-sm" id="btnNewFilAssign" style="margin-left:8px">+ Aufgabe stellen</button></div>
       <div style="margin-top:12px">${asgHtml}</div></div>
     <div class="card" style="margin-bottom:14px">
-      <div style="display:flex;align-items:center;gap:8px"><h3 style="margin:0">📊 Abgabe-Matrix</h3><div style="flex:1"></div></div>
+      <div style="display:flex;align-items:center;gap:8px"><h3 style="margin:0">📊 Abgabe-Matrix</h3><div style="flex:1"></div>${(asgs.length&&roster.length)?'<button class="btn btn-ghost btn-sm" id="btnFilMatrixMax" title="Matrix im Vollbild öffnen">⛶ Vergrößern</button>':''}</div>
       <div style="margin-top:12px">
         ${(asgs.length&&roster.length)?'<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap"><span class="muted" style="font-size:12.5px">🟩 richtig · 🟧 falsch · ⬜ offen · ★ = alle Prüfungen bestanden</span><div style="flex:1"></div><input class="input" id="filMatrixSearch" placeholder="🔍 Schüler:in suchen" style="max-width:240px"></div>':''}
         <div id="filMatrixHost"></div>
@@ -2668,8 +2698,8 @@ async function filiusTeacherClassView(classId){
   { const bn=document.getElementById("btnCodeNew"); if(bn) bn.onclick=async()=>{ if(!confirm(`Neuen Einlade-Code für „${cls.name}" erzeugen?\n\nDer bisherige Code ${cls.code} wird sofort ungültig – verteile danach den neuen Code. Bereits beigetretene Schüler:innen bleiben in der Klasse.`)) return; try{ const nc=await api.regenerateClassCode(classId); toast("Neuer Code: "+nc,"ok"); filiusTeacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } }; }
   { const bl=document.getElementById("btnLeaveClass"); if(bl) bl.onclick=async()=>{ if(!confirm(`Klasse „${cls.name}" wirklich verlassen? Du bist danach keine Co-Lehrkraft mehr und siehst die Klasse nicht mehr.`)) return; try{ await api.removeClassTeacher(classId, ME.id); toast("Klasse verlassen","ok"); filiusTeacherHome(); }catch(e){ toast(e.message||"Fehler","err"); } }; }
   { const bt=document.getElementById("btnTeachers"); if(bt) bt.onclick=()=> classTeachersDialog(classId, cls); }
-  document.getElementById("btnFilNets2").onclick = ()=> filiusNetworksPage();
-  document.getElementById("btnFilTpl2").onclick = ()=> filiusTemplatesPage();
+  document.getElementById("btnFilNets2").onclick = ()=> filiusNetworksPage({label:"← zurück zur Klasse", go:()=> filiusTeacherClassView(classId)});
+  document.getElementById("btnFilTpl2").onclick = ()=> filiusTemplatesPage({label:"← zurück zur Klasse", go:()=> filiusTeacherClassView(classId)});
   { const bi=document.getElementById("btnFilImport"); if(bi) bi.onclick=()=> importStudentsDialog(classId, cls.code, ()=>filiusTeacherClassView(classId)); }
   document.querySelectorAll(".chip[data-prof]").forEach(b=> b.onclick=()=>{ const m=roster.find(r=>r.student_id===b.dataset.prof); const p=(m&&m.profiles)||{}; filiusStudentProfilePage(classId, b.dataset.prof, p.display_name||p.username||"?", p.username||""); });
   document.querySelectorAll("[data-stu]").forEach(b=> b.onclick=()=> resetStudentPw(b.dataset.stu, b.dataset.nm));
@@ -2682,13 +2712,14 @@ async function filiusTeacherClassView(classId){
   document.querySelectorAll("[data-pub]").forEach(b=> b.onclick=async()=>{ try{ await api.filiusUpdateAssignment(b.dataset.pub,{published:b.dataset.on!=="1"}); filiusTeacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } });
   document.querySelectorAll("[data-rel]").forEach(b=> b.onclick=async()=>{ const on=b.dataset.relon==="1"; if(!on && !confirm("Muster-Netzwerk dieser Aufgabe für ALLE Schüler:innen sichtbar machen?")) return; try{ await api.filiusUpdateAssignment(b.dataset.rel,{released:!on}); toast(on?"Muster-Netzwerk verborgen 🔒":"Muster-Netzwerk freigegeben 🏆","ok"); filiusTeacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } });
   document.querySelectorAll("[data-del]").forEach(b=> b.onclick=async()=>{ if(!confirm("Aufgabe wirklich löschen?")) return; try{ await api.filiusDeleteAssignment(b.dataset.del); filiusTeacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } });
-  const paintFilMatrix=(q)=>{ const host=document.getElementById("filMatrixHost"); if(!host) return;
+  const paintFilMatrixInto=(host, q, close)=>{ if(!host) return;
     host.innerHTML = (asgs.length&&roster.length) ? buildFiliusMatrix(roster, asgs, subs, q)
       : `<div class="empty"><span class="ic">📊</span>${!asgs.length?"Stelle Aufgaben – dann erscheint hier, wer welche Prüfungen bestanden hat.":"Noch keine Schüler:innen in der Klasse."}</div>`;
-    host.querySelectorAll(".sqcell[data-aid]").forEach(c=> c.onclick=()=>{ const stu=roster.find(r=>r.student_id===c.dataset.sid); const nm=(stu&&stu.profiles&&(stu.profiles.display_name||stu.profiles.username))||"?"; filiusReviewSubmission(c.dataset.aid, c.dataset.sid, nm, classId); });
+    host.querySelectorAll(".sqcell[data-aid]").forEach(c=> c.onclick=()=>{ const stu=roster.find(r=>r.student_id===c.dataset.sid); const nm=(stu&&stu.profiles&&(stu.profiles.display_name||stu.profiles.username))||"?"; if(close) close(); filiusReviewSubmission(c.dataset.aid, c.dataset.sid, nm, classId); });
   };
-  paintFilMatrix("");
-  { const ms=document.getElementById("filMatrixSearch"); if(ms) ms.oninput=()=> paintFilMatrix(ms.value); }
+  paintFilMatrixInto(document.getElementById("filMatrixHost"), "", null);
+  { const ms=document.getElementById("filMatrixSearch"); if(ms) ms.oninput=()=> paintFilMatrixInto(document.getElementById("filMatrixHost"), ms.value, null); }
+  { const bx=document.getElementById("btnFilMatrixMax"); if(bx) bx.onclick=()=> openMatrixModal("📊 Abgabe-Matrix – "+cls.name, (host,q,close)=> paintFilMatrixInto(host,q,close)); }
 }
 function buildFiliusMatrix(roster, asgs, subs, q){
   q=(q||"").trim().toLowerCase();
@@ -2897,7 +2928,8 @@ async function filiusStudentProfilePage(classId, studentId, studentName, usernam
 }
 
 /* ---------- FILIUS: Netzwerk-Bibliothek ---------- */
-async function filiusNetworksPage(){
+async function filiusNetworksPage(back){
+  const b = subBack(filiusNetworksPage, back) || {label:"← Filius · Meine Klassen", go:filiusTeacherHome};
   shell(`<div class="center-load"><span class="spin"></span>Netzwerke…</div>`);
   let list=[]; try{ list=await api.filiusListNetworks(); }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
   const rows = list.length ? `<div class="list">${list.map(d=>`
@@ -2907,11 +2939,11 @@ async function filiusNetworksPage(){
         <span style="margin-left:8px;color:#7a8aa0">→</span></div>`).join("")}</div>`
     : `<div class="empty"><span class="ic">🌐</span>Noch keine Netzwerke. Lege dein erstes an!</div>`;
   document.getElementById("view").innerHTML = `
-    <div class="page-head"><button class="crumb" id="back">← Filius · Meine Klassen</button></div>
+    <div class="page-head"><button class="crumb" id="back">${esc(b.label)}</button></div>
     <div class="page-head" style="margin-top:0"><h2>🌐 Netzwerke</h2><div class="spacer"></div><button class="btn btn-primary" id="btnNewNet">+ Neues Netzwerk</button></div>
     <div class="card" style="margin-bottom:12px;padding:12px 16px"><span class="muted" style="font-size:13px">Wiederverwendbare Start-Netzwerke für Aufgaben. <b>Geteilte</b> Netzwerke können andere Lehrkräfte nutzen und stehen <b>allen in der 🧪 Sandbox</b> zur Verfügung; <b>private</b> nur dir.</span></div>
     ${rows}`;
-  document.getElementById("back").onclick = filiusTeacherHome;
+  document.getElementById("back").onclick = b.go;
   document.getElementById("btnNewNet").onclick = ()=> filiusNetworkEditorPage(null);
   document.querySelectorAll(".clickrow[data-open]").forEach(r=> r.onclick=(e)=>{ if(e.target.closest("[data-del]")) return; const d=list.find(x=>x.id===r.dataset.open); filiusNetworkEditorPage(d); });
   document.querySelectorAll("[data-del]").forEach(b=> b.onclick=async(e)=>{ e.stopPropagation(); if(!confirm(`Netzwerk „${b.dataset.nm}" wirklich löschen?`)) return; try{ await api.filiusDeleteNetwork(b.dataset.del); toast("Netzwerk gelöscht","ok"); filiusNetworksPage(); }catch(err){ toast(err.message||"Fehler","err"); } });
@@ -2935,7 +2967,7 @@ async function filiusNetworkEditorPage(meta){
     </div>
     <div id="netHost"></div>
     ${canEdit?`<div style="margin-top:14px"><button class="btn btn-primary btn-lg" id="netSave" style="max-width:280px">💾 Netzwerk speichern</button></div>`:""}`;
-  document.getElementById("back").onclick = filiusNetworksPage;
+  document.getElementById("back").onclick = ()=> filiusNetworksPage();   // Pfeil-Wrapper: Klick-Event darf NICHT als back-Parameter durchrutschen
   pageView = new FiliusView("#netHost", { data:data, readonly:!canEdit, height:"60vh" });
   document.getElementById("netDl").onclick = ()=>{ const nm=((document.getElementById("netName").value||"").trim()||"netzwerk").replace(/[^\w.\- ]+/g,"_")+".json"; const blob=new Blob([JSON.stringify(pageView.getData())],{type:"application/json;charset=utf-8"}); const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=nm; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),1500); };
   { const fo=document.getElementById("netOpen"); if(fo){ const fi=document.getElementById("netFile"); fo.onclick=()=>fi.click(); fi.onchange=(e)=>{ const f=e.target.files[0]; if(!f) return; const rd=new FileReader(); rd.onload=()=>{ try{ const d=JSON.parse(rd.result); pageView.setData(d); toast("Datei geladen ✓","ok"); }catch(err){ toast("Ungültige Datei","err"); } }; rd.readAsText(f); }; } }
@@ -2953,7 +2985,8 @@ async function filiusPickTemplate(classId){
     <div class="list">${list.map(t=>`<div class="row clickrow" data-tpl="${t.id}" style="cursor:pointer"><span class="grow"><span class="t">${esc(t.title)}</span><span class="s">${t.check_count} Prüfung(en) · von ${esc(t.owner_name)}${t.mine?" (du)":""}${t.shared?" · 🌍 geteilt":""}</span></span><span style="margin-left:8px;color:#7a8aa0">→</span></div>`).join("")}</div>`;
   host.querySelectorAll(".clickrow[data-tpl]").forEach(r=> r.onclick=async()=>{ try{ const tpl=await api.filiusGetTemplate(r.dataset.tpl); closeModal(); filiusAssignmentEditorPage(classId, null, tpl); }catch(e){ toast(e.message||"Fehler","err"); } });
 }
-async function filiusTemplatesPage(){
+async function filiusTemplatesPage(back){
+  const b = subBack(filiusTemplatesPage, back) || {label:"← Filius · Meine Klassen", go:filiusTeacherHome};
   shell(`<div class="center-load"><span class="spin"></span>Vorlagen…</div>`);
   let list=[]; try{ list=await api.filiusListTemplates(); }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
   const rows = list.length ? `<div class="list">${list.map(t=>`
@@ -2962,11 +2995,11 @@ async function filiusTemplatesPage(){
       </div>`).join("")}</div>`
     : `<div class="empty"><span class="ic">📋</span>Noch keine Vorlagen. Lege eine über „+ Neue Vorlage" an – oder wähle in einer Aufgabe „⭐ Als Vorlage".</div>`;
   document.getElementById("view").innerHTML = `
-    <div class="page-head"><button class="crumb" id="back">← Filius · Meine Klassen</button></div>
+    <div class="page-head"><button class="crumb" id="back">${esc(b.label)}</button></div>
     <div class="page-head" style="margin-top:0"><h2>📋 Aufgaben-Vorlagen</h2><div class="spacer"></div><button class="btn btn-primary" id="btnNewTpl">+ Neue Vorlage</button></div>
     <div class="card" style="margin-bottom:12px;padding:12px 16px"><span class="muted" style="font-size:13px">Vorlagen sind wiederverwendbare Aufgaben (Start-Netzwerk + Prüfungen). In einer Klasse legst du über <b>📋 aus Vorlage</b> eine neue Aufgabe daraus an. <b>Geteilte</b> Vorlagen können auch andere Lehrkräfte verwenden.</span></div>
     ${rows}`;
-  document.getElementById("back").onclick = filiusTeacherHome;
+  document.getElementById("back").onclick = b.go;
   document.getElementById("btnNewTpl").onclick = ()=> filiusTemplateEditorPage(null);
   document.querySelectorAll("[data-edit]").forEach(b=> b.onclick=()=> filiusTemplateEditorPage({id:b.dataset.edit}));
   document.querySelectorAll("[data-share]").forEach(b=> b.onclick=async()=>{ const on=b.dataset.on==="1"; try{ await api.filiusUpdateTemplate(b.dataset.share,{shared:!on}); toast(on?"Freigabe zurückgenommen":"Vorlage freigegeben 🌍","ok"); filiusTemplatesPage(); }catch(e){ toast(e.message||"Fehler","err"); } });
@@ -3137,7 +3170,8 @@ async function filiusSaveTemplateFromEditor(){
 }
 
 /* ---------- FILIUS: Sandbox (private Projekte) ---------- */
-async function filiusSandbox(){
+async function filiusSandbox(back){
+  const b = subBack(filiusSandbox, back) || {label:"← Zurück", go:()=> (ME.role==="teacher"?filiusTeacherHome():filiusStudentHome())};
   shell(`<div class="center-load"><span class="spin"></span>Sandbox…</div>`);
   let projects=[]; try{ projects=await api.filiusListSandboxProjects(); }catch(e){}
   const list = projects.length ? `<div class="list">${projects.map(p=>`
@@ -3145,11 +3179,11 @@ async function filiusSandbox(){
         <button class="btn btn-sm btn-ghost" data-del="${p.id}" title="löschen">🗑️</button><span style="margin-left:8px;color:#7a8aa0">→</span></div>`).join("")}</div>`
     : `<div class="empty"><span class="ic">🧪</span>Noch keine Projekte. Leg dein erstes an!</div>`;
   document.getElementById("view").innerHTML = `
-    <div class="page-head"><button class="crumb" id="back">← Zurück</button></div>
+    <div class="page-head"><button class="crumb" id="back">${esc(b.label)}</button></div>
     <div class="page-head" style="margin-top:0"><h2>🧪 Filius-Sandbox</h2><div class="spacer"></div><button class="btn btn-primary" id="btnNewSbx">+ Neues Projekt</button></div>
     <div class="card" style="margin-bottom:12px;padding:12px 16px"><span class="muted" style="font-size:13px">Baue frei ein Netzwerk, teste im Simulationsmodus mit ping &amp; Co. – und speichere deine eigenen Projekte.</span></div>
     ${list}`;
-  document.getElementById("back").onclick = ()=> (ME.role==="teacher"?filiusTeacherHome():filiusStudentHome());
+  document.getElementById("back").onclick = b.go;
   document.getElementById("btnNewSbx").onclick = ()=> filiusSandboxProject(null);
   document.querySelectorAll(".clickrow[data-id]").forEach(r=> r.onclick=(e)=>{ if(e.target.closest("[data-del]")) return; filiusSandboxProject(r.dataset.id); });
   document.querySelectorAll("[data-del]").forEach(b=> b.onclick=async(e)=>{ e.stopPropagation(); if(!confirm("Projekt löschen?")) return; try{ await api.filiusDeleteSandboxProject(b.dataset.del); filiusSandbox(); }catch(err){ toast(err.message||"Fehler","err"); } });
@@ -3188,7 +3222,8 @@ async function filiusSandboxProject(projectId){
 /* ============================================================================
    SANDBOX (freier Modus) – Schüler:innen bauen Welt + Code, speicherbar
    ============================================================================ */
-async function sandboxHome(classId){
+async function sandboxHome(classId, back){
+  const b = subBack(sandboxHome, back) || {label:"← zurück", go:()=> (classId==null ? (ME.role==="teacher"?teacherHome():studentHome()) : studentClassView(classId))};
   shell(`<div class="center-load"><span class="spin"></span>Sandbox…</div>`);
   let cls, projects=[];
   try{ if(classId!=null){ const { data } = await sb.from("classes").select("*").eq("id",classId).single(); cls=data; } projects=await api.listSandboxProjects(classId); }
@@ -3198,11 +3233,11 @@ async function sandboxHome(classId){
         <button class="btn btn-sm btn-ghost" data-del="${p.id}" title="löschen">🗑️</button><span style="margin-left:8px;color:#7a8aa0">→</span></div>`).join("")}</div>`
     : `<div class="empty"><span class="ic">🧪</span>Noch keine Projekte. Leg dein erstes an!</div>`;
   document.getElementById("view").innerHTML = `
-    <div class="page-head"><button class="crumb" id="back">← zurück</button></div>
+    <div class="page-head"><button class="crumb" id="back">${esc(b.label)}</button></div>
     <div class="page-head" style="margin-top:0"><h2>${classId==null?"🧪 Meine Sandbox":("🧪 Sandbox – "+esc(cls?cls.name:""))}</h2><div class="spacer"></div><button class="btn btn-primary" id="btnNew">+ Neues Projekt</button></div>
     <div class="card" style="margin-bottom:12px;padding:12px 16px"><span class="muted" style="font-size:13px">Hier kannst du frei eine Welt bauen und programmieren – ganz ohne Aufgabe. Deine Projekte werden gespeichert.</span></div>
     ${list}`;
-  document.getElementById("back").onclick = ()=> (classId==null ? (ME.role==="teacher"?teacherHome():studentHome()) : studentClassView(classId));
+  document.getElementById("back").onclick = b.go;
   document.getElementById("btnNew").onclick = ()=> sandboxProject(classId, null);
   document.querySelectorAll(".clickrow[data-id]").forEach(r=> r.onclick=(e)=>{ if(e.target.closest("[data-del]")) return; sandboxProject(classId, r.dataset.id); });
   document.querySelectorAll("[data-del]").forEach(b=> b.onclick=async(e)=>{ e.stopPropagation(); if(!confirm("Projekt löschen?")) return; try{ await api.deleteSandboxProject(b.dataset.del); sandboxHome(classId); }catch(err){ toast(err.message||"Fehler","err"); } });
@@ -3270,6 +3305,11 @@ function fmtDate(s){ try{ const d=new Date(s); return d.toLocaleDateString("de-D
    Neueste Version zuerst. Bei jedem Deploy oben einen Eintrag ergänzen.
    ============================================================================ */
 const PATCH_NOTES = [
+  { v:"2.31", date:"16. Juli 2026", title:"🧭 Navigation, Vollbild-Matrix & Vorlagen", items:[
+    `<b>Zurück führt jetzt richtig:</b> Öffnest du <b>Vorlagen, Sandbox, Datenbanken oder Netzwerke</b> aus einer Klasse heraus, bringt „zurück" dich wieder in <b>diese Klasse</b> – statt in die Klassenübersicht.`,
+    `<b>Abgabe-Matrix im Vollbild:</b> In jeder Klassenansicht (alle Tools) öffnet <b>⛶ Vergrößern</b> die Abgabe-Matrix über die <b>gesamte Bildschirmbreite</b> – mit Namenssuche; ein Klick auf eine Zelle öffnet wie gewohnt die Abgabe.`,
+    `<b>Hamster:</b> In der Klassenansicht gibt es jetzt oben einen <b>📋 Vorlagen</b>-Knopf (wie bei SQL und Filius); auf der Startseite wurden <b>Vorlagen</b> und <b>Sandbox</b> in eine einheitliche Reihenfolge gebracht.`,
+  ]},
   { v:"2.30", date:"5. Juli 2026", title:"🔄 Komfort & Filius-Feinschliff", items:[
     `<b>Aktualisieren-Schaltfläche</b> neben dem Klassennamen – in allen Tools, für Lehrkräfte und Schüler:innen.`,
     `<b>Rückmeldungs-Vorschau:</b> In der Aufgabenübersicht siehst du jetzt zu jeder Aufgabe direkt eine Vorschau der freigegebenen Rückmeldung deiner Lehrkraft (beim Hamster die Rückmeldung zur aktuellen Abgabe).`,
@@ -3525,7 +3565,7 @@ function patchNotesDialog(){
 }
 
 /* ---------- Footer: Versionsnummer (aus den Patch-Notes) + Copyright ---------- */
-const APP_BUILD = "2026-07-05 12:17";   // letztes Update (im Patch-Notes-Dialog angezeigt)
+const APP_BUILD = "2026-07-16 16:05";   // letztes Update (im Patch-Notes-Dialog angezeigt)
 (function(){ const f=document.getElementById("appfoot"); if(f){ const v=(typeof PATCH_NOTES!=="undefined"&&PATCH_NOTES[0])?PATCH_NOTES[0].v:""; f.textContent='© 2026 Laurens Offinger · Version '+v; } })();
 
 boot();

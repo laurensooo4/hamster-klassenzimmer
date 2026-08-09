@@ -164,6 +164,12 @@
   table.matrix td.stu.clickable:hover{color:var(--blue);text-decoration:underline}
   table.matrix tbody tr:nth-child(even) td{background:#fafcff}
   table.matrix tbody tr:nth-child(even) td.stu{background:#fafcff}
+  /* Abgabe-Matrix im Vollbild (maximiert – über die gesamte Bildschirmbreite) */
+  .matrix-modal{position:fixed;inset:0;z-index:70;background:var(--bg);display:flex;flex-direction:column}
+  .matrix-modal .mm-head{display:flex;align-items:center;gap:12px;padding:13px 20px;border-bottom:1px solid var(--line);flex-wrap:wrap;background:var(--card)}
+  .matrix-modal .mm-head h2{margin:0;font-size:18px}
+  .matrix-modal .mm-body{flex:1;overflow:auto;padding:16px 20px}
+  .matrix-modal .mm-body .matrix-wrap{box-shadow:none;padding:0;overflow:visible}   /* .mm-body wird Scroll-Container -> Kopfzeile (top:0) UND Namensspalte (left:0) kleben korrekt */
   .cell{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:10px;font-size:17px;font-weight:900}
   .cell.done{background:#e9ffd6;color:var(--green-d)}
   .cell.pass{background:var(--green);color:#fff}
@@ -247,11 +253,13 @@
   <div id="toast"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script>/* Offline-/Schulserver-Fallback: laedt die mitgelieferte lokale Kopie, falls das CDN nicht erreichbar ist */if(!window.supabase)document.write('<script src="supabase.local.js"><\/script>');</script>
   <script src="config.js"></script>
+  <script>/* Favicon optional per config.js (FAVICON_URL) austauschbar – z. B. auf dem Schulserver */(function(){try{var c=window.HAMSTER_CONFIG||{};if(c.FAVICON_URL){var l=document.querySelector("link[rel='icon']");if(!l){l=document.createElement("link");l.rel="icon";document.head.appendChild(l);}l.href=c.FAVICON_URL;}}catch(e){}})();</script>
   <script src="engine.js?v=h15"></script>
   <script src="sqlengine.js?v=h23"></script>
   <script src="filiusengine.js?v=h5"></script>
   <script src="filiusview.js?v=h3"></script>
-  <script src="app.js?v=h34"></script>
+  <script src="app.js?v=h35"></script>
 </body>
 </html>
