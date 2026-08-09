@@ -132,7 +132,8 @@ function renderAuth(){
   const allowReg = cfg.ALLOW_REGISTRATION !== false;   // Release/Schulserver kann Selbst-Registrierung abschalten (nur Login)
   if(!allowReg) s.mode="login";
   const isReg = allowReg && s.mode==="register";
-  const logo = cfg.LOGO_URL ? `<img src="${esc(cfg.LOGO_URL)}" alt="Logo" style="max-height:92px;max-width:82%;object-fit:contain" onerror="this.outerHTML='${HAMSTER}'">` : HAMSTER;
+  const logoSrc = cfg.LOGO_URL || "logo-gywem.png";   // Standard: Schul-Logo (Fallback 🐹, falls Datei fehlt)
+  const logo = `<img src="${esc(logoSrc)}" alt="Logo" style="max-height:92px;max-width:82%;object-fit:contain" onerror="this.outerHTML='${HAMSTER}'">`;
   const codeField = isReg ? (s.role==="teacher"
       ? `<div class="field"><label>Lehrer-Code</label><input class="input" id="auCode" placeholder="Code von der Schulleitung" autocomplete="off"></div>`
       : `<div class="field"><label>Klassencode <span style="color:#7a8aa0;font-weight:600;text-transform:none;letter-spacing:0">(optional)</span></label><input class="input" id="auCode" placeholder="z. B. K7Q2MX – kann leer bleiben" autocomplete="off" style="text-transform:uppercase;letter-spacing:2px;font-family:monospace"></div>`) : "";
@@ -237,7 +238,7 @@ function shell(inner){
   const roleBadge = ME.is_admin ? `<span class="badge" style="background:#ffe0b2;color:#b35900">Admin</span>` : ME.role==="teacher" ? `<span class="badge blue">Lehrkraft</span>` : `<span class="badge">Schüler:in</span>`;
   app().innerHTML = `
     <div class="topbar">
-      <div class="brand"><span class="h">${HAMSTER}</span> Informatik am Gymnasium Wesermünde</div>
+      <div class="brand"><img class="blogo" src="logo-gywem.png" alt="" onerror="this.outerHTML='<span class=&quot;h&quot;>${HAMSTER}</span>'"> Informatik am Gymnasium Wesermünde</div>
       <button class="btn btn-ghost btn-sm" id="homeBtn" title="Zur Tool-Auswahl" style="margin-left:8px">🏠</button>
       ${ACTIVE_TOOL?`<span style="margin-left:9px;font-weight:800;font-size:13.5px;color:var(--muted)">${esc((TOOLS.find(t=>t.id===ACTIVE_TOOL)||{}).name||"")}</span>`:""}
       <div class="spacer"></div>
@@ -3965,6 +3966,9 @@ async function javaSandboxProject(projectId){
 }
 
 const PATCH_NOTES = [
+  { v:"2.34", date:"10. August 2026", title:"🏫 Schul-Logo überall", items:[
+    `Das offizielle <b>GW-Logo des Gymnasiums Wesermünde</b> ersetzt den Hamster oben links in der Kopfzeile, auf der Login-Seite und im Impressum. (Der 🐹 bleibt natürlich das Maskottchen des Hamster-Simulators!)`,
+  ]},
   { v:"2.33", date:"9. August 2026", title:"🤝 Namenszug & Impressum im Footer", items:[
     `Die Plattform ist jetzt offiziell ein Gemeinschaftsprojekt: Der Footer nennt <b>Laurens Offinger &amp; Sebastian Glücks</b>.`,
     `Neue, eigene <b>Impressum-Seite im Plattform-Design</b> (hell &amp; dunkel) mit allen Angaben der Schule – dezent im Footer verlinkt.`,
@@ -4236,7 +4240,7 @@ function patchNotesDialog(){
 }
 
 /* ---------- Footer: Versionsnummer (aus den Patch-Notes) + Copyright ---------- */
-const APP_BUILD = "2026-08-09 23:15";   // letztes Update (im Patch-Notes-Dialog angezeigt)
+const APP_BUILD = "2026-08-10 12:00";   // letztes Update (im Patch-Notes-Dialog angezeigt)
 (function(){ const f=document.getElementById("appfoot"); if(f){ const v=(typeof PATCH_NOTES!=="undefined"&&PATCH_NOTES[0])?PATCH_NOTES[0].v:"";
   f.innerHTML='© 2026 Laurens Offinger &amp; Sebastian Glücks · Version '+v+' · <a href="impressum.html" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:3px" onmouseover="this.style.color=\'var(--blue)\'" onmouseout="this.style.color=\'inherit\'">Impressum</a>'; } })();
 
