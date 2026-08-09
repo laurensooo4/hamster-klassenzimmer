@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Impressum · Informatik am Gymnasium Wesermünde</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐹</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Nunito:ital,wght@0,400;0,600;0,700;0,800;0,900&display=swap" rel="stylesheet">
+
+<script>
+/* ============================================================================
+   ✏️✏️✏️  HIER DIE IMPRESSUMS-DATEN BEARBEITEN  ✏️✏️✏️
+   ----------------------------------------------------------------------------
+   Einfach die Texte in Anführungszeichen ändern und die Datei speichern.
+   Leere Felder ("") werden auf der Seite automatisch AUSGEBLENDET —
+   so könnt ihr z. B. Aufsichtsbehörde oder Datenschutz später ergänzen.
+   ============================================================================ */
+const DATEN = {
+  einrichtung:  "Gymnasium Wesermünde",
+  rechtsform:   "Körperschaft des öffentlichen Rechts",
+  strasse:      "Humboldtstraße 12–14",
+  plzOrt:       "27570 Bremerhaven",
+  telefon:      "0471 483670",
+  fax:          "0471 4836749",
+  email:        "sekretariat@gywem.de",
+
+  leitung: [                                   // gesetzliche Vertretung
+    "Karin Elle (Schulleiterin)",
+    "Andreas Haensch (stellv. Schulleiter)",
+  ],
+
+  traeger:      "Landkreis Cuxhaven · Vincent-Lübeck-Straße 2 · 27474 Cuxhaven",
+
+  technik: {                                   // technischer Ansprechpartner
+    name:    "Andreas Schäfer",
+    telefon: "0471 4836718",
+    email:   "a.schaefer@gywem.de",
+  },
+
+  aufsicht:       "",   // z. B. "Niedersächsische Landesschulbehörde, …" (leer = ausgeblendet)
+  datenschutz:    "",   // z. B. "Datenschutzbeauftragte:r: Name, E-Mail"   (leer = ausgeblendet)
+  verantwortlich: "",   // Verantwortlich i. S. d. § 18 Abs. 2 MStV        (leer = ausgeblendet)
+
+  plattform: {                                 // Angaben zu dieser Web-Plattform
+    name:      "Informatik am Gymnasium Wesermünde",
+    ersteller: "Laurens Offinger & Sebastian Glücks",
+    jahr:      "2026",
+  },
+};
+/* ======================= ENDE DES BEARBEITBAREN TEILS ======================= */
+</script>
+
+<style>
+  :root{
+    --green:#58cc02; --green-d:#46a302;
+    --blue:#1cb0f6; --blue-d:#1899d6;
+    --gold:#e7a13a; --red-d:#e63a3a;
+    --ink:#3c4858; --muted:#7a8aa0; --line:#e6ebf2; --line2:#eef2f7;
+    --bg:#f7f9fc; --card:#fff;
+    --radius:18px; --shadow:0 8px 26px rgba(40,60,90,.10);
+    font-family:"Nunito",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+  }
+  :root[data-theme="dark"]{
+    --ink:#dbe4ef; --muted:#8fa1b8; --line:#2a3340; --line2:#222b36;
+    --bg:#10151c; --card:#151b24; --shadow:0 8px 26px rgba(0,0,0,.35);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:radial-gradient(1200px 500px at 50% -10%, rgba(28,176,246,.10), transparent), var(--bg);
+       color:var(--ink);font-family:inherit;font-weight:600;min-height:100vh}
+  .wrap{max-width:760px;margin:0 auto;padding:28px 18px 60px}
+  .top{display:flex;align-items:center;gap:10px;margin-bottom:22px;flex-wrap:wrap}
+  .back{display:inline-flex;align-items:center;gap:7px;background:var(--card);color:var(--ink);text-decoration:none;
+        font-weight:800;font-size:13.5px;padding:9px 16px;border-radius:12px;box-shadow:0 0 0 2px var(--line) inset;transition:.12s}
+  .back:hover{box-shadow:0 0 0 2px var(--blue) inset;color:var(--blue)}
+  .theme{margin-left:auto;border:none;background:var(--card);box-shadow:0 0 0 2px var(--line) inset;border-radius:12px;
+         padding:9px 12px;cursor:pointer;font-size:15px}
+  .hero{text-align:center;margin:6px 0 26px}
+  .hero .mascot{font-size:52px;line-height:1}
+  .hero h1{font-weight:900;letter-spacing:-.3px;font-size:26px;margin:8px 0 4px}
+  .hero p{color:var(--muted);font-weight:700;margin:0;font-size:14px}
+  .card{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);padding:20px 22px;margin-bottom:14px}
+  .card h2{display:flex;align-items:center;gap:9px;font-size:15px;font-weight:900;margin:0 0 12px;letter-spacing:-.1px}
+  .card h2 .ic{font-size:19px}
+  .row{display:flex;gap:10px;padding:6px 0;border-bottom:1px dashed var(--line2);font-size:14.5px;flex-wrap:wrap}
+  .row:last-child{border-bottom:none}
+  .row .k{min-width:130px;color:var(--muted);font-weight:800;font-size:12px;text-transform:uppercase;letter-spacing:.5px;padding-top:2px}
+  .row .v{flex:1;font-weight:700;min-width:200px}
+  .row .v a{color:var(--blue);text-decoration:none;font-weight:800}
+  .row .v a:hover{text-decoration:underline}
+  ul.plain{margin:0;padding:0;list-style:none}
+  ul.plain li{padding:2px 0}
+  .copyright{margin-top:26px;text-align:center;color:var(--muted);font-size:12.5px;font-weight:700;line-height:1.7}
+  .copyright b{color:var(--ink)}
+  .badge{display:inline-block;background:var(--line2);border-radius:999px;padding:3px 12px;font-size:11.5px;font-weight:800;color:var(--muted);margin-bottom:8px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <a class="back" href="index.html">← Zurück zur Plattform</a>
+    <button class="theme" id="themeBtn" title="Design wechseln">🌗</button>
+  </div>
+
+  <div class="hero">
+    <div class="mascot">🏫</div>
+    <div class="badge">Impressum · Angaben gemäß § 5 TMG</div>
+    <h1 id="hName"></h1>
+    <p id="hForm"></p>
+  </div>
+
+  <div class="card">
+    <h2><span class="ic">📍</span>Anschrift &amp; Kontakt</h2>
+    <div class="row"><span class="k">Anschrift</span><span class="v" id="vAnschrift"></span></div>
+    <div class="row"><span class="k">Telefon</span><span class="v" id="vTel"></span></div>
+    <div class="row" id="rFax"><span class="k">Fax</span><span class="v" id="vFax"></span></div>
+    <div class="row"><span class="k">E-Mail</span><span class="v" id="vMail"></span></div>
+  </div>
+
+  <div class="card">
+    <h2><span class="ic">👩‍🏫</span>Vertreten durch (Schulleitung)</h2>
+    <ul class="plain" id="vLeitung"></ul>
+  </div>
+
+  <div class="card">
+    <h2><span class="ic">🏛️</span>Schulträger</h2>
+    <div class="row"><span class="v" id="vTraeger" style="min-width:0"></span></div>
+  </div>
+
+  <div class="card" id="cTechnik">
+    <h2><span class="ic">🛠️</span>Technischer Ansprechpartner</h2>
+    <div class="row"><span class="k">Name</span><span class="v" id="vTechName"></span></div>
+    <div class="row"><span class="k">Telefon</span><span class="v" id="vTechTel"></span></div>
+    <div class="row"><span class="k">E-Mail</span><span class="v" id="vTechMail"></span></div>
+  </div>
+
+  <div class="card" id="cAufsicht" hidden>
+    <h2><span class="ic">⚖️</span>Zuständige Aufsichtsbehörde</h2>
+    <div class="row"><span class="v" id="vAufsicht" style="min-width:0"></span></div>
+  </div>
+
+  <div class="card" id="cDatenschutz" hidden>
+    <h2><span class="ic">🔒</span>Datenschutz</h2>
+    <div class="row"><span class="v" id="vDatenschutz" style="min-width:0"></span></div>
+  </div>
+
+  <div class="card" id="cVerantwortlich" hidden>
+    <h2><span class="ic">📰</span>Verantwortlich i. S. d. § 18 Abs. 2 MStV</h2>
+    <div class="row"><span class="v" id="vVerantwortlich" style="min-width:0"></span></div>
+  </div>
+
+  <div class="card">
+    <h2><span class="ic">💻</span>Über diese Web-Plattform</h2>
+    <div class="row"><span class="k">Plattform</span><span class="v" id="vPlatName"></span></div>
+    <div class="row"><span class="k">Konzept &amp; Umsetzung</span><span class="v" id="vPlatBy"></span></div>
+  </div>
+
+  <p class="copyright" id="copyLine"></p>
+</div>
+
+<script>
+/* Design hell/dunkel — nutzt dieselbe Einstellung wie die Plattform */
+(function(){
+  function pref(){ try{ return localStorage.getItem("themePref")||"auto"; }catch(e){ return "auto"; } }
+  function dark(p){ return p==="dark" || (p==="auto" && window.matchMedia && window.matchMedia("(prefers-color-scheme:dark)").matches); }
+  function apply(){ document.documentElement.setAttribute("data-theme", dark(pref())?"dark":"light"); }
+  apply();
+  document.getElementById("themeBtn").onclick = function(){
+    var order=["auto","light","dark"], next=order[(order.indexOf(pref())+1)%order.length];
+    try{ localStorage.setItem("themePref", next); }catch(e){}
+    apply();
+  };
+})();
+
+/* Daten (aus dem DATEN-Block oben) sicher in die Seite schreiben */
+(function(){
+  var D = DATEN;
+  function set(id, text){ var el=document.getElementById(id); if(el) el.textContent = text; }
+  function setLink(id, href, text){ var el=document.getElementById(id); if(!el) return;
+    var a=document.createElement("a"); a.href=href; a.textContent=text; el.appendChild(a); }
+  set("hName", D.einrichtung);
+  set("hForm", D.rechtsform);
+  set("vAnschrift", D.einrichtung + " · " + D.strasse + " · " + D.plzOrt);
+  setLink("vTel", "tel:" + D.telefon.replace(/\s+/g,""), D.telefon);
+  if(D.fax){ set("vFax", D.fax); } else { document.getElementById("rFax").hidden = true; }
+  setLink("vMail", "mailto:" + D.email, D.email);
+  var ul=document.getElementById("vLeitung");
+  D.leitung.forEach(function(p){ var li=document.createElement("li"); li.textContent="• "+p; ul.appendChild(li); });
+  set("vTraeger", D.traeger);
+  if(D.technik && D.technik.name){
+    set("vTechName", D.technik.name);
+    setLink("vTechTel", "tel:" + D.technik.telefon.replace(/\s+/g,""), D.technik.telefon);
+    setLink("vTechMail", "mailto:" + D.technik.email, D.technik.email);
+  } else { document.getElementById("cTechnik").hidden = true; }
+  [["aufsicht","cAufsicht","vAufsicht"],["datenschutz","cDatenschutz","vDatenschutz"],["verantwortlich","cVerantwortlich","vVerantwortlich"]]
+    .forEach(function(x){ if(D[x[0]]){ document.getElementById(x[1]).hidden=false; set(x[2], D[x[0]]); } });
+  set("vPlatName", D.plattform.name);
+  set("vPlatBy", D.plattform.ersteller);
+  var c=document.getElementById("copyLine");
+  c.innerHTML = "Diese Web-Plattform und diese Seite wurden erstellt von <b>" + D.plattform.ersteller + "</b>.<br>" +
+    "© " + D.plattform.jahr + " " + D.plattform.ersteller + " — Inhalte, Design und Programmcode der Plattform unterliegen dem Urheberrecht der Ersteller. Alle Rechte vorbehalten.";
+})();
+</script>
+</body>
+</html>

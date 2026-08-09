@@ -3967,7 +3967,7 @@ async function javaSandboxProject(projectId){
 const PATCH_NOTES = [
   { v:"2.33", date:"9. August 2026", title:"🤝 Namenszug & Impressum im Footer", items:[
     `Die Plattform ist jetzt offiziell ein Gemeinschaftsprojekt: Der Footer nennt <b>Laurens Offinger &amp; Sebastian Glücks</b>.`,
-    `Der Footer verlinkt jetzt dezent auf das <b>Impressum</b> der Schule (gywem.de).`,
+    `Neue, eigene <b>Impressum-Seite im Plattform-Design</b> (hell &amp; dunkel) mit allen Angaben der Schule – dezent im Footer verlinkt.`,
   ]},
   { v:"2.32", date:"9. August 2026", title:"☕ NEU: Java – die vierte Werkstatt (echte Programmier-IDE)", items:[
     `<b>Java ist da!</b> In der Tool-Auswahl gibt es jetzt <b>☕ Java</b> – eine richtige Programmier-IDE im Browser (angelehnt an Codeboard): <b>mehrere Dateien</b>, Editor mit Zeilennummern &amp; Undo, <b>Konsole mit Eingaben</b> (Scanner), ▶ Ausführen/⏹ Stopp.`,
@@ -4238,6 +4238,6 @@ function patchNotesDialog(){
 /* ---------- Footer: Versionsnummer (aus den Patch-Notes) + Copyright ---------- */
 const APP_BUILD = "2026-08-09 23:15";   // letztes Update (im Patch-Notes-Dialog angezeigt)
 (function(){ const f=document.getElementById("appfoot"); if(f){ const v=(typeof PATCH_NOTES!=="undefined"&&PATCH_NOTES[0])?PATCH_NOTES[0].v:"";
-  f.innerHTML='© 2026 Laurens Offinger &amp; Sebastian Glücks · Version '+v+' · <a href="https://gywem.de/iserv/app/legal" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:3px" onmouseover="this.style.color=\'var(--blue)\'" onmouseout="this.style.color=\'inherit\'">Impressum</a>'; } })();
+  f.innerHTML='© 2026 Laurens Offinger &amp; Sebastian Glücks · Version '+v+' · <a href="impressum.html" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:3px" onmouseover="this.style.color=\'var(--blue)\'" onmouseout="this.style.color=\'inherit\'">Impressum</a>'; } })();
 
 boot();
