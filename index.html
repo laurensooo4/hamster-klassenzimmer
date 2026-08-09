@@ -77,6 +77,7 @@
   .auth-credit b{color:var(--gold-d)}
   #appfoot{position:fixed;left:0;right:0;bottom:0;text-align:center;font-size:11px;color:var(--muted);font-weight:700;padding:5px 10px;background:rgba(247,249,252,.93);border-top:1px solid var(--line);z-index:30;pointer-events:none}
   #appfoot b{color:inherit;font-weight:inherit}
+  #appfoot a{pointer-events:auto}   /* der Footer selbst ist klick-durchlässig – Links (Impressum) aber klickbar */
 
   /* ---------- Patch-Notes (Fab unten links + Verlauf) ---------- */
   .patch-fab{position:fixed;left:16px;bottom:30px;z-index:40;background:#fff;color:var(--muted);border:none;border-radius:999px;
@@ -262,6 +263,6 @@
   <script src="filiusview.js?v=h3"></script>
   <script src="javaengine.js?v=j1"></script>
   <script src="javaview.js?v=j1"></script>
-  <script src="app.js?v=h38"></script>
+  <script src="app.js?v=h39"></script>
 </body>
 </html>
