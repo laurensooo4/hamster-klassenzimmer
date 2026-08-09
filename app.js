@@ -3965,6 +3965,9 @@ async function javaSandboxProject(projectId){
 }
 
 const PATCH_NOTES = [
+  { v:"2.33", date:"9. August 2026", title:"🤝 Namenszug im Footer", items:[
+    `Die Plattform ist jetzt offiziell ein Gemeinschaftsprojekt: Der Footer nennt <b>Laurens Offinger &amp; Sebastian Glücks</b>.`,
+  ]},
   { v:"2.32", date:"9. August 2026", title:"☕ NEU: Java – die vierte Werkstatt (echte Programmier-IDE)", items:[
     `<b>Java ist da!</b> In der Tool-Auswahl gibt es jetzt <b>☕ Java</b> – eine richtige Programmier-IDE im Browser (angelehnt an Codeboard): <b>mehrere Dateien</b>, Editor mit Zeilennummern &amp; Undo, <b>Konsole mit Eingaben</b> (Scanner), ▶ Ausführen/⏹ Stopp.`,
     `<b>Volles Schul-Java:</b> Klassen &amp; Objekte, <b>Vererbung</b> (extends/super/Überschreiben), abstrakte Klassen, Polymorphie, static, private/protected, Arrays (auch 2D), ArrayList, String-/Math-Methoden, switch, for-each – mit deutschen Fehlermeldungen samt Datei + Zeile.`,
@@ -4232,7 +4235,7 @@ function patchNotesDialog(){
 }
 
 /* ---------- Footer: Versionsnummer (aus den Patch-Notes) + Copyright ---------- */
-const APP_BUILD = "2026-08-09 22:30";   // letztes Update (im Patch-Notes-Dialog angezeigt)
-(function(){ const f=document.getElementById("appfoot"); if(f){ const v=(typeof PATCH_NOTES!=="undefined"&&PATCH_NOTES[0])?PATCH_NOTES[0].v:""; f.textContent='© 2026 Laurens Offinger · Version '+v; } })();
+const APP_BUILD = "2026-08-09 23:15";   // letztes Update (im Patch-Notes-Dialog angezeigt)
+(function(){ const f=document.getElementById("appfoot"); if(f){ const v=(typeof PATCH_NOTES!=="undefined"&&PATCH_NOTES[0])?PATCH_NOTES[0].v:""; f.textContent='© 2026 Laurens Offinger & Sebastian Glücks · Version '+v; } })();
 
 boot();
