@@ -32,7 +32,8 @@ function openMatrixModal(title, paint){
   document.body.appendChild(ov);
   const appEl=document.getElementById("app"); if(appEl) appEl.inert=true;   // Seite dahinter aus der Tab-Reihenfolge nehmen (keine unsichtbaren Dialoge)
   const host=ov.querySelector("#mmHost"); let done=false;
-  const close=()=>{ if(done) return; done=true; try{ ov.remove(); }catch(e){} document.removeEventListener("keydown", onKey); if(appEl) appEl.inert=false; if(prevFocus&&prevFocus.focus){ try{ prevFocus.focus(); }catch(e){} } };
+  const close=()=>{ if(done) return; done=true; openMatrixModal._close=null; try{ ov.remove(); }catch(e){} document.removeEventListener("keydown", onKey); if(appEl) appEl.inert=false; if(prevFocus&&prevFocus.focus){ try{ prevFocus.focus(); }catch(e){} } };
+  openMatrixModal._close = close;                       // für zentrales Schließen (z. B. Browser-Zurück)
   function onKey(e){ if(e.key==="Escape"){ e.stopPropagation(); close(); } }
   const repaint=(q)=> paint(host, q, close);
   repaint("");
@@ -89,6 +90,7 @@ async function loadMe(uid){
 }
 let viewFromAdmin=false;   // merkt sich, ob eine Klasse aus der Admin-Ansicht geöffnet wurde
 function route(){
+  if(typeof setChrome === "function") setChrome();
   if(!ME){ renderAuth(); return; }
   if(!ACTIVE_TOOL){ toolLauncher(); return; }
   if(ACTIVE_TOOL==="sql"){ if(ME.role==="teacher") sqlTeacherHome(); else sqlStudentHome(); return; }
@@ -97,7 +99,11 @@ function route(){
   if(ME.role==="teacher") teacherHome();
   else studentHome();
 }
-async function signOut(){ await sb.auth.signOut(); ME=null; ACTIVE_TOOL=null; renderAuth(); }
+async function signOut(){
+  if(typeof pageLeave === "function"){ try{ await pageLeave(); }catch(e){} pageLeave = null; }   // Entwurf noch MIT Session sichern
+  if(typeof navReset === "function") navReset();                                                 // Browser-History gehört zum Nutzer
+  await sb.auth.signOut(); ME=null; ACTIVE_TOOL=null; renderAuth(); if(typeof setChrome==="function") setChrome();
+}
 
 /* ---------- Tool-Auswahl (Launcher) ---------- */
 const TOOLS = [
@@ -184,6 +190,7 @@ async function doLogin(){
     await loadMe(data.user.id);
   }
   ACTIVE_TOOL=null;   // neue Anmeldung -> immer Tool-Auswahl zeigen (geteiltes Gerät)
+  if(typeof navReset === "function") navReset();   // Browser-Historie des vorherigen Nutzers verwerfen
   route();
 }
 async function doRegister(){
@@ -225,6 +232,7 @@ async function doRegister(){
     if(code){ const { data:jc, error:e3 } = await sb.rpc("join_class", { p_code: code }); if(e3){ setBusy(false); authMsg("Beitritt fehlgeschlagen: "+e3.message); return; } const j=Array.isArray(jc)?jc[0]:jc; if(j&&j.tool) ACTIVE_TOOL=j.tool; }
   }
   await loadMe(uid);
+  if(typeof navReset === "function") navReset();
   toast(className?("Willkommen in "+className+", "+first+"! 🎉"):("Willkommen, "+first+"! 🎉"),"ok");
   route();
 }
@@ -233,7 +241,9 @@ function setBusy(b){ const btn=document.getElementById("auSubmit"); if(btn){ btn
 /* ============================================================================
    APP-SHELL (Topbar)
    ============================================================================ */
+let pageLeave = null;   // Seiten registrieren hier einen Hook, der VOR jedem Seitenwechsel feuert (z. B. Entwurf sichern)
 function shell(inner){
+  if(typeof pageLeave === "function"){ try{ pageLeave(); }catch(e){} pageLeave = null; }
   if(typeof pageView!=="undefined" && pageView){ try{ pageView.destroy(); }catch(e){} pageView=null; }
   const roleBadge = ME.is_admin ? `<span class="badge" style="background:#ffe0b2;color:#b35900">Admin</span>` : ME.role==="teacher" ? `<span class="badge blue">Lehrkraft</span>` : `<span class="badge">Schüler:in</span>`;
   app().innerHTML = `
@@ -3320,11 +3330,25 @@ api.javaDeleteAssignment = async (id)=>{ const {error}=await sb.from("java_assig
 api.javaGetSolution = async (aid)=>{ const {data,error}=await sb.from("java_assignment_solutions").select("*").eq("assignment_id",aid).maybeSingle(); if(error) throw error; return data; };
 api.javaSaveSolution = async (aid, data)=>{ const {error}=await sb.from("java_assignment_solutions").upsert({assignment_id:aid, author_id:ME.id, data, updated_at:new Date().toISOString()},{onConflict:"assignment_id"}); if(error) throw error; };
 api.javaSolutionForStudent = async (aid)=>{ const {data,error}=await sb.rpc("java_solution_for_student",{p_assignment:aid}); if(error) throw error; return data; };
-api.javaGetMySubmission = async (aid)=>{ const {data,error}=await sb.from("java_submissions").select("*").eq("assignment_id",aid).eq("student_id",ME.id).maybeSingle(); if(error) throw error; return data; };
-api.javaMySubmissions = async (aids)=>{ if(!aids.length) return []; const {data,error}=await sb.from("java_submissions").select("*").in("assignment_id",aids).eq("student_id",ME.id); if(error) throw error; return data||[]; };
-api.javaSaveSubmission = async (aid, files, results, passed)=>{ const {error}=await sb.from("java_submissions").upsert({assignment_id:aid, student_id:ME.id, files, results, passed, updated_at:new Date().toISOString()},{onConflict:"assignment_id,student_id"}); if(error) throw error; };
-api.javaClassSubmissions = async (aids)=>{ if(!aids.length) return []; const {data,error}=await sb.from("java_submissions").select("id,assignment_id,student_id,files,results,passed,updated_at").in("assignment_id",aids); if(error) throw error; return data||[]; };
-api.javaGetSubmission = async (aid, sid)=>{ const {data,error}=await sb.from("java_submissions").select("*").eq("assignment_id",aid).eq("student_id",sid).maybeSingle(); if(error) throw error; return data; };
+/* Abgaben: MEHRERE je Aufgabe+Schüler:in (Historie); genau eine ist "aktuell" (is_current) */
+api.javaGetMySubmission = async (aid)=>{ const {data,error}=await sb.from("java_submissions").select("*").eq("assignment_id",aid).eq("student_id",ME.id).eq("is_current",true).maybeSingle(); if(error) throw error; return data; };
+api.javaMySubmissionHistory = async (aid)=>{ const {data,error}=await sb.from("java_submissions").select("*").eq("assignment_id",aid).eq("student_id",ME.id).order("updated_at",{ascending:false}); if(error) throw error; return data||[]; };
+api.javaMySubmissions = async (aids)=>{ if(!aids.length) return []; const {data,error}=await sb.from("java_submissions").select("*").in("assignment_id",aids).eq("student_id",ME.id).eq("is_current",true); if(error) throw error; return data||[]; };
+api.javaSaveSubmission = async (aid, files, results, passed)=>{ const {data,error}=await sb.from("java_submissions").insert({assignment_id:aid, student_id:ME.id, files, results, passed, is_current:true, updated_at:new Date().toISOString()}).select().single(); if(error) throw error; return data; };
+api.javaSetCurrentSubmission = async (id)=>{ const {error}=await sb.from("java_submissions").update({is_current:true}).eq("id",id); if(error) throw error; };
+api.javaClassSubmissions = async (aids)=>{ if(!aids.length) return []; const {data,error}=await sb.from("java_submissions").select("id,assignment_id,student_id,files,results,passed,is_current,updated_at").in("assignment_id",aids).eq("is_current",true); if(error) throw error; return data||[]; };
+api.javaSubmissionHistoryOf = async (aid, sid)=>{ const {data,error}=await sb.from("java_submissions").select("*").eq("assignment_id",aid).eq("student_id",sid).order("updated_at",{ascending:false}); if(error) throw error; return data||[]; };
+api.javaGetSubmission = async (aid, sid)=>{ const {data,error}=await sb.from("java_submissions").select("*").eq("assignment_id",aid).eq("student_id",sid).eq("is_current",true).maybeSingle(); if(error) throw error; return data; };
+/* Entwürfe (Bearbeitungsstand) */
+api.javaGetDraft = async (aid)=>{ const {data,error}=await sb.from("java_drafts").select("*").eq("assignment_id",aid).eq("student_id",ME.id).maybeSingle(); if(error) throw error; return data; };
+api.javaSaveDraft = async (aid, files)=>{ const {error}=await sb.from("java_drafts").upsert({assignment_id:aid, student_id:ME.id, files, updated_at:new Date().toISOString()},{onConflict:"assignment_id,student_id"}); if(error) throw error; };
+api.javaDeleteDraft = async (aid)=>{ const {error}=await sb.from("java_drafts").delete().eq("assignment_id",aid).eq("student_id",ME.id); if(error) throw error; };
+/* Musterlösungen (mehrere je Aufgabe, freigebbar) */
+api.javaListSamples = async (aid)=>{ const {data,error}=await sb.from("java_sample_solutions").select("*").eq("assignment_id",aid).order("created_at"); if(error) throw error; return data||[]; };
+api.javaReleasedSamples = async (aid)=>{ const {data,error}=await sb.from("java_sample_solutions").select("*").eq("assignment_id",aid).eq("released",true).order("created_at"); if(error) throw error; return data||[]; };
+api.javaCreateSample = async (s)=>{ const {data,error}=await sb.from("java_sample_solutions").insert(Object.assign({author_id:ME.id},s)).select().single(); if(error) throw error; return data; };
+api.javaUpdateSample = async (id, patch)=>{ const {data,error}=await sb.from("java_sample_solutions").update(patch).eq("id",id).select().single(); if(error) throw error; return data; };
+api.javaDeleteSample = async (id)=>{ const {error}=await sb.from("java_sample_solutions").delete().eq("id",id); if(error) throw error; };
 api.javaGetComment = async (subId)=>{ if(!subId) return null; const {data,error}=await sb.from("java_submission_comments").select("*").eq("submission_id",subId).maybeSingle(); if(error) throw error; return data; };
 api.javaSaveComment = async (subId, body, released)=>{ const {data,error}=await sb.from("java_submission_comments").upsert({submission_id:subId, author_id:ME.id, body, released, updated_at:new Date().toISOString()},{onConflict:"submission_id"}).select().single(); if(error) throw error; return data; };
 api.javaDeleteComment = async (subId)=>{ const {error}=await sb.from("java_submission_comments").delete().eq("submission_id",subId); if(error) throw error; };
@@ -3436,6 +3460,7 @@ async function javaTeacherClassView(classId){
           <button class="abtn" data-down="${a.id}" title="nach unten">↓</button>
           <button class="abtn" data-pub="${a.id}" data-on="${a.published?1:0}" title="${a.published?'verbergen (Entwurf)':'veröffentlichen'}">${a.published?'👁️':'🚀'}</button>
           <button class="abtn" data-rel="${a.id}" data-relon="${a.released?1:0}" title="${a.released?'Musterlösung wieder verbergen':'Musterlösung für Schüler:innen freigeben'}">${a.released?'🏆':'🔒'}</button>
+          <button class="abtn" data-sample="${a.id}" title="Musterlösungen verwalten">★</button>
           <button class="abtn" data-edit="${a.id}" title="bearbeiten">✏️</button>
           <button class="abtn" data-del="${a.id}" title="löschen">🗑️</button>
         </span></div>`).join("")}</div>`
@@ -3475,6 +3500,7 @@ async function javaTeacherClassView(classId){
   document.getElementById("btnNewJvAssign").onclick = ()=> javaAssignmentEditorPage(classId, null);
   document.getElementById("btnJvFromTpl").onclick = ()=> javaPickTemplate(classId);
   document.querySelectorAll("[data-edit]").forEach(b=> b.onclick=()=> javaAssignmentEditorPage(classId, {id:b.dataset.edit}));
+  document.querySelectorAll("[data-sample]").forEach(b=> b.onclick=()=>{ const a=asgs.find(x=>x.id===b.dataset.sample); javaSampleManager(a, classId); });
   document.querySelectorAll("[data-up]").forEach(b=> b.onclick=async()=>{ await moveJavaAssignment(asgs, b.dataset.up, -1); javaTeacherClassView(classId); });
   document.querySelectorAll("[data-down]").forEach(b=> b.onclick=async()=>{ await moveJavaAssignment(asgs, b.dataset.down, 1); javaTeacherClassView(classId); });
   document.querySelectorAll("[data-pub]").forEach(b=> b.onclick=async()=>{ try{ await api.javaUpdateAssignment(b.dataset.pub,{published:b.dataset.on!=="1"}); javaTeacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } });
@@ -3551,17 +3577,23 @@ async function javaStudentClassView(classId){
 }
 
 /* ---------- Schüler:in: Aufgabe lösen (IDE) ---------- */
-let javaSolveState=null;
+let javaSolveState=null, javaDraftTimer=null;
 async function javaSolveAssignment(aid, classId){
+  clearInterval(javaDraftTimer);
   shell(`<div class="center-load"><span class="spin"></span>Aufgabe wird geladen…</div>`);
-  let a, sub=null;
-  try{ a = await api.javaGetAssignment(aid); sub = await api.javaGetMySubmission(aid); }
+  let a, history=[], draft=null;
+  try{ a = await api.javaGetAssignment(aid); history = await api.javaMySubmissionHistory(aid); draft = await api.javaGetDraft(aid); }
   catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
+  let sub = history.find(s=>s.is_current) || history[0] || null;
   const c = javaChecksOf(a);
-  let com=null; try{ if(sub) com = await api.javaGetComment(sub.id); }catch(e){}
+  /* Rückmeldung über die GESAMTE Historie suchen (bevorzugt an der aktuellen Abgabe) —
+     sonst verschwindet sie, wenn der/die Schüler:in per ⭐ eine andere Abgabe aktuell macht */
+  let com=null; try{ if(history.length){ const coms = await api.javaClassComments(history.map(s=>s.id)); com = coms.find(x=>x.released && sub && x.submission_id===sub.id) || coms.find(x=>x.released) || null; } }catch(e){}
   const startFiles = (a.files_snapshot&&a.files_snapshot.length) ? a.files_snapshot : JAVA_DEFAULT_FILES();
-  const files = (sub && sub.files && sub.files.length) ? sub.files : JSON.parse(JSON.stringify(startFiles));
-  javaSolveState = { aid, classId, a, sub };
+  /* Entwurf wiederherstellen, wenn er neuer als die aktuelle Abgabe ist */
+  const draftNewer = draft && draft.files && draft.files.length && (!sub || new Date(draft.updated_at) > new Date(sub.updated_at));
+  const files = draftNewer ? draft.files : ((sub && sub.files && sub.files.length) ? sub.files : JSON.parse(JSON.stringify(startFiles)));
+  javaSolveState = { aid, classId, a, sub, dirty:false };
   const testsHtml = (c.mode==="tests" && c.tests.length) ? `
     <div class="card" style="margin-bottom:10px;padding:12px 16px">
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><b>🧪 Testfälle</b><div class="spacer"></div>
@@ -3575,12 +3607,53 @@ async function javaSolveAssignment(aid, classId){
       <button class="btn btn-ghost btn-sm" id="btnJvReset" style="margin-left:8px" title="Zurück zu den Start-Dateien der Aufgabe">↺ Zurücksetzen</button>
       <button class="btn btn-primary btn-sm" id="btnJvSubmit" style="margin-left:8px">📤 Abgeben</button></div>
     ${a.description?`<div class="card" style="margin-bottom:10px;padding:12px 16px">${esc(a.description).replace(/\n/g,"<br>")}</div>`:""}
-    ${com&&com.released?`<div class="card" style="margin-bottom:10px;padding:12px 16px;border-left:4px solid var(--gold)"><b>💬 Rückmeldung deiner Lehrkraft:</b><br>${esc(com.body).replace(/\n/g,"<br>")}</div>`:""}
+    ${com?`<div class="card" style="margin-bottom:10px;padding:12px 16px;border-left:4px solid var(--gold)"><b>💬 Rückmeldung deiner Lehrkraft:</b><br>${esc(com.body).replace(/\n/g,"<br>")}</div>`:""}
+    ${draftNewer?'<div class="card" style="margin-bottom:10px;padding:9px 16px;border-left:4px solid var(--blue)"><span class="muted" style="font-size:12.5px">🕒 Dein zuletzt gespeicherter <b>Bearbeitungsstand</b> wurde wiederhergestellt (noch nicht abgegeben).</span></div>':''}
     ${testsHtml}
-    <div id="jvHost" style="--jvMin:560px;height:70vh;min-height:560px"></div>`;
-  document.getElementById("back").onclick = ()=> javaStudentClassView(classId||a.class_id);
-  pageView = new JavaView(document.getElementById("jvHost"), { mode:"solve" });
+    <div id="jvHost" style="--jvMin:560px;height:70vh;min-height:560px"></div>
+    <div class="card" style="margin-top:14px;padding:12px 16px">
+      <b>🗂️ Meine Abgaben</b> <span class="muted" style="font-size:11.5px">(neueste zuerst — ⭐ = aktuelle Abgabe, die deine Lehrkraft sieht)</span>
+      <div class="list" id="jvHistList" style="margin-top:8px"></div></div>`;
+  pageView = new JavaView(document.getElementById("jvHost"), { mode:"solve", onChange: ()=>{ if(javaSolveState) javaSolveState.dirty=true; } });
   pageView.setData({ files });
+  const myView = pageView;                       // Identität dieser Solve-Instanz (andere Seiten nutzen auch #jvHost!)
+  const myState = javaSolveState;
+  /* ---- Entwurf: sichern beim Verlassen + alle 20 s, falls geändert ---- */
+  const saveDraft = async ()=>{
+    if(pageView !== myView || javaSolveState !== myState || !myState.dirty) return;
+    try{ await api.javaSaveDraft(aid, myView.getData().files); myState.dirty=false; }catch(e){}
+  };
+  javaDraftTimer = setInterval(()=>{ if(pageView !== myView){ clearInterval(javaDraftTimer); return; } saveDraft(); }, 20000);
+  /* zentraler Leave-Hook: feuert bei JEDEM Seitenwechsel (Browser-Zurück, 🏠, Admin, Abmelden …) VOR dem Teardown */
+  pageLeave = ()=>{ clearInterval(javaDraftTimer); return saveDraft(); };
+  document.getElementById("back").onclick = async()=>{ clearInterval(javaDraftTimer); await saveDraft(); javaStudentClassView(classId||a.class_id); };
+  /* ---- Abgabe-Historie (unterhalb der Konsole) ---- */
+  const renderHistory = ()=>{
+    const host=document.getElementById("jvHistList"); if(!host) return;
+    if(!history.length){ host.innerHTML='<div class="muted" style="font-size:13px">Noch keine Abgabe. Klicke oben auf 📤 Abgeben.</div>'; return; }
+    host.innerHTML = history.map(s=>{
+      const badge = (c.mode==="tests"&&c.tests.length) ? (s.passed===true?'<span class="badge">Tests ✓</span>':'<span class="badge gold">abgegeben</span>') : '<span class="badge gold">abgegeben</span>';
+      return `<div class="row"><span class="grow"><span class="t" style="font-size:13.5px">${s.is_current?"⭐ ":""}${esc(fmtDateTime(s.updated_at))}</span></span>${badge}
+        <span class="acts"><button class="abtn" data-load="${s.id}" title="Diese Abgabe in den Editor laden">📂</button>${s.is_current?"":`<button class="abtn" data-cur="${s.id}" title="Zur aktuellen Abgabe machen (das sieht die Lehrkraft)">⭐</button>`}</span></div>`;
+    }).join("");
+    host.querySelectorAll("[data-load]").forEach(b=> b.onclick=()=>{
+      const s=history.find(x=>x.id===b.dataset.load); if(!s) return;
+      if(javaSolveState.dirty && !confirm("Deinen aktuellen (ungespeicherten) Stand mit dieser Abgabe überschreiben?")) return;
+      pageView.setData({ files: JSON.parse(JSON.stringify(s.files||[])) });
+      javaSolveState.dirty=true;
+      toast("Abgabe vom "+fmtDateTime(s.updated_at)+" geladen 📂","ok");
+    });
+    host.querySelectorAll("[data-cur]").forEach(b=> b.onclick=async()=>{
+      try{ await api.javaSetCurrentSubmission(b.dataset.cur);
+        history = await api.javaMySubmissionHistory(aid);
+        sub = history.find(x=>x.is_current)||null;
+        javaSolveState.sub = sub;
+        document.getElementById("jvStatus").innerHTML = sub?(sub.passed===true?'<span class="badge">Tests bestanden ✓</span>':'<span class="badge gold">abgegeben</span>'):'<span class="badge gray">offen</span>';
+        renderHistory(); toast("Als aktuelle Abgabe gesetzt ⭐","ok");
+      }catch(e){ toast(e.message||"Fehler","err"); }
+    });
+  };
+  renderHistory();
   const renderTests=(results)=>{
     const host=document.getElementById("jvTestList"); if(!host) return;
     host.innerHTML = c.tests.map(t=>{
@@ -3597,14 +3670,25 @@ async function javaSolveAssignment(aid, classId){
       catch(e){ toast(e.message||"Fehler","err"); }
       bc.disabled=false; bc.textContent="Tests prüfen"; }; }
   { const bs=document.getElementById("btnJvSol"); if(bs) bs.onclick=async()=>{
-      try{ const solFiles = await api.javaSolutionForStudent(aid);
-        if(!solFiles || !solFiles.length){ toast("Noch keine Musterlösung hinterlegt.","err"); return; }
+      try{
+        /* Quellen sammeln: Aufgaben-Musterlösung (RPC) + freigegebene Musterlösungen (mehrere möglich) */
+        const sources=[];
+        try{ const solFiles = await api.javaSolutionForStudent(aid); if(solFiles && solFiles.length) sources.push({ label:"Musterlösung der Aufgabe", files: solFiles }); }catch(e){}
+        try{ (await api.javaReleasedSamples(aid)).forEach((s,i)=> sources.push({ label: s.title || ("Musterlösung " + (i+1)), files: s.files||[] })); }catch(e){}
+        if(!sources.length){ toast("Noch keine Musterlösung freigegeben.","err"); return; }
         /* Als Modal – der eigene Arbeitsstand im Editor bleibt unangetastet */
-        openModal(`<button class="x" onclick="closeModal()">✕</button><h3 style="margin:0 0 10px">🏆 Musterlösung – ${esc(a.title)}</h3><div id="jvSolHost" style="--jvMin:440px;height:60vh;min-height:440px"></div>`, true);
+        openModal(`<button class="x" onclick="closeModal()">✕</button><h3 style="margin:0 0 10px">🏆 Musterlösung – ${esc(a.title)}</h3>
+          ${sources.length>1?`<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">${sources.map((s,i)=>`<button class="abtn${i===0?" on":""}" data-jvsol="${i}">${esc(s.label)}</button>`).join("")}</div>`:""}
+          <div id="jvSolHost" style="--jvMin:440px;height:58vh;min-height:440px"></div>`, true);
         modalView = new JavaView(document.getElementById("jvSolHost"), { mode:"view" });
-        modalView.setData({ files: solFiles }); }
+        modalView.setData({ files: sources[0].files });
+        document.querySelectorAll("[data-jvsol]").forEach(b=> b.onclick=()=>{
+          document.querySelectorAll("[data-jvsol]").forEach(x=>x.classList.remove("on"));
+          b.classList.add("on");
+          modalView.setData({ files: sources[+b.dataset.jvsol].files });
+        }); }
       catch(e){ toast(e.message||"Fehler","err"); } }; }
-  document.getElementById("btnJvReset").onclick = ()=>{ if(!confirm("Deinen Code verwerfen und die Start-Dateien der Aufgabe laden?")) return; pageView.setData({ files: JSON.parse(JSON.stringify(startFiles)) }); };
+  document.getElementById("btnJvReset").onclick = ()=>{ if(!confirm("Deinen Code verwerfen und die Start-Dateien der Aufgabe laden?")) return; pageView.setData({ files: JSON.parse(JSON.stringify(startFiles)) }); javaSolveState.dirty=true; };
   document.getElementById("btnJvSubmit").onclick = async()=>{
     const btn=document.getElementById("btnJvSubmit"); btn.disabled=true; btn.textContent="gibt ab…";
     try{
@@ -3612,7 +3696,12 @@ async function javaSolveAssignment(aid, classId){
       let results={}, passed=null;
       if(c.mode==="tests" && c.tests.length){ const r=await javaRunTests(myFiles, c.tests); results=r.results; passed=r.passed; renderTests(results); }
       await api.javaSaveSubmission(aid, myFiles, results, passed);
-      sub = await api.javaGetMySubmission(aid);
+      try{ await api.javaDeleteDraft(aid); }catch(e){}
+      javaSolveState.dirty=false;
+      history = await api.javaMySubmissionHistory(aid);
+      sub = history.find(x=>x.is_current)||null;
+      javaSolveState.sub = sub;
+      renderHistory();
       document.getElementById("jvStatus").innerHTML = passed===true?'<span class="badge">Tests bestanden ✓</span>':'<span class="badge gold">abgegeben</span>';
       toast(passed===true?"Abgegeben – alle sichtbaren Tests bestanden! ⭐":"Abgabe gespeichert 📤","ok");
     }catch(e){ toast(e.message||"Fehler","err"); }
@@ -3623,21 +3712,33 @@ async function javaSolveAssignment(aid, classId){
 /* ---------- Lehrkraft: Abgabe einsehen (mit authoritativer Auswertung) ---------- */
 async function javaReviewSubmission(aid, sid, studentName, classId){
   shell(`<div class="center-load"><span class="spin"></span>Abgabe wird geladen…</div>`);
-  let a, sub, solRow=null;
-  try{ a = await api.javaGetAssignment(aid); sub = await api.javaGetSubmission(aid, sid); solRow = await api.javaGetSolution(aid); }
+  let a, history=[], solRow=null;
+  try{ a = await api.javaGetAssignment(aid); history = await api.javaSubmissionHistoryOf(aid, sid); solRow = await api.javaGetSolution(aid); }
   catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
+  let sub = history.find(s=>s.is_current) || history[0];
   if(!sub){ document.getElementById("view").innerHTML=errBox({message:"Keine Abgabe vorhanden."}); return; }
   const c = javaChecksOf(a);
   const sol = (solRow&&solRow.data)||{};
   const hiddenTests = Array.isArray(sol.hidden_tests)?sol.hidden_tests:[];
-  let com=null; try{ com = await api.javaGetComment(sub.id); }catch(e){}
+  const curSub = sub;
+  /* Rückmeldung historie-weit suchen: bevorzugt an der aktuellen Abgabe, sonst die vorhandene
+     (verhindert "leeres Feld + wirkungsloses Löschen", wenn der Schüler per ⭐ umgeschaltet hat) */
+  let com=null, comSubId=curSub.id;
+  try{
+    const coms = await api.javaClassComments(history.map(s=>s.id));
+    com = coms.find(x=>x.submission_id===curSub.id) || coms[0] || null;
+    if(com) comSubId = com.submission_id;
+  }catch(e){}
   const hasChecks = (c.mode==="tests" && (c.tests.length||hiddenTests.length)) || (c.mode==="solution" && sol.files && sol.files.length);
   document.getElementById("view").innerHTML = `
     <div class="page-head"><button class="crumb" id="back">← zurück zur Klasse</button></div>
     <div class="page-head" style="margin-top:0"><h2>Abgabe von ${esc(studentName)}</h2><div class="spacer"></div>
-      <span class="muted" style="font-size:12.5px">${esc(fmtDateTime(sub.updated_at))}</span></div>
+      <span class="muted" id="jvRevDate" style="font-size:12.5px">${esc(fmtDateTime(sub.updated_at))}</span>
+      <button class="btn btn-ghost btn-sm" id="btnJvOrig" style="margin-left:8px" title="Ausgewählte Abgabe unverändert in den Editor laden">↺ Original</button>
+      <button class="btn btn-blue btn-sm" id="btnJvAsSample" style="margin-left:8px" title="Aktuellen Editor-Stand als Musterlösung speichern">★ Als Musterlösung</button></div>
     <div class="card" style="margin-bottom:10px;padding:12px 16px"><b>Aufgabe:</b> ${esc(a.title)}${a.description?` – ${esc(a.description.slice(0,140))}`:""}
-      <span class="muted" style="font-size:12px;display:block;margin-top:3px">🛠️ Du kannst den Code hier ausführen (▶) – Änderungen werden nicht gespeichert.</span></div>
+      <span class="muted" style="font-size:12px;display:block;margin-top:3px">🛠️ Live-Korrektur: Du kannst den Code bearbeiten &amp; laufen lassen (▶) – Änderungen werden nicht automatisch gespeichert.</span></div>
+    ${history.length>1?`<div class="card" style="margin-bottom:10px;padding:10px 14px"><b style="font-size:13px">Versionen (neueste zuerst):</b> <span id="jvVerNav">${history.map((s,i)=>`<button class="abtn${s.id===sub.id?" on":""}" data-ver="${i}" title="${esc(fmtDateTime(s.updated_at))}">${s.is_current?"⭐ ":""}V${history.length-i}</button>`).join(" ")}</span></div>`:""}
     ${hasChecks?`<div class="card" style="margin-bottom:10px;padding:12px 16px"><div style="display:flex;align-items:center;gap:8px"><b>🧪 Auto-Check (authoritativ neu ausgeführt)</b><div class="spacer"></div><span id="jvRevSpin"><span class="spin" style="width:14px;height:14px"></span></span></div><div id="jvRevChecks" style="margin-top:8px"><span class="muted" style="font-size:13px">Tests laufen…</span></div></div>`:""}
     <div id="jvHost" style="--jvMin:520px;height:62vh;min-height:520px"></div>
     <div class="card" style="margin-top:14px;padding:14px 16px">
@@ -3645,24 +3746,46 @@ async function javaReviewSubmission(aid, sid, studentName, classId){
       <textarea class="input" id="jvComBody" style="margin-top:8px;min-height:80px">${esc(com?com.body:"")}</textarea>
       <div style="display:flex;align-items:center;gap:10px;margin-top:8px;flex-wrap:wrap">
         <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:700"><input type="checkbox" id="jvComRel" ${com&&com.released?"checked":""}> Für Schüler:in sichtbar</label>
+        ${comSubId!==curSub.id?'<span class="muted" style="font-size:11.5px">Hinweis: Diese Rückmeldung hängt an einer älteren Abgabe-Version.</span>':''}
         <div class="spacer"></div>
         <button class="btn btn-ghost btn-sm" id="jvComDel" style="color:var(--red-d)">löschen</button>
         <button class="btn btn-primary btn-sm" id="jvComSave">💾 Speichern</button>
       </div></div>`;
   document.getElementById("back").onclick = ()=> javaTeacherClassView(classId);
-  pageView = new JavaView(document.getElementById("jvHost"), { mode:"view" });
-  pageView.setData({ files: sub.files||[] });
+  pageView = new JavaView(document.getElementById("jvHost"), { mode:"free" });   // editierbar: Live-Korrektur
+  pageView.setData({ files: JSON.parse(JSON.stringify(sub.files||[])) });
+  document.getElementById("btnJvOrig").onclick = ()=>{ pageView.setData({ files: JSON.parse(JSON.stringify(sub.files||[])) }); toast("Original wiederhergestellt ↺","ok"); };
+  document.getElementById("btnJvAsSample").onclick = async()=>{
+    const title = prompt("Name der Musterlösung:", "Lösung von " + studentName);
+    if(title === null) return;
+    try{ await api.javaCreateSample({ assignment_id: aid, title: title.trim() || null, files: pageView.getData().files, released:false });
+      toast("Als Musterlösung gespeichert ★ (Freigabe über den ★-Manager der Aufgabe)","ok"); }
+    catch(e){ toast(e.message||"Fehler","err"); }
+  };
+  /* Versions-Umschalter */
+  let revToken = 0;
+  document.querySelectorAll("[data-ver]").forEach(b=> b.onclick=()=>{
+    sub = history[+b.dataset.ver];
+    document.querySelectorAll("[data-ver]").forEach(x=>x.classList.toggle("on", x===b));
+    document.getElementById("jvRevDate").textContent = fmtDateTime(sub.updated_at);
+    pageView.setData({ files: JSON.parse(JSON.stringify(sub.files||[])) });
+    if(hasChecks) runChecks(sub);
+  });
   document.getElementById("jvComSave").onclick = async()=>{
     const body=document.getElementById("jvComBody").value.trim();
     if(!body){ toast("Bitte erst eine Rückmeldung schreiben.","err"); return; }
-    try{ await api.javaSaveComment(sub.id, body, document.getElementById("jvComRel").checked); toast("Rückmeldung gespeichert ✓","ok"); }
+    try{ await api.javaSaveComment(comSubId, body, document.getElementById("jvComRel").checked); toast("Rückmeldung gespeichert ✓","ok"); }
     catch(e){ toast(e.message||"Fehler","err"); }
   };
-  { const bd=document.getElementById("jvComDel"); if(bd) bd.onclick=async()=>{ if(!confirm("Rückmeldung löschen?")) return; try{ await api.javaDeleteComment(sub.id); toast("Gelöscht","ok"); javaReviewSubmission(aid,sid,studentName,classId); }catch(e){ toast(e.message||"Fehler","err"); } }; }
+  { const bd=document.getElementById("jvComDel"); if(bd) bd.onclick=async()=>{ if(!confirm("Rückmeldung löschen?")) return; try{ await api.javaDeleteComment(comSubId); toast("Gelöscht","ok"); javaReviewSubmission(aid,sid,studentName,classId); }catch(e){ toast(e.message||"Fehler","err"); } }; }
   /* authoritative Auswertung (sichtbare + versteckte Tests bzw. Musterlösungs-Vergleich) */
-  if(hasChecks)(async()=>{
+  async function runChecks(subSel){
+    const myToken = ++revToken;
     const host=document.getElementById("jvRevChecks"); const spin=document.getElementById("jvRevSpin");
+    if(spin) spin.innerHTML='<span class="spin" style="width:14px;height:14px"></span>';
+    if(host) host.innerHTML='<span class="muted" style="font-size:13px">Tests laufen…</span>';
     const rows=[];
+    const sub = subSel;
     try{
       /* Manipulationsschutz: 🔒-Vorgabedateien werden für die Auswertung IMMER aus dem
          Original-Snapshot wiederhergestellt; Abweichungen werden der Lehrkraft gemeldet. */
@@ -3696,10 +3819,41 @@ async function javaReviewSubmission(aid, sid, studentName, classId){
           rows.push(`<div class="row" style="padding:7px 10px"><span style="font-size:15px;margin-right:8px">${ok?"🟩":"🟧"}</span><span class="grow"><span class="t" style="font-size:13.5px">Lauf ${i+1}${runs[i].stdin?` · Eingabe: ${esc(String(runs[i].stdin).replace(/\n/g," ⏎ "))}`:""}</span><span class="s">Erwartet (Musterlösung): ${rs.ok?esc(javaNorm(rs.output).slice(0,100)):"⚠️ Musterlösung fehlerhaft"}</span><span class="s">Schüler:in: ${ru.ok?esc(javaNorm(ru.output).slice(0,100)):("⚠️ "+esc((ru.errorText||"Fehler").slice(0,120)))}</span></span></div>`);
         }
       }
+      if(myToken !== revToken) return;                       // Version wurde inzwischen gewechselt
       if(host) host.innerHTML = rows.join("") || '<span class="muted" style="font-size:13px">Keine Tests definiert.</span>';
-    }catch(e){ if(host) host.innerHTML = `<span class="muted" style="font-size:13px">⚠️ ${esc(e.message||"Fehler bei der Auswertung")}</span>`; }
-    if(spin) spin.innerHTML="";
-  })();
+    }catch(e){ if(myToken === revToken && host) host.innerHTML = `<span class="muted" style="font-size:13px">⚠️ ${esc(e.message||"Fehler bei der Auswertung")}</span>`; }
+    if(myToken === revToken && spin) spin.innerHTML="";
+  }
+  if(hasChecks) runChecks(sub);
+}
+
+/* ---------- Lehrkraft: Musterlösungen verwalten (mehrere je Aufgabe) ---------- */
+async function javaSampleManager(assignment, classId){
+  shell(`<div class="center-load"><span class="spin"></span>Musterlösungen…</div>`);
+  let samples=[];
+  try{ samples=await api.javaListSamples(assignment.id); }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
+  const list = samples.length ? `<div class="list">${samples.map((s,i)=>`
+      <div class="row"><span class="grow"><span class="t clickable" data-open="${s.id}" title="ansehen">${esc(s.title||("Musterlösung "+(i+1)))}</span><span class="s">${esc(fmtDateTime(s.created_at))}${s.released?" · 🏆 für Schüler:innen freigegeben":" · 🔒 privat"}</span></span>
+        <span class="acts">
+          <button class="abtn" data-open="${s.id}" title="ansehen">👁️</button>
+          <button class="abtn" data-rel="${s.id}" data-on="${s.released?1:0}" title="${s.released?'Freigabe zurücknehmen':'für Schüler:innen freigeben'}">${s.released?'🏆':'🔒'}</button>
+          <button class="abtn" data-del="${s.id}" title="löschen">🗑️</button>
+        </span></div>`).join("")}</div>`
+    : `<div class="empty"><span class="ic">★</span>Noch keine Musterlösungen. Öffne eine Schüler-Abgabe und wähle „★ Als Musterlösung" – oder nutze die 🏆-Musterlösung aus dem Aufgaben-Editor.</div>`;
+  document.getElementById("view").innerHTML = `
+    <div class="page-head"><button class="crumb" id="back">← zurück zur Klasse</button></div>
+    <div class="page-head" style="margin-top:0"><h2>★ Musterlösungen – ${esc(assignment.title)}</h2></div>
+    <div class="card" style="margin-bottom:12px;padding:12px 16px"><span class="muted" style="font-size:13px">Freigegebene Musterlösungen (🏆) sehen Schüler:innen über den 🏆-Knopf in der Aufgabe – zusätzlich zur Musterlösung aus dem Aufgaben-Editor (Freigabe dort über 🏆/🔒 in der Aufgabenliste).</span></div>
+    ${list}`;
+  document.getElementById("back").onclick = ()=> javaTeacherClassView(classId);
+  document.querySelectorAll("[data-open]").forEach(b=> b.onclick=()=>{
+    const s=samples.find(x=>x.id===b.dataset.open); if(!s) return;
+    openModal(`<button class="x" onclick="closeModal()">✕</button><h3 style="margin:0 0 10px">★ ${esc(s.title||"Musterlösung")}</h3><div id="jvSampHost" style="--jvMin:440px;height:58vh;min-height:440px"></div>`, true);
+    modalView = new JavaView(document.getElementById("jvSampHost"), { mode:"view" });
+    modalView.setData({ files: s.files||[] });
+  });
+  document.querySelectorAll("[data-rel]").forEach(b=> b.onclick=async()=>{ try{ await api.javaUpdateSample(b.dataset.rel,{released:b.dataset.on!=="1"}); javaSampleManager(assignment, classId); }catch(e){ toast(e.message||"Fehler","err"); } });
+  document.querySelectorAll("[data-del]").forEach(b=> b.onclick=async()=>{ if(!confirm("Musterlösung wirklich löschen?")) return; try{ await api.javaDeleteSample(b.dataset.del); javaSampleManager(assignment, classId); }catch(e){ toast(e.message||"Fehler","err"); } });
 }
 
 /* ---------- Lehrkraft: Schüler-Profil ---------- */
@@ -3966,6 +4120,15 @@ async function javaSandboxProject(projectId){
 }
 
 const PATCH_NOTES = [
+  { v:"2.35", date:"10. August 2026", title:"☕ Java-Ausbau: Historie, Musterlösungen, farbiger Editor & mehr", items:[
+    `<b>Farbiger Code wie beim Hamster:</b> Der Java-Editor hat jetzt Syntax-Farben im dunklen Design – und beim <b>Zeigen auf einen Methodennamen</b> erscheint eine Erklärung mit der Signatur (eigene Methoden UND eingebaute wie println, nextInt, substring …).`,
+    `<b>Mehrere Abgaben mit Historie:</b> Wie beim Hamster kannst du jetzt mehrfach abgeben. Die <b>Historie steht unter der Konsole</b> – jede Abgabe lässt sich wieder laden (📂) oder zur aktuellen machen (⭐).`,
+    `<b>Bearbeitungsstand wird gesichert:</b> Verlässt du eine Aufgabe, wird dein Stand automatisch gespeichert und beim nächsten Öffnen wiederhergestellt (auch alle 20 Sekunden zwischendurch).`,
+    `<b>Lehrkräfte:</b> In der Einsicht ist der Code jetzt <b>live bearbeitbar</b> (▶ läuft, wird nicht gespeichert), mit Versions-Umschalter – und „★ Als Musterlösung" speichert die Lösung. <b>Mehrere Musterlösungen</b> je Aufgabe, einzeln freigebbar (★-Manager in der Aufgabenliste).`,
+    `<b>Editor &amp; Konsole:</b> Höhe beider Bereiche per <b>Ziehgriff</b> einstellbar; die Konsole scrollt nach jeder Ausgabe zuverlässig ganz nach unten; Enter rückt wie beim Hamster ein (kein Extra-Tab nach <code>{</code>).`,
+    `<b>Java-Sprache:</b> <b>Eigene generische Klassen</b> (class Box&lt;T&gt;, auch Paar&lt;K,V&gt;), Boolean.parseBoolean, und Kommazahlen verlangen jetzt konsequent den <b>Punkt</b> – „3,5" gibt eine verständliche Fehlermeldung.`,
+    `<b>Plattform:</b> Der <b>Zurück-Knopf des Browsers</b> führt jetzt zur vorherigen Seite der Plattform. Im Browser-Tab zeigt jedes Tool <b>sein Emoji und seinen Namen</b>; auf Login und Tool-Auswahl steht das Schullogo.`,
+  ]},
   { v:"2.34", date:"10. August 2026", title:"🏫 Schul-Logo überall", items:[
     `Das offizielle <b>GW-Logo des Gymnasiums Wesermünde</b> ersetzt den Hamster oben links in der Kopfzeile, auf der Login-Seite und im Impressum. (Der 🐹 bleibt natürlich das Maskottchen des Hamster-Simulators!)`,
   ]},
@@ -4240,7 +4403,84 @@ function patchNotesDialog(){
 }
 
 /* ---------- Footer: Versionsnummer (aus den Patch-Notes) + Copyright ---------- */
-const APP_BUILD = "2026-08-10 12:00";   // letztes Update (im Patch-Notes-Dialog angezeigt)
+const APP_BUILD = "2026-08-10 14:30";   // letztes Update (im Patch-Notes-Dialog angezeigt)
+/* ============================================================================
+   Browser-Zurück (SPA-History) + Favicon/Titel je Tool
+   ============================================================================ */
+/* Favicon + Tab-Titel: Schullogo auf Login/Tool-Auswahl, Tool-Emoji + Name im Tool */
+function setChrome(){
+  const base = "Informatik am Gymnasium Wesermünde";
+  const cfg = window.HAMSTER_CONFIG || {};
+  const link = document.querySelector("link[rel='icon']");
+  const t = ME && ACTIVE_TOOL ? TOOLS.find(x => x.id === ACTIVE_TOOL) : null;
+  if(t){
+    document.title = t.icon + " " + t.name + " · " + base;
+    if(link) link.href = "data:image/svg+xml," + encodeURIComponent("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>" + t.icon + "</text></svg>");
+  } else {
+    document.title = base;
+    if(link) link.href = cfg.FAVICON_URL || "logo-gywem.png";
+  }
+}
+
+/* SPA-History: Seiten-Funktionen werden global umwickelt -> pushState je Navigation;
+   der Browser-Zurück-Knopf rendert die vorherige Seite (Renderer-Closures im Speicher;
+   nach einem echten Reload beginnt die Historie neu — das ist ok). */
+const NAV = { map: new Map(), order: [], n: 0, silent: false, first: true, lastKey: null, lastId: 0 };
+(function(){
+  const PAGES = [
+    "toolLauncher","adminHome","adminUserProfile",
+    "teacherHome","studentHome","teacherClassView","studentClassView","solveAssignment","reviewSubmission",
+    "templatesPage","sampleManager","assignmentEditorPage","assignmentStats","studentProfilePage","sandboxHome","sandboxProject",
+    "sqlTeacherHome","sqlStudentHome","sqlTeacherClassView","sqlStudentClassView","sqlSolveAssignment","sqlReviewSubmission",
+    "sqlStudentProfilePage","sqlTemplatesPage","sqlTemplateEditorPage","sqlDatabasesPage","sqlDatabaseEditorPage",
+    "sqlAssignmentEditorPage","sqlSandbox","sqlSandboxProject",
+    "filiusTeacherHome","filiusStudentHome","filiusTeacherClassView","filiusStudentClassView","filiusSolveAssignment",
+    "filiusReviewSubmission","filiusStudentProfilePage","filiusNetworksPage","filiusNetworkEditorPage",
+    "filiusTemplatesPage","filiusTemplateEditorPage","filiusAssignmentEditorPage","filiusSandbox","filiusSandboxProject",
+    "javaTeacherHome","javaStudentHome","javaTeacherClassView","javaStudentClassView","javaSolveAssignment",
+    "javaReviewSubmission","javaStudentProfilePage","javaTemplatesPage","javaAssignmentEditorPage",
+    "javaSandbox","javaSandboxProject","javaSampleManager",
+  ];
+  const keyOf = (name, args) => name + ":" + args.map(a => (a && typeof a === "object" && a.id) ? a.id : (typeof a === "object" || typeof a === "function") ? "·" : String(a)).join(",");
+  function remember(id, fn){
+    NAV.map.set(id, { fn, uid: ME && ME.id });                 // Einträge gehören zum angemeldeten Nutzer!
+    NAV.order.push(id);
+    while(NAV.order.length > 90){ NAV.map.delete(NAV.order.shift()); }
+  }
+  window.navReset = function(){                                // bei Abmelden/Anmelden: fremde Historie verwerfen
+    NAV.map.clear(); NAV.order.length = 0; NAV.lastKey = null; NAV.first = true;
+    try{ history.replaceState(null, ""); }catch(e){}
+  };
+  for(const name of PAGES){
+    const orig = window[name];
+    if(typeof orig !== "function") continue;
+    window[name] = function(...args){
+      if(!NAV.silent){
+        const id = ++NAV.n;
+        remember(id, () => { NAV.silent = true; try{ orig.apply(null, args); } finally { NAV.silent = false; } });
+        const key = keyOf(name, args);
+        try{
+          if(NAV.first){ history.replaceState({ hknav: id }, ""); NAV.first = false; }
+          else if(key === NAV.lastKey){ history.replaceState({ hknav: id }, ""); }
+          else history.pushState({ hknav: id }, "");
+        }catch(e){}
+        NAV.lastKey = key; NAV.lastId = id;
+      }
+      return orig.apply(null, args);
+    };
+  }
+  window.addEventListener("popstate", (e) => {
+    NAV.lastKey = null;                                   // nach Zurück nicht fälschlich dedupen
+    try{ closeModal(); }catch(err){}                      // offene Dialoge/Overlays gehören zur verlassenen Seite
+    try{ if(typeof openMatrixModal === "function" && openMatrixModal._close) openMatrixModal._close(); }catch(err){}
+    if(!ME){ renderAuth(); return; }                      // nach Abmelden: nie fremde Seiten wiederherstellen
+    const st = e.state;
+    const entry = st && st.hknav ? NAV.map.get(st.hknav) : null;
+    if(entry && entry.uid === ME.id){ entry.fn(); }
+    else { NAV.silent = true; try{ route(); } finally { NAV.silent = false; } }
+  });
+})();
+
 (function(){ const f=document.getElementById("appfoot"); if(f){ const v=(typeof PATCH_NOTES!=="undefined"&&PATCH_NOTES[0])?PATCH_NOTES[0].v:"";
   f.innerHTML='© 2026 Laurens Offinger &amp; Sebastian Glücks · Version '+v+' · <a href="impressum.html" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:3px" onmouseover="this.style.color=\'var(--blue)\'" onmouseout="this.style.color=\'inherit\'">Impressum</a>'; } })();
 

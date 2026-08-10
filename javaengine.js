@@ -114,20 +114,24 @@ function lex(src, file){
 /* Typ = {base:"int"|"double"|"boolean"|"char"|"String"|"void"|"null"|Klassenname,
           prim:bool, dims:0..2, elem?:Typ(fuer ArrayList)} */
 const PRIMS = new Set(["int","double","boolean","char"]);
-function T(base, dims, elem){ return { base, dims: dims||0, prim: PRIMS.has(base) && !(dims||0), elem: elem||null }; }
+function T(base, dims, elem, targs){ return { base, dims: dims||0, prim: PRIMS.has(base) && !(dims||0), elem: elem||null, targs: targs||null }; }
 const T_INT = T("int"), T_DOUBLE = T("double"), T_BOOL = T("boolean"),
       T_CHAR = T("char"), T_STR = T("String"), T_VOID = T("void"), T_NULL = T("null");
 function tEq(a, b){
   if(!a || !b) return false;
   if(a.dims !== b.dims) return false;
   if(a.base !== b.base) return false;
-  if(a.elem || b.elem) return !!(a.elem && b.elem && tEq(a.elem, b.elem));
+  if(a.elem || b.elem){ if(!(a.elem && b.elem && tEq(a.elem, b.elem))) return false; }
+  const ta = a.targs || [], tb = b.targs || [];
+  if(ta.length !== tb.length) return false;
+  for(let i = 0; i < ta.length; i++) if(!tEq(ta[i], tb[i])) return false;
   return true;
 }
 function tName(t){
   if(!t) return "?";
   let s = t.base;
   if(t.elem) s += "<" + tName(t.elem) + ">";
+  else if(t.targs && t.targs.length) s += "<" + t.targs.map(tName).join(", ") + ">";
   for(let i = 0; i < t.dims; i++) s += "[]";
   return s;
 }
@@ -171,15 +175,16 @@ function Parser(toks, file){
     else if(cur().t === "id"){ base = next().v; }
     else throw cerr(file, ln, "Typ erwartet (gefunden: '" + cur().v + "').");
     if(base === "void" && !allowVoid) throw cerr(file, ln, "'void' ist hier nicht erlaubt.");
-    let elem = null;
-    if(isP("<")){                       // ArrayList<Typ> (einzige unterstützte Generik)
-      next();
-      elem = parseType(false);
-      expectP(">", "nach dem Typ-Argument");
+    let targs = null;
+    if(isP("<")){                       // Typ-Argumente: ArrayList<Typ> oder eigene generische Klassen Box<T,...>
+      next(); targs = [];
+      if(!isP(">")){ for(;;){ targs.push(parseType(false)); if(isP(",")) next(); else break; } }
+      expectP(">", "nach den Typ-Argumenten");
     }
+    const elem = (base === "ArrayList" && targs && targs.length === 1) ? targs[0] : null;
     let dims = 0;
     while(isP("[") && isP("]", 1)){ next(); next(); dims++; if(dims > 2) throw cerr(file, ln, "Nur 1- und 2-dimensionale Arrays werden unterstützt."); }
-    return T(base, dims, elem);
+    return T(base, dims, elem, base === "ArrayList" ? null : targs);
   }
 
   /* Erkennung: "Typ name" (Deklaration) vs. Ausdruck — Lookahead */
@@ -224,12 +229,18 @@ function Parser(toks, file){
     }
     expectKw("class");
     const name = expectId("für die Klasse");
+    let typeParams = null;
+    if(isP("<")){                                    // eigene generische Klasse: class Box<T> / class Paar<K,V>
+      next(); typeParams = [];
+      for(;;){ typeParams.push(expectId("als Typ-Parameter")); if(isP(",")) next(); else break; }
+      expectP(">", "nach den Typ-Parametern");
+    }
     let superName = null;
     if(isKw("extends")){ next(); superName = expectId("nach 'extends'"); }
-    if(isP("<")) throw cerr(file, line(), "Eigene generische Klassen werden nicht unterstützt (nur ArrayList<...>).");
+    if(typeParams && superName) throw cerr(file, ln, "Eine generische Klasse kann nicht erben (bewusste Vereinfachung).");
     if(cur().t === "kw" && cur().v === "implements") throw cerr(file, line(), "Interfaces (implements) werden nicht unterstützt.");
     expectP("{", "am Klassenbeginn");
-    const cls = { name, superName, abstract: isAbstract, fields: [], methods: [], ctors: [], file, line: ln };
+    const cls = { name, superName, typeParams, abstract: isAbstract, fields: [], methods: [], ctors: [], file, line: ln };
     while(!isP("}")){
       if(cur().t === "eof") throw cerr(file, line(), "Klasse '" + name + "' wurde nicht mit } geschlossen.");
       parseMember(cls);
@@ -616,11 +627,12 @@ function Parser(toks, file){
     if(isKw("new")){
       next();
       const base = (cur().t === "kw" && PRIMS.has(cur().v)) ? next().v : expectId("nach 'new'");
-      let elem = null;
+      let elem = null, ntargs = null;
       if(isP("<")){
-        next();
-        if(!isP(">")) elem = parseType(false);      // new ArrayList<Typ>() oder Diamant <>
-        expectP(">", "beim Typ-Argument");
+        next(); ntargs = [];
+        if(!isP(">")){ for(;;){ ntargs.push(parseType(false)); if(isP(",")) next(); else break; } }   // leer = Diamant <>
+        expectP(">", "bei den Typ-Argumenten");
+        if(base === "ArrayList" && ntargs.length) elem = ntargs[0];
       }
       if(isP("[")){
         // Array: new int[5], new int[3][4], new int[]{1,2}
@@ -646,7 +658,7 @@ function Parser(toks, file){
         return { kind:"newarr", base, dims, sizes, lit: null, line: ln };
       }
       const args = parseArgs();
-      return { kind:"new", className: base, elem, args, line: ln };
+      return { kind:"new", className: base, elem, targs: base === "ArrayList" ? null : ntargs, args, line: ln };
     }
     if(isP("(")){
       next();
@@ -722,6 +734,7 @@ function Checker(units){         // units = [{file, classes:[clsDecl]}]
       if(BUILTIN_CLASSES.has(c.superName)) throw cerr(c.file, c.line, "Von '" + c.superName + "' kann nicht geerbt werden.");
       if(!classes.has(c.superName)) throw cerr(c.file, c.line, "Unbekannte Oberklasse '" + c.superName + "'.");
       if(c.superName === c.name) throw cerr(c.file, c.line, "Eine Klasse kann nicht von sich selbst erben.");
+      if(classes.get(c.superName).typeParams) throw cerr(c.file, c.line, "Von einer generischen Klasse kann nicht geerbt werden (bewusste Vereinfachung).");
     }
   }
   for(const c of classes.values()){
@@ -765,20 +778,57 @@ function Checker(units){         // units = [{file, classes:[clsDecl]}]
 
   /* Klassentyp-Helfer */
   const isClassType = t => t && !t.dims && !PRIMS.has(t.base) && t.base !== "String" && t.base !== "void" && t.base !== "null" && classes.has(t.base);
+  let CUR_TP = null;                    // Typ-Parameter der gerade geprüften (generischen) Klasse
+  function isTypeParam(base){ return !!(CUR_TP && CUR_TP.has(base)); }
+  /* Substitution: Typ-Parameter -> konkrete Typ-Argumente (fuer Member-Zugriffe von aussen) */
+  function substT(t, map){
+    if(!t || !map) return t;
+    if(map[t.base]){
+      const r = map[t.base];
+      return T(r.base, r.dims + t.dims, r.elem, r.targs);
+    }
+    if(t.targs && t.targs.length) return T(t.base, t.dims, t.elem && substT(t.elem, map), t.targs.map(x => substT(x, map)));
+    if(t.elem) return T(t.base, t.dims, substT(t.elem, map));
+    return t;
+  }
+  function tpMapOf(clsDecl, objType){
+    if(!clsDecl.typeParams) return null;
+    const m = {};
+    clsDecl.typeParams.forEach((p, i) => { m[p] = (objType.targs && objType.targs[i]) || T_STR; });
+    return m;
+  }
+  const unboxDeep = t => (t && !t.dims && WRAPPER_ELEMS.has(t.base) && t.base !== "String") ? unbox(t) : t;
   function validType(t, file, line){
-    if(t.dims > 0){ validType(T(t.base, 0, t.elem), file, line); return; }
-    if(PRIMS.has(t.base) || t.base === "void" || t.base === "String") { if(t.elem) throw cerr(file, line, tName(t) + ": Nur ArrayList<...> darf ein Typ-Argument haben."); return; }
-    if(t.base === "ArrayList"){
-      if(!t.elem) throw cerr(file, line, "ArrayList braucht einen Elementtyp, z. B. ArrayList<String>.");
-      if(PRIMS.has(t.elem.base) && !t.elem.dims) throw cerr(file, line, "ArrayList<" + t.elem.base + "> gibt es in Java nicht — nutze ArrayList<" + ({int:"Integer",double:"Double",boolean:"Boolean",char:"Character"})[t.elem.base] + ">.");
-      if(t.elem.dims) throw cerr(file, line, "Arrays als ArrayList-Elementtyp werden nicht unterstützt.");
-      if(!WRAPPER_ELEMS.has(t.elem.base) && !classes.has(t.elem.base)) throw cerr(file, line, "Unbekannter Elementtyp '" + t.elem.base + "'.");
+    if(!t.dims && isTypeParam(t.base)){                            // T innerhalb der eigenen generischen Klasse
+      if(t.targs && t.targs.length) throw cerr(file, line, "Ein Typ-Parameter wie '" + t.base + "' darf keine Typ-Argumente haben.");
       return;
     }
-    if(t.base === "Scanner"){ return; }
-    if(BOX[t.base]) throw cerr(file, line, "'" + t.base + "' ist nur als ArrayList-Elementtyp erlaubt — nutze sonst '" + BOX[t.base] + "'.");
+    if(t.dims > 0){ if(isTypeParam(t.base)) return; validType(T(t.base, 0, t.elem, t.targs), file, line); return; }
+    if(PRIMS.has(t.base) || t.base === "void" || t.base === "String") { if(t.elem || (t.targs && t.targs.length)) throw cerr(file, line, tName(t) + ": '" + t.base + "' darf keine Typ-Argumente haben."); return; }
+    if(t.base === "ArrayList"){
+      if(!t.elem) throw cerr(file, line, "ArrayList braucht genau EINEN Elementtyp, z. B. ArrayList<String>.");
+      if(PRIMS.has(t.elem.base) && !t.elem.dims) throw cerr(file, line, "ArrayList<" + t.elem.base + "> gibt es in Java nicht — nutze ArrayList<" + ({int:"Integer",double:"Double",boolean:"Boolean",char:"Character"})[t.elem.base] + ">.");
+      if(t.elem.dims) throw cerr(file, line, "Arrays als ArrayList-Elementtyp werden nicht unterstützt.");
+      if(!WRAPPER_ELEMS.has(t.elem.base) && !classes.has(t.elem.base) && !isTypeParam(t.elem.base)) throw cerr(file, line, "Unbekannter Elementtyp '" + t.elem.base + "'.");
+      return;
+    }
+    if(t.base === "Scanner"){ if(t.targs && t.targs.length) throw cerr(file, line, "'Scanner' ist keine generische Klasse — Typ-Argumente hier entfernen."); return; }
+    if(BOX[t.base]) throw cerr(file, line, "'" + t.base + "' ist nur als Typ-Argument (z. B. ArrayList<" + t.base + ">) erlaubt — nutze sonst '" + BOX[t.base] + "'.");
     if(t.base === "Object" || t.base === "System" || t.base === "Math") throw cerr(file, line, "'" + t.base + "' kann nicht als Variablentyp verwendet werden.");
     if(!classes.has(t.base)) throw cerr(file, line, "Unbekannter Typ '" + t.base + "'. (Tippfehler? Klasse noch nicht angelegt?)");
+    /* eigene generische Klassen: Typ-Argumente prüfen */
+    const gcls = classes.get(t.base);
+    if(gcls.typeParams){
+      if(!t.targs || !t.targs.length) throw cerr(file, line, "'" + t.base + "' ist generisch — bitte Typ-Argumente angeben: " + t.base + "<" + gcls.typeParams.join(", ") + ">.");
+      if(t.targs.length !== gcls.typeParams.length) throw cerr(file, line, "'" + t.base + "' erwartet " + gcls.typeParams.length + " Typ-Argument(e), nicht " + t.targs.length + ".");
+      for(const ta of t.targs){
+        if(ta.dims) throw cerr(file, line, "Arrays als Typ-Argument werden nicht unterstützt.");
+        if(PRIMS.has(ta.base)) throw cerr(file, line, t.base + "<" + ta.base + "> gibt es in Java nicht — nutze " + t.base + "<" + ({int:"Integer",double:"Double",boolean:"Boolean",char:"Character"})[ta.base] + ">.");
+        if(!WRAPPER_ELEMS.has(ta.base) && !isTypeParam(ta.base)) validType(ta, file, line);
+      }
+    } else if(t.targs && t.targs.length){
+      throw cerr(file, line, "'" + t.base + "' ist keine generische Klasse — Typ-Argumente hier entfernen.");
+    }
   }
 
   function assignable(to, from, fromNode){
@@ -792,7 +842,9 @@ function Checker(units){         // units = [{file, classes:[clsDecl]}]
     if(tb.base === "double" && (fb.base === "int" || fb.base === "char")) return true;   // Widening
     if(tb.base === "int" && fb.base === "char") return true;
     if(tb.base === "char" && fb.base === "int" && fromNode && fromNode.kind === "int" && fromNode.v >= 0 && fromNode.v <= 65535) return true;  // Konstante
-    if(isClassType(to) && isClassType(from) && isSubclass(from.base, to.base)) return true;   // Sub → Super
+    if(isClassType(to) && isClassType(from)
+       && !classes.get(to.base).typeParams && !classes.get(from.base).typeParams   // generische Klassen: nur exakt (invariant, via tEq oben)
+       && isSubclass(from.base, to.base)) return true;   // Sub → Super
     return false;
   }
   const numeric = t => t && !t.dims && (t.base === "int" || t.base === "double" || t.base === "char");
@@ -808,9 +860,12 @@ function Checker(units){         // units = [{file, classes:[clsDecl]}]
   }
 
   /* Mitglieds-Validierung: Overrides, abstract, Konstruktoren */
+  function usesTP(t){ if(!t) return false; if(CUR_TP && CUR_TP.has(t.base)) return true; if(t.elem && usesTP(t.elem)) return true; return !!(t.targs && t.targs.some(usesTP)); }
   for(const c of classes.values()){
+    CUR_TP = c.typeParams ? new Set(c.typeParams) : null;
     const seenF = new Set(), seenM = new Set(), seenC = new Set();
     for(const f of c.fields){
+      if(f.static && usesTP(f.type)) throw cerr(f.file, f.line, "Der Typ-Parameter darf in einem static-Feld nicht verwendet werden — static gehört zur Klasse, nicht zum Objekt.");
       validType(f.type, f.file, f.line);
       if(seenF.has(f.name)) throw cerr(f.file, f.line, "Das Feld '" + f.name + "' existiert in dieser Klasse schon.");
       seenF.add(f.name);
@@ -820,6 +875,7 @@ function Checker(units){         // units = [{file, classes:[clsDecl]}]
       }
     }
     for(const m of c.methods){
+      if(m.static && (usesTP(m.ret) || m.params.some(pa => usesTP(pa.type)))) throw cerr(m.file, m.line, "Der Typ-Parameter darf in einer static-Methode nicht verwendet werden — static gehört zur Klasse, nicht zum Objekt.");
       validType(m.ret, m.file, m.line);
       for(const pa of m.params) validType(pa.type, m.file, m.line);
       const key = m.name + "/" + m.params.length;
@@ -909,15 +965,16 @@ function Checker(units){         // units = [{file, classes:[clsDecl]}]
     }
     return argTs;
   }
-  function checkUserCall(entry, args, file, line){
+  function checkUserCall(entry, args, file, line, map){
     const m = entry.method;
     checkVisible(m, entry.owner, file, line, "Die Methode");
     const argTs = args.map(a => checkExpr(a));
     for(let i = 0; i < m.params.length; i++){
-      if(!assignable(m.params[i].type, argTs[i], args[i]))
-        throw cerr(file, line, "'" + m.name + "': Argument " + (i+1) + " hat Typ " + tName(argTs[i]) + ", erwartet wird " + tName(m.params[i].type) + ".");
+      const want = map ? substT(m.params[i].type, map) : m.params[i].type;
+      if(!assignable(want, argTs[i], args[i]))
+        throw cerr(file, line, "'" + m.name + "': Argument " + (i+1) + " hat Typ " + tName(argTs[i]) + ", erwartet wird " + tName(want) + ".");
     }
-    return m.ret;
+    return map ? unboxDeep(substT(m.ret, map)) : m.ret;
   }
 
   function checkExpr(n){
@@ -936,7 +993,7 @@ function Checker(units){         // units = [{file, classes:[clsDecl]}]
       case "null": return T_NULL;
       case "this":
         if(ctx.static) throw cerr(file, n.line, "'this' gibt es in einer statischen Methode nicht.");
-        return T(ctx.cls.name);
+        return T(ctx.cls.name, 0, null, ctx.cls.typeParams ? ctx.cls.typeParams.map(p => T(p)) : null);
       case "var": {
         const v = lookupVar(n.name);
         if(v){ n.ref = "local"; return v.type; }
@@ -948,7 +1005,7 @@ function Checker(units){         // units = [{file, classes:[clsDecl]}]
           n.owner = ff.owner.name;
           return ff.field.type;
         }
-        if(classes.has(n.name) || n.name === "System" || n.name === "Math" || n.name === "Integer" || n.name === "Double" || n.name === "Character" || n.name === "String"){
+        if(classes.has(n.name) || n.name === "System" || n.name === "Math" || n.name === "Integer" || n.name === "Double" || n.name === "Boolean" || n.name === "Character" || n.name === "String"){
           n.ref = "class";
           return T("§class:" + n.name);
         }
@@ -988,6 +1045,7 @@ function Checker(units){         // units = [{file, classes:[clsDecl]}]
             throw cerr(file, n.line, "(" + tName(to) + ") kann " + tName(from) + " nicht umwandeln.");
           return T(to.base);
         }
+        if(classes.has(to.base) && classes.get(to.base).typeParams) throw cerr(file, n.line, "Casts auf generische Klassen werden nicht unterstützt.");
         validType(to, file, n.line);
         if(to.base === "String"){
           if(from.base === "String" || from.base === "null") return T_STR;
@@ -999,6 +1057,7 @@ function Checker(units){         // units = [{file, classes:[clsDecl]}]
       }
       case "instanceof": {
         const t = checkExpr(n.expr);
+        if(classes.has(n.type.base) && classes.get(n.type.base).typeParams) throw cerr(file, n.line, "instanceof mit generischen Klassen wird nicht unterstützt.");
         validType(n.type, file, n.line);
         if(!isClassType(n.type)) throw cerr(file, n.line, "instanceof funktioniert nur mit Klassen.");
         if(!isClassType(t) && t.base !== "null") throw cerr(file, n.line, "Links von instanceof muss ein Objekt stehen (ist: " + tName(t) + ").");
@@ -1038,14 +1097,24 @@ function Checker(units){         // units = [{file, classes:[clsDecl]}]
         const cls = classes.get(n.className);
         if(!cls) throw cerr(file, n.line, "Unbekannte Klasse '" + n.className + "'.");
         if(cls.abstract) throw cerr(file, n.line, "'" + n.className + "' ist abstract — davon kann kein Objekt erzeugt werden.");
+        let map = null, retT = T(n.className);
+        if(cls.typeParams){
+          if(!n.targs || !n.targs.length) throw cerr(file, n.line, "'" + n.className + "' ist generisch — bitte mit Typ-Argumenten erzeugen: new " + n.className + "<…>(…). (Den Diamanten <> bitte ausschreiben.)");
+          retT = T(n.className, 0, null, n.targs);
+          validType(retT, file, n.line);
+          map = tpMapOf(cls, retT);
+        } else if(n.targs && n.targs.length){
+          throw cerr(file, n.line, "'" + n.className + "' ist keine generische Klasse — Typ-Argumente hier entfernen.");
+        }
         const k = cls.ctors.find(k2 => k2.params.length === n.args.length);
         if(!k) throw cerr(file, n.line, "Kein Konstruktor von '" + n.className + "' nimmt " + n.args.length + " Argument(e).");
         const argTs = n.args.map(a => checkExpr(a));
         for(let i = 0; i < k.params.length; i++){
-          if(!assignable(k.params[i].type, argTs[i], n.args[i]))
-            throw cerr(file, n.line, "Konstruktor von '" + n.className + "': Argument " + (i+1) + " hat Typ " + tName(argTs[i]) + ", erwartet wird " + tName(k.params[i].type) + ".");
+          const want = map ? substT(k.params[i].type, map) : k.params[i].type;
+          if(!assignable(want, argTs[i], n.args[i]))
+            throw cerr(file, n.line, "Konstruktor von '" + n.className + "': Argument " + (i+1) + " hat Typ " + tName(argTs[i]) + ", erwartet wird " + tName(want) + ".");
         }
-        return T(n.className);
+        return retT;
       }
       case "index": {
         const at = checkExpr(n.arr);
@@ -1224,6 +1293,8 @@ function Checker(units){         // units = [{file, classes:[clsDecl]}]
       if(!ff) throw cerr(file, n.line, "Die Klasse '" + ot.base + "' hat kein Feld '" + n.name + "'.");
       checkVisible(ff.field, ff.owner, file, n.line, "Das Feld");
       n.fkind = "user"; n.ownerCls = ff.owner.name; n.isStatic = ff.field.static;
+      const decl = classes.get(ot.base);
+      if(decl.typeParams) return unboxDeep(substT(ff.field.type, tpMapOf(decl, ot)));
       return ff.field.type;
     }
     throw cerr(file, n.line, tName(ot) + " hat kein Feld '" + n.name + "'.");
@@ -1260,6 +1331,11 @@ function Checker(units){         // units = [{file, classes:[clsDecl]}]
       if(cn === "Double"){
         if(n.name === "parseDouble"){ checkArgs(n.args, [[T_STR]], null, file, n.line, "Double.parseDouble"); n.mkind = "parseDouble"; return T_DOUBLE; }
         throw cerr(file, n.line, "Double." + n.name + " wird nicht unterstützt.");
+      }
+      if(cn === "Boolean"){
+        if(n.name === "parseBoolean"){ checkArgs(n.args, [[T_STR]], null, file, n.line, "Boolean.parseBoolean"); n.mkind = "parseBoolean"; return T_BOOL; }
+        if(n.name === "toString"){ checkArgs(n.args, [[T_BOOL]], null, file, n.line, "Boolean.toString"); n.mkind = "boolToString"; return T_STR; }
+        throw cerr(file, n.line, "Boolean." + n.name + " wird nicht unterstützt (verfügbar: parseBoolean, toString).");
       }
       if(cn === "Character"){
         const M = { isDigit:T_BOOL, isLetter:T_BOOL, toUpperCase:T_CHAR, toLowerCase:T_CHAR };
@@ -1349,7 +1425,8 @@ function Checker(units){         // units = [{file, classes:[clsDecl]}]
       }
       if(entry.method.static) throw cerr(file, n.line, "'" + n.name + "' ist static — Aufruf über den Klassennamen: " + ot.base + "." + n.name + "(…).");
       n.mkind = "user"; n.ownerCls = entry.owner.name;
-      return checkUserCall(entry, n.args, file, n.line);
+      const gdecl = classes.get(ot.base);
+      return checkUserCall(entry, n.args, file, n.line, gdecl.typeParams ? tpMapOf(gdecl, ot) : null);
     }
     if(ot.base === "null") throw cerr(file, n.line, "Auf 'null' kann keine Methode aufgerufen werden.");
     throw cerr(file, n.line, tName(ot) + " hat keine Methoden" + (ot.dims ? " (Arrays haben nur .length)" : "") + ".");
@@ -1494,9 +1571,11 @@ function Checker(units){         // units = [{file, classes:[clsDecl]}]
 
   /* ------- Alle Rümpfe prüfen ------- */
   for(const c of classes.values()){
+    CUR_TP = c.typeParams ? new Set(c.typeParams) : null;
     // statische + Instanz-Feld-Initialisierer
     for(const f of c.fields){
       if(f.init){
+        CUR_TP = (!f.static && c.typeParams) ? new Set(c.typeParams) : null;   // T gibt es in static-Kontexten nicht
         ctx = { cls: c, method: null, ctor: false, static: f.static, inLoop: 0, inSwitch: 0, file: c.file };
         env = null; pushEnv();
         if(f.init.kind === "arrlit"){
@@ -1511,6 +1590,7 @@ function Checker(units){         // units = [{file, classes:[clsDecl]}]
     }
     for(const m of c.methods){
       if(m.abstract) continue;
+      CUR_TP = (!m.static && c.typeParams) ? new Set(c.typeParams) : null;     // T gibt es in static-Methoden nicht
       ctx = { cls: c, method: m, ctor: false, static: m.static, inLoop: 0, inSwitch: 0, file: m.file };
       env = null; pushEnv();
       for(const pa of m.params) declare(pa.name, pa.type, false, m.file, m.line), lookupVar(pa.name).assigned = true;
@@ -1520,6 +1600,7 @@ function Checker(units){         // units = [{file, classes:[clsDecl]}]
       popEnv();
     }
     for(const k of c.ctors){
+      CUR_TP = c.typeParams ? new Set(c.typeParams) : null;                    // Konstruktor = Instanz-Kontext
       ctx = { cls: c, method: null, ctor: true, static: false, inLoop: 0, inSwitch: 0, file: k.file };
       env = null; pushEnv();
       for(const pa of k.params) declare(pa.name, pa.type, false, k.file, k.line), lookupVar(pa.name).assigned = true;
@@ -1642,7 +1723,10 @@ function Interp(chk, io, opts){
       case "bool": return v ? "true" : "false";
       case "str": return v === null ? "null" : v;
       case "arr": return v === null ? "null" : "[A@" + (v.__aid || (v.__aid = (OBJ_ID++).toString(16))) + "]";
-      case "obj": return v === null ? "null" : await objToString(v);
+      case "obj":
+        if(v === null) return "null";
+        if(typeof v !== "object") return typeof v === "boolean" ? (v ? "true" : "false") : String(v);   // Erasure: T kann Wrapper-Inhalt tragen
+        return objToString(v);
       default: return String(v);
     }
   }
@@ -2187,12 +2271,15 @@ function Interp(chk, io, opts){
     if(n.mkind === "parseDouble"){
       const s2 = await evalE(n.args[0], fr);
       if(s2 === null) throw rerr("NumberFormatException", "Double.parseDouble(null).");
+      if(s2.includes(",")) throw rerr("NumberFormatException", '"' + s2 + '" — in Java trennt der PUNKT die Nachkommastellen (z. B. 3.5 statt 3,5).');
       const v = Number(s2.trim());
       if(!isFinite(v) && !/^[+-]?(Infinity)$/.test(s2.trim())) throw rerr("NumberFormatException", '"' + s2 + '" ist keine Zahl.');
       if(Number.isNaN(v)) throw rerr("NumberFormatException", '"' + s2 + '" ist keine Zahl.');
       return v;
     }
     if(n.mkind === "intToString"){ return String(await evalE(n.args[0], fr)); }
+    if(n.mkind === "parseBoolean"){ const s2 = await evalE(n.args[0], fr); return s2 !== null && s2.toLowerCase() === "true"; }
+    if(n.mkind === "boolToString"){ return (await evalE(n.args[0], fr)) ? "true" : "false"; }
     if(n.mkind === "valueOf"){ return toStr(await evalE(n.args[0], fr), n.args[0].strHow); }
     if(n.mkind && n.mkind.startsWith("char-")){
       const c = await evalE(n.args[0], fr);
@@ -2280,8 +2367,9 @@ function Interp(chk, io, opts){
         }
         case "nextDouble": {
           const t = await scanToken();
-          const v = Number(t.replace(",", "."));
-          if(Number.isNaN(v)) throw rerr("InputMismatchException", '"' + t + '" ist keine Zahl.');
+          if(t.includes(",")) throw rerr("InputMismatchException", '"' + t + '" — in Java trennt der PUNKT die Nachkommastellen (z. B. 3.5 statt 3,5).');
+          const v = Number(t);
+          if(Number.isNaN(v) || t === "") throw rerr("InputMismatchException", '"' + t + '" ist keine Zahl.');
           return v;
         }
         case "next": return scanToken();
