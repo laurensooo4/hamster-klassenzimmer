@@ -1,9 +1,15 @@
 "use strict";
 /* ============================================================================
-   FiliusView — originalgetreuer Web-Nachbau der FILIUS-Oberfläche
-   (Uni Siegen / lernsoftware-filius.de, GPL). Reine Neu-Implementierung fürs
-   Web; nutzt die Original-Grafiken aus ./filius-gfx/ und die Logik aus
-   window.FiliusEngine (filiusengine.js).
+   FiliusView — Web-Nachbau der FILIUS-Oberfläche, angelehnt an FILIUS
+   (Uni Siegen / lernsoftware-filius.de). Eigenständige Neu-Implementierung:
+   es wurde KEIN Quellcode aus FILIUS übernommen. Logik: window.FiliusEngine
+   (filiusengine.js).
+
+   ACHTUNG LIZENZ: Die Grafiken in ./filius-gfx/ stammen aus FILIUS,
+   © 2006–2024 Stefan Freischlad und Mitwirkende, GNU GPL v2 oder v3 —
+   wir geben sie unter GPL v3 weiter. Urheber-, Lizenz- und Quellenangaben
+   sind Pflicht: siehe filius-gfx/HERKUNFT.md und lizenzen.html.
+   Diese Hinweise bitte NICHT entfernen.
 
    Öffentliche API (wie zuvor, damit app.js unverändert bleibt):
      new FiliusView(hostEl|selector, {data, readonly, height, onChange, mode})
@@ -159,6 +165,9 @@
 ".fv-cursorimg{position:absolute;width:22px;height:22px;pointer-events:none;z-index:40;transform:translate(-2px,-2px)}",
 /* Status */
 ".fv-status{font-size:11.5px;color:var(--muted);font-weight:700;padding:0 6px}",
+".fv-credit{font-size:10.5px;color:var(--muted);font-weight:700;padding:0 8px;opacity:.85;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}",
+".fv-credit a{color:inherit;text-decoration:underline;text-decoration-style:dotted}",
+".fv-credit a:hover{color:var(--blue)}",
 /* Config panel (bottom) */
 ".fv-cfg{border-top:1px solid var(--line);background:linear-gradient(#eef1f6,#e6ebf2);flex:0 0 auto;transition:none}",
 ":root[data-theme='dark'] .fv-cfg{background:linear-gradient(#232a36,#1b212b)}",
@@ -304,6 +313,10 @@
     tb.appendChild(speed);
     tb.appendChild(el("div","fv-spacer"));
     var status=el("div","fv-status"); tb.appendChild(status);
+    // Herkunfts-/Lizenzhinweis (die Grafiken stammen aus FILIUS, GPL v3 - Nennung ist Lizenzpflicht)
+    tb.appendChild(el("div","fv-credit",
+      'Nachbau, angelehnt an <b>FILIUS</b> (Uni Siegen) · Grafiken © FILIUS-Projekt, GNU GPL v3 · ' +
+      '<a href="lizenzen.html" target="_blank" rel="noopener">Lizenzen</a>'));
     root.appendChild(tb);
     // --- Main (sidebar + canvas) ---
     var main=el("div","fv-main");

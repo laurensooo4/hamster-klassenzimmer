@@ -1,8 +1,14 @@
 "use strict";
 /* ============================================================================
-   engine.js — Hamster-Simulator als wiederverwendbare Komponente (HamsterView)
-   Interpreter 1:1 aus dem Hamster-Simulator (hamster-web), plus Board/Editor/
-   Steuerung, gekapselt pro Container. Modi: 'solve' | 'design' | 'view'.
+   engine.js — Hamster-Werkzeug als wiederverwendbare Komponente (HamsterView)
+   Eigenständige JavaScript-Neuimplementierung: eigener Parser, eigener
+   Interpreter, eigene SVG-Grafik (übernommen aus unserem Projekt hamster-web).
+   Es wurde KEIN Programmcode und KEINE Grafik aus dem Java-Hamster-Simulator
+   von Dietrich Boles übernommen; nachgebildet ist nur das didaktische Konzept
+   (Befehlsnamen, Territorium, Körner) — Ideen und Schnittstellen sind nach
+   § 69a Abs. 2 UrhG nicht geschützt. Vorbild: www.java-hamster-modell.de
+   Herkunftsangaben: siehe lizenzen.html
+   Board/Editor/Steuerung, gekapselt pro Container. Modi: 'solve'|'design'|'view'.
    ============================================================================ */
 (function(){
 

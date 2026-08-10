@@ -155,6 +155,19 @@ const DATEN = {
     <div class="row"><span class="k">Konzept &amp; Umsetzung</span><span class="v" id="vPlatBy"></span></div>
   </div>
 
+  <div class="card">
+    <h2><span class="ic">📜</span>Vorbilder &amp; Fremdinhalte</h2>
+    <div class="row"><span class="k">Netzwerke</span><span class="v">Eigenständige Neuimplementierung, angelehnt an
+      <b>FILIUS</b> (Uni Siegen). Die Oberflächen-Grafiken stammen aus FILIUS und werden unter der
+      <b>GNU GPL v3</b> weitergegeben. Kein offizielles Produkt des FILIUS-Projekts.</span></div>
+    <div class="row"><span class="k">Hamster</span><span class="v">Eigenständige Neuimplementierung, angelehnt an das
+      <b>Java-Hamster-Modell</b> von Dr.-Ing. Dietrich Boles (Universität Oldenburg,
+      <a href="https://www.java-hamster-modell.de/" target="_blank" rel="noopener">java-hamster-modell.de</a>).
+      Kein Programmcode und keine Grafik übernommen. Kein offizielles Produkt.</span></div>
+    <div class="row"><span class="k">Alle Angaben</span><span class="v">Vollständige Urheber-, Lizenz- und
+      Quellenangaben stehen auf der Seite <a href="lizenzen.html"><b>Lizenzen &amp; Herkunft</b></a>.</span></div>
+  </div>
+
   <p class="copyright" id="copyLine"></p>
 </div>
 
@@ -198,7 +211,10 @@ const DATEN = {
   set("vPlatBy", D.plattform.ersteller);
   var c=document.getElementById("copyLine");
   c.innerHTML = "Diese Web-Plattform und diese Seite wurden erstellt von <b>" + D.plattform.ersteller + "</b>.<br>" +
-    "© " + D.plattform.jahr + " " + D.plattform.ersteller + " — Inhalte, Design und Programmcode der Plattform unterliegen dem Urheberrecht der Ersteller. Alle Rechte vorbehalten.";
+    "© " + D.plattform.jahr + " " + D.plattform.ersteller + " — die von uns erstellten Inhalte, das Design und der " +
+    "Programmcode dieser Plattform unterliegen dem Urheberrecht der Ersteller.<br>" +
+    "Davon ausgenommen sind Bestandteile Dritter, die unter eigenen freien Lizenzen stehen " +
+    "(u. a. GNU GPL und Creative Commons) — siehe <a href=\"lizenzen.html\">Lizenzen &amp; Herkunft</a>.";
 })();
 </script>
 </body>

@@ -1,0 +1,52 @@
+Informatik am Gymnasium Wesermünde — Lernplattform
+Copyright (c) 2026 Laurens Offinger und Sebastian Glücks
+
+EIGENER CODE
+------------
+Der von uns geschriebene Quellcode, die Texte und das Design dieses Projekts
+dürfen zu nicht-kommerziellen Bildungszwecken frei genutzt, kopiert, verändert
+und weitergegeben werden, sofern dieser Urhebervermerk erhalten bleibt.
+
+Eine Gewährleistung wird nicht übernommen. Die Nutzung erfolgt auf eigene
+Verantwortung.
+
+
+BESTANDTEILE DRITTER — NICHT von dieser Lizenz erfasst
+------------------------------------------------------
+Dieses Projekt enthält Bestandteile Dritter, die unter ihren jeweils EIGENEN
+Lizenzen stehen. Diese gehen der obigen Regelung vor:
+
+* Ordner "filius-gfx/"
+  Grafiken aus dem Projekt FILIUS (Universität Siegen),
+  Copyright (c) 2006-2024 Stefan Freischlad und Mitwirkende.
+  Lizenz: GNU General Public License Version 2 oder Version 3 —
+  wir geben sie unter Version 3 weiter.
+  Lizenztexte: filius-gfx/LICENSE-GPL-3.0.txt, filius-gfx/LICENSE-GPL-2.0.txt
+  Einzelne Dateien abweichend (CC BY, CC BY-SA 4.0, CC0):
+  siehe filius-gfx/HERKUNFT.md und filius-gfx/copyright_and_license.txt
+  Quelle: https://gitlab.com/filius1/filius
+
+* sql-wasm.js / sql-wasm.wasm — sql.js, MIT-Lizenz
+  (enthält SQLite, Public Domain), https://github.com/sql-js/sql.js
+
+* supabase.local.js — supabase-js, MIT-Lizenz
+  https://github.com/supabase/supabase-js
+
+* Schriftart "Nunito" — SIL Open Font License 1.1
+
+
+VORBILDER (kein übernommener Code)
+-----------------------------------
+Das Hamster-Werkzeug ist eine eigenständige Neuimplementierung, angelehnt an
+das Java-Hamster-Modell von Dr.-Ing. Dietrich Boles (Universität Oldenburg),
+https://www.java-hamster-modell.de/ — es wurde weder Programmcode noch eine
+Grafik übernommen.
+
+Das Netzwerk-Werkzeug ist eine eigenständige Neuimplementierung, angelehnt an
+FILIUS (Universität Siegen) — es wurde kein Quellcode übernommen, wohl aber
+die oben genannten Grafiken.
+
+Beides sind KEINE offiziellen Produkte der genannten Projekte oder
+Universitäten; es besteht keine Verbindung zu ihnen.
+
+Vollständige Angaben: lizenzen.html

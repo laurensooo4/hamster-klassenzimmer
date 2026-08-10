@@ -107,9 +107,9 @@ async function signOut(){
 
 /* ---------- Tool-Auswahl (Launcher) ---------- */
 const TOOLS = [
-  { id:"hamster", name:"Hamster-Simulator", icon:"🐹", desc:"Programmieren lernen mit dem Hamster", active:true },
+  { id:"hamster", name:"Hamster-Simulator", icon:"🐹", desc:"Programmieren lernen mit dem Hamster – nach dem Java-Hamster-Modell von D. Boles", active:true },
   { id:"sql",     name:"SQL-Playground",    icon:"🗄️", desc:"Datenbanken & SQL-Abfragen üben",     active:true },
-  { id:"filius",  name:"Filius",            icon:"🌐", desc:"Computernetzwerke verstehen",          active:true },
+  { id:"filius",  name:"Netzwerke",         icon:"🌐", desc:"Computernetzwerke verstehen – angelehnt an FILIUS (Uni Siegen)", active:true },
   { id:"java",    name:"Java",              icon:"☕", desc:"Java programmieren wie die Profis",    active:true },
 ];
 function toolLauncher(){
@@ -1131,7 +1131,7 @@ function renderAdminClasses(q){
   q=(q||"").trim().toLowerCase();
   const tname=c=>(c.teacher&&(c.teacher.display_name||c.teacher.username))||"";
   const list=adminState.classes.filter(c=> !q || (c.name||"").toLowerCase().includes(q)||(c.code||"").toLowerCase().includes(q)||tname(c).toLowerCase().includes(q));
-  const toolBadge=c=> c.tool==="sql"?'<span class="badge blue" style="margin-left:6px">SQL</span>':c.tool==="filius"?'<span class="badge" style="margin-left:6px;background:#e7ddff;color:#6b3fd4">Filius</span>':c.tool==="java"?'<span class="badge" style="margin-left:6px;background:#ffe3c9;color:#a05a00">Java</span>':'<span class="badge gray" style="margin-left:6px">Hamster</span>';
+  const toolBadge=c=> c.tool==="sql"?'<span class="badge blue" style="margin-left:6px">SQL</span>':c.tool==="filius"?'<span class="badge" style="margin-left:6px;background:#e7ddff;color:#6b3fd4">Netzwerke</span>':c.tool==="java"?'<span class="badge" style="margin-left:6px;background:#ffe3c9;color:#a05a00">Java</span>':'<span class="badge gray" style="margin-left:6px">Hamster</span>';
   el.innerHTML = list.length ? `<div class="grid">${list.map(c=>`
       <div class="card click" data-id="${c.id}" data-tool="${esc(c.tool||"hamster")}"><h3>${esc(c.name)}${toolBadge(c)}</h3>
         <div class="meta">Code: <b>${esc(c.code)}</b> · 👩‍🏫 ${esc(tname(c)||"–")}</div></div>`).join("")}</div>`
@@ -1312,7 +1312,7 @@ async function teacherHome(){
 }
 function newClassDialog(opts){
   opts=opts||{};
-  const toolField = opts.pickTool ? `<div class="field"><label>Tool</label><select class="input" id="clTool"><option value="hamster">🐹 Hamster-Simulator</option><option value="sql">🗄️ SQL-Playground</option><option value="filius">🌐 Filius (Netzwerke)</option><option value="java">☕ Java</option></select></div>` : "";
+  const toolField = opts.pickTool ? `<div class="field"><label>Tool</label><select class="input" id="clTool"><option value="hamster">🐹 Hamster-Simulator</option><option value="sql">🗄️ SQL-Playground</option><option value="filius">🌐 Netzwerke (angelehnt an FILIUS)</option><option value="java">☕ Java</option></select></div>` : "";
   openModal(`<button class="x" onclick="closeModal()">✕</button>
     <h3>Neue Klasse</h3><p class="muted" style="margin:2px 0 16px">Gib der Klasse einen Namen – der Einlade-Code wird automatisch erzeugt.</p>
     ${toolField}
@@ -2678,15 +2678,15 @@ async function filiusTeacherHome(){
       <button class="btn btn-primary" id="btnNewClass" style="margin-left:8px">+ Neue Klasse</button></div>
     ${classes.length?`<div class="page-head" style="margin:0 0 12px">${classSearchSortControls()}</div>`:""}
     <div id="clsHost"></div>`;
-  document.getElementById("btnFilNets").onclick = ()=> filiusNetworksPage({label:"← Filius · Meine Klassen", go:filiusTeacherHome});
-  document.getElementById("btnFilTpl").onclick = ()=> filiusTemplatesPage({label:"← Filius · Meine Klassen", go:filiusTeacherHome});
+  document.getElementById("btnFilNets").onclick = ()=> filiusNetworksPage({label:"← Netzwerke · Meine Klassen", go:filiusTeacherHome});
+  document.getElementById("btnFilTpl").onclick = ()=> filiusTemplatesPage({label:"← Netzwerke · Meine Klassen", go:filiusTeacherHome});
   document.getElementById("btnFilSbx").onclick = ()=> filiusSandbox();
   document.getElementById("btnNewClass").onclick = newClassDialog;
   wireClassOverview(classes, c=>`
       <div class="card click" data-id="${c.id}"><h3>${esc(c.name)}</h3>
         <div class="meta">Code: <b>${esc(c.code)}</b></div></div>`,
     id=>{ viewFromAdmin=false; filiusTeacherClassView(id); },
-    `<div class="empty"><span class="ic">🌐</span>Noch keine Filius-Klassen. Erstelle deine erste Klasse!</div>`);
+    `<div class="empty"><span class="ic">🌐</span>Noch keine Netzwerk-Klassen. Erstelle deine erste Klasse!</div>`);
 }
 async function filiusStudentHome(){
   shell(`<div class="center-load"><span class="spin"></span>Wird geladen…</div>`);
@@ -2695,7 +2695,7 @@ async function filiusStudentHome(){
   try{ classes = await api.myClasses(); }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
   if(!classes.length){
     document.getElementById("view").innerHTML = `
-      <div class="page-head"><h2>🌐 Filius</h2><div class="spacer"></div><button class="btn btn-ghost" id="btnFilSbx">🧪 Sandbox</button></div>
+      <div class="page-head"><h2>🌐 Netzwerke</h2><div class="spacer"></div><button class="btn btn-ghost" id="btnFilSbx">🧪 Sandbox</button></div>
       <div class="card" style="max-width:480px;margin:0 auto;text-align:center">
         <div style="font-size:46px">🔑</div>
         <h3 style="margin:6px 0">Tritt deiner Klasse bei</h3>
@@ -2989,7 +2989,7 @@ async function filiusStudentProfilePage(classId, studentId, studentName, usernam
     <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(220px,1fr));margin-bottom:14px">
       <div class="card"><div class="meta">🪪 Benutzername</div><div style="font-weight:900;margin-top:4px"><code>${esc(username||"—")}</code></div></div>
       <div class="card"><div class="meta">🕐 Zuletzt eingeloggt</div><div style="font-weight:900;margin-top:4px">${esc(lastLogin)}</div></div>
-      <div class="card"><div class="meta">⚡ Letzte Filius-Abgabe</div><div style="font-weight:900;margin-top:4px">${esc(lastAct)}</div></div>
+      <div class="card"><div class="meta">⚡ Letzte Netzwerk-Abgabe</div><div style="font-weight:900;margin-top:4px">${esc(lastAct)}</div></div>
       <div class="card"><div class="meta">✅ Fortschritt</div><div style="font-weight:900;margin-top:4px">${passCount} bestanden · ${doneCount}/${asgs.length} bearbeitet</div></div>
     </div>
     <div class="card" style="margin-bottom:14px"><h3 style="margin:0 0 10px">📋 Aufgaben</h3><div class="list">${aRows}</div></div>
@@ -3003,7 +3003,7 @@ async function filiusStudentProfilePage(classId, studentId, studentName, usernam
 
 /* ---------- FILIUS: Netzwerk-Bibliothek ---------- */
 async function filiusNetworksPage(back){
-  const b = subBack(filiusNetworksPage, back) || {label:"← Filius · Meine Klassen", go:filiusTeacherHome};
+  const b = subBack(filiusNetworksPage, back) || {label:"← Netzwerke · Meine Klassen", go:filiusTeacherHome};
   shell(`<div class="center-load"><span class="spin"></span>Netzwerke…</div>`);
   let list=[]; try{ list=await api.filiusListNetworks(); }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
   const rows = list.length ? `<div class="list">${list.map(d=>`
@@ -3060,7 +3060,7 @@ async function filiusPickTemplate(classId){
   host.querySelectorAll(".clickrow[data-tpl]").forEach(r=> r.onclick=async()=>{ try{ const tpl=await api.filiusGetTemplate(r.dataset.tpl); closeModal(); filiusAssignmentEditorPage(classId, null, tpl); }catch(e){ toast(e.message||"Fehler","err"); } });
 }
 async function filiusTemplatesPage(back){
-  const b = subBack(filiusTemplatesPage, back) || {label:"← Filius · Meine Klassen", go:filiusTeacherHome};
+  const b = subBack(filiusTemplatesPage, back) || {label:"← Netzwerke · Meine Klassen", go:filiusTeacherHome};
   shell(`<div class="center-load"><span class="spin"></span>Vorlagen…</div>`);
   let list=[]; try{ list=await api.filiusListTemplates(); }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
   const rows = list.length ? `<div class="list">${list.map(t=>`
@@ -3122,7 +3122,7 @@ function renderFiliusAssignEditor(){
   document.getElementById("view").innerHTML = `
     <div class="page-head"><button class="crumb" id="back">${s.isTemplate?"← Vorlagen":"← Zur Klasse"}</button></div>
     <div class="card" style="margin-bottom:14px">
-      <div class="page-head" style="margin:0 0 12px"><h2 style="margin:0">${s.isTemplate?(s.templateId?"Vorlage bearbeiten":"Neue Vorlage"):(s.id?"Filius-Aufgabe bearbeiten":"Neue Filius-Aufgabe")}</h2><div class="spacer"></div>
+      <div class="page-head" style="margin:0 0 12px"><h2 style="margin:0">${s.isTemplate?(s.templateId?"Vorlage bearbeiten":"Neue Vorlage"):(s.id?"Netzwerk-Aufgabe bearbeiten":"Neue Netzwerk-Aufgabe")}</h2><div class="spacer"></div>
         ${s.isTemplate?"":`<button class="btn btn-ghost btn-sm" id="faTpl" title="Diese Aufgabe als wiederverwendbare Vorlage speichern">⭐ Als Vorlage</button>`}
         <button class="btn btn-primary" id="faSave" style="margin-left:8px">${s.isTemplate?"💾 Vorlage speichern":"💾 Aufgabe speichern"}</button></div>
       <div class="field"><label>${s.isTemplate?"Titel der Vorlage":"Titel der Aufgabe"}</label><input class="input" id="faTitle" maxlength="120" value="${esc(s.title)}"></div>
@@ -3254,7 +3254,7 @@ async function filiusSandbox(back){
     : `<div class="empty"><span class="ic">🧪</span>Noch keine Projekte. Leg dein erstes an!</div>`;
   document.getElementById("view").innerHTML = `
     <div class="page-head"><button class="crumb" id="back">${esc(b.label)}</button></div>
-    <div class="page-head" style="margin-top:0"><h2>🧪 Filius-Sandbox</h2><div class="spacer"></div><button class="btn btn-primary" id="btnNewSbx">+ Neues Projekt</button></div>
+    <div class="page-head" style="margin-top:0"><h2>🧪 Netzwerk-Sandbox</h2><div class="spacer"></div><button class="btn btn-primary" id="btnNewSbx">+ Neues Projekt</button></div>
     <div class="card" style="margin-bottom:12px;padding:12px 16px"><span class="muted" style="font-size:13px">Baue frei ein Netzwerk, teste im Simulationsmodus mit ping &amp; Co. – und speichere deine eigenen Projekte.</span></div>
     ${list}`;
   document.getElementById("back").onclick = b.go;
@@ -4183,6 +4183,13 @@ async function javaSandboxProject(projectId){
 }
 
 const PATCH_NOTES = [
+  { v:"2.38", date:"10. August 2026", title:"📜 Lizenzen & Herkunft – wir nennen die Vorbilder", items:[
+    `<b>Neue Seite „Lizenzen &amp; Herkunft":</b> Unten im Footer verlinkt. Dort steht jetzt vollständig, worauf diese Plattform aufbaut – mit Urheber:innen, Lizenzen und Quellen.`,
+    `<b>Netzwerke:</b> Das Werkzeug heißt jetzt <b>🌐 Netzwerke</b> (statt „Filius") und nennt offen, dass es ein Nachbau der Lernsoftware <b>FILIUS</b> der Universität Siegen ist. Die Oberflächen-Grafiken stammen aus FILIUS und werden – wie es die <b>GNU GPL v3</b> verlangt – mit Urhebernennung und beiliegendem Lizenztext weitergegeben.`,
+    `<b>Hamster:</b> Wir nennen jetzt ausdrücklich das <b>Java-Hamster-Modell von Dr.-Ing. Dietrich Boles</b> (Universität Oldenburg) als Vorbild. Unser Simulator ist eine eigene Neuprogrammierung – aber die Idee stammt von ihm, und das gehört dazugesagt.`,
+    `<b>Impressum:</b> Der Satz „Alle Rechte vorbehalten" galt versehentlich auch für fremde Inhalte. Jetzt steht dort korrekt, dass wir die Rechte nur an <b>unseren eigenen</b> Teilen halten.`,
+    `Beide Werkzeuge sind <b>keine offiziellen Produkte</b> der genannten Projekte oder Universitäten.`,
+  ]},
   { v:"2.37", date:"10. August 2026", title:"🔒 Sicherheits-Update", items:[
     `<b>Lehrer-Registrierung neu:</b> Statt eines festen Lehrer-Codes gibt es jetzt <b>persönliche Einladungscodes</b>. Die Administration erstellt sie im Admin-Bereich unter „✉️ Lehrer-Einladungen"; jeder Code gilt <b>genau einmal</b> und läuft ab. <i>Der alte Code funktioniert nicht mehr.</i>`,
     `<b>Konten besser geschützt:</b> Das Zurücksetzen eines Schüler-Passworts ist nur noch möglich, wenn die Schüler:in ohne dein Zutun in deiner Klasse ist (selbst beigetreten oder von der Administration eingetragen) – so kann sich niemand die Berechtigung selbst verschaffen. Außerdem lassen sich nur noch <b>Schüler:innen</b> in Klassen eintragen und zurücksetzen.`,
@@ -4477,7 +4484,7 @@ function patchNotesDialog(){
 }
 
 /* ---------- Footer: Versionsnummer (aus den Patch-Notes) + Copyright ---------- */
-const APP_BUILD = "2026-08-10 19:20";   // letztes Update (im Patch-Notes-Dialog angezeigt)
+const APP_BUILD = "2026-08-10 21:40";   // letztes Update (im Patch-Notes-Dialog angezeigt)
 /* ============================================================================
    Browser-Zurück (SPA-History) + Favicon/Titel je Tool
    ============================================================================ */
@@ -4556,6 +4563,7 @@ const NAV = { map: new Map(), order: [], n: 0, silent: false, first: true, lastK
 })();
 
 (function(){ const f=document.getElementById("appfoot"); if(f){ const v=(typeof PATCH_NOTES!=="undefined"&&PATCH_NOTES[0])?PATCH_NOTES[0].v:"";
-  f.innerHTML='© 2026 Laurens Offinger &amp; Sebastian Glücks · Version '+v+' · <a href="impressum.html" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:3px" onmouseover="this.style.color=\'var(--blue)\'" onmouseout="this.style.color=\'inherit\'">Impressum</a>'; } })();
+  const lnk=(href,txt)=>'<a href="'+href+'" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:3px" onmouseover="this.style.color=\'var(--blue)\'" onmouseout="this.style.color=\'inherit\'">'+txt+'</a>';
+  f.innerHTML='© 2026 Laurens Offinger &amp; Sebastian Glücks · Version '+v+' · '+lnk("impressum.html","Impressum")+' · '+lnk("lizenzen.html","Lizenzen"); } })();
 
 boot();
