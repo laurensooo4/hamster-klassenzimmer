@@ -73,6 +73,34 @@ const CSS = `
 .jv-hgrip::after{content:"";width:56px;height:3px;border-radius:2px;background:var(--muted,#7a8aa0);opacity:.45}
 .jv-status{font-size:12px;color:var(--muted,#7a8aa0);font-weight:700;margin-left:auto}
 .jv-status .run{color:var(--green-d,#46a302)}
+/* ---------- Light-Mode: heller Editor + helle Konsole (dunkel bleibt der Standard) ---------- */
+:root[data-theme="light"] .jv-tab.on{background:#fff;color:#1f2530}
+:root[data-theme="light"] .jv-edwrap{background:#fff}
+:root[data-theme="light"] .jv-gutter{background:#f3f6fa;border-right-color:#e3e9f1;color:#7a8aa0}
+:root[data-theme="light"] .jv-hl{color:#1f2530}
+:root[data-theme="light"] .jv-ed{caret-color:#1a2330}
+:root[data-theme="light"] .jv-ed[readonly]{caret-color:transparent}
+:root[data-theme="light"] .jv-ed::selection{background:rgba(28,176,246,.22)}
+:root[data-theme="light"] .jv .c-kw{color:#a626a4}
+:root[data-theme="light"] .jv .c-type{color:#0184bc}
+:root[data-theme="light"] .jv .c-lit{color:#e45649}
+:root[data-theme="light"] .jv .c-call{color:#4078f2}
+:root[data-theme="light"] .jv .c-str{color:#50a14f}
+:root[data-theme="light"] .jv .c-num{color:#b76b01}
+:root[data-theme="light"] .jv .c-com{color:#7a8aa0}
+:root[data-theme="light"] .jv-tip{background:#fff;color:#3c4858;border-color:#dbe3ec;box-shadow:0 8px 22px rgba(30,40,60,.18)}
+:root[data-theme="light"] .jv-tip .sig{color:#0184bc}
+:root[data-theme="light"] .jv-tip .desc{color:#7a8aa0}
+:root[data-theme="light"] .jv-console{background:#fafbfd}
+:root[data-theme="light"] .jv-chead{color:#5d6b7e;background:#eef2f7}
+:root[data-theme="light"] .jv-chead button{color:#5d6b7e}
+:root[data-theme="light"] .jv-cout{color:#1f2530}
+:root[data-theme="light"] .jv-cout .err{color:#d03530}
+:root[data-theme="light"] .jv-cout .sys{color:#3a6ea8}
+:root[data-theme="light"] .jv-cout .inp{color:#2f8f3f}
+:root[data-theme="light"] .jv-cin{background:#eef2f7;border-top-color:#dbe3ec}
+:root[data-theme="light"] .jv-cin .pfx{color:#2f8f3f}
+:root[data-theme="light"] .jv-cin input{border-color:#d6dee9;background:#fff;color:#1f2530}
 `;
 
 function ensureStyles(){

@@ -4120,6 +4120,10 @@ async function javaSandboxProject(projectId){
 }
 
 const PATCH_NOTES = [
+  { v:"2.36", date:"10. August 2026", title:"🌗 Heller Editor im hellen Design", items:[
+    `<b>Echte Wahl zwischen hell und dunkel:</b> Im hellen Design sind der <b>Java-Editor samt Konsole</b> und der <b>Hamster-Editor</b> jetzt hell – weißer Hintergrund, dunkle Schrift und eine helle Syntax-Farbpalette. Im dunklen Design bleibt alles wie gewohnt dunkel.`,
+    `Auch die <b>Hover-Erklärungen</b> im Java-Editor und die <b>Eingabezeile der Konsole</b> passen sich dem Design an.`,
+  ]},
   { v:"2.35", date:"10. August 2026", title:"☕ Java-Ausbau: Historie, Musterlösungen, farbiger Editor & mehr", items:[
     `<b>Farbiger Code wie beim Hamster:</b> Der Java-Editor hat jetzt Syntax-Farben im dunklen Design – und beim <b>Zeigen auf einen Methodennamen</b> erscheint eine Erklärung mit der Signatur (eigene Methoden UND eingebaute wie println, nextInt, substring …).`,
     `<b>Mehrere Abgaben mit Historie:</b> Wie beim Hamster kannst du jetzt mehrfach abgeben. Die <b>Historie steht unter der Konsole</b> – jede Abgabe lässt sich wieder laden (📂) oder zur aktuellen machen (⭐).`,
@@ -4403,7 +4407,7 @@ function patchNotesDialog(){
 }
 
 /* ---------- Footer: Versionsnummer (aus den Patch-Notes) + Copyright ---------- */
-const APP_BUILD = "2026-08-10 14:30";   // letztes Update (im Patch-Notes-Dialog angezeigt)
+const APP_BUILD = "2026-08-10 17:00";   // letztes Update (im Patch-Notes-Dialog angezeigt)
 /* ============================================================================
    Browser-Zurück (SPA-History) + Favicon/Titel je Tool
    ============================================================================ */

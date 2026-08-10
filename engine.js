@@ -567,6 +567,22 @@ function injectStyles(){
   .hv .actLine{position:absolute;left:0;right:0;height:var(--lh);background:rgba(231,161,58,.16);border-left:3px solid #e7a13a;pointer-events:none;display:none}
   .hv .actLine.err{background:rgba(255,75,75,.18);border-left-color:#ff4b4b}
   .hv .c-kw{color:#c792ea}.hv .c-type{color:#82d2ff}.hv .c-lit{color:#ff9e7a}.hv .c-cmd{color:#82aaff}.hv .c-test{color:#ffcb6b}.hv .c-cst{color:#f78cc4}.hv .c-str{color:#c3e88d}.hv .c-num{color:#ff9e7a}.hv .c-com{color:#5f6b7d;font-style:italic}
+  /* Light-Mode: heller Editor mit dunkler Schrift (gleiche Palette wie Java-IDE) */
+  :root[data-theme="light"] .hv .editor{background:#fff}
+  :root[data-theme="light"] .hv #g,:root[data-theme="light"] .hv .gut{background:#f3f6fa;border-right-color:#e3e9f1}
+  :root[data-theme="light"] .hv .gutInner{color:#7a8aa0}
+  :root[data-theme="light"] .hv .codeHL{color:#1f2530}
+  :root[data-theme="light"] .hv .code{caret-color:#1a2330}
+  :root[data-theme="light"] .hv .code[readonly]{caret-color:transparent}
+  :root[data-theme="light"] .hv .c-kw{color:#a626a4}
+  :root[data-theme="light"] .hv .c-type{color:#0184bc}
+  :root[data-theme="light"] .hv .c-lit{color:#e45649}
+  :root[data-theme="light"] .hv .c-cmd{color:#4078f2}
+  :root[data-theme="light"] .hv .c-test{color:#c18401}
+  :root[data-theme="light"] .hv .c-cst{color:#c2418f}
+  :root[data-theme="light"] .hv .c-str{color:#50a14f}
+  :root[data-theme="light"] .hv .c-num{color:#b76b01}
+  :root[data-theme="light"] .hv .c-com{color:#7a8aa0}
   .hv .boardWrap{flex:1;min-height:300px;display:flex;align-items:center;justify-content:center;padding:12px;background:radial-gradient(circle at 50% 40%,#f4f8ee,#e9f0e0)}
   .hv .board{position:relative;display:grid;border-radius:9px;overflow:hidden;box-shadow:0 5px 16px rgba(60,80,40,.18),inset 0 0 0 2px rgba(255,255,255,.35);grid-template-columns:repeat(var(--cols),var(--cell));grid-template-rows:repeat(var(--rows),var(--cell))}
   .hv .tile{position:relative;width:var(--cell);height:var(--cell);display:flex;align-items:center;justify-content:center}
