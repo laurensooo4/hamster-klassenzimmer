@@ -21,15 +21,47 @@
   function uid(pre){ return (pre||"f")+Math.random().toString(36).slice(2,9); }
   function el(tag, cls, html){ var e=document.createElement(tag); if(cls) e.className=cls; if(html!=null) e.innerHTML=html; return e; }
 
-  // Erlaubt einfaches HTML in der Webbrowser-Vorschau, entfernt Skripte/Events
+  // Erlaubt einfaches HTML in der Webbrowser-Vorschau.
+  // ALLOWLIST (keine Blocklist!): Schüler-HTML wird auch in der Lehrer-Sitzung
+  // gerendert, und Blocklists lassen sich umgehen (z. B. href="jav&#9;ascript:…").
+  // Es wird nur neu aufgebaut, was hier ausdrücklich erlaubt ist.
+  var OK_TAGS = {A:1,ABBR:1,B:1,BLOCKQUOTE:1,BR:1,CAPTION:1,CENTER:1,CODE:1,DD:1,DIV:1,DL:1,DT:1,EM:1,
+    FIGCAPTION:1,FIGURE:1,FONT:1,H1:1,H2:1,H3:1,H4:1,H5:1,H6:1,HR:1,I:1,IMG:1,LI:1,OL:1,P:1,PRE:1,
+    SMALL:1,SPAN:1,STRONG:1,SUB:1,SUP:1,TABLE:1,TBODY:1,TD:1,TFOOT:1,TH:1,THEAD:1,TR:1,U:1,UL:1};
+  var OK_ATTRS = {href:1,src:1,alt:1,title:1,width:1,height:1,align:1,color:1,border:1,colspan:1,rowspan:1};
+  var DROP_WITH_CONTENT = {SCRIPT:1,STYLE:1,TEMPLATE:1,IFRAME:1,OBJECT:1,EMBED:1,SVG:1,MATH:1,NOSCRIPT:1,
+    FRAME:1,FRAMESET:1,APPLET:1,HEAD:1,BASE:1,META:1,LINK:1};
+  function safeUrl(v){
+    // Whitespace/Steuerzeichen entfernen, damit "jav&#9;ascript:" nicht durchrutscht
+    var s=String(v==null?"":v).replace(/[^!-~]/g,"").toLowerCase();
+    if(/^[a-z][a-z0-9+.\-]*:/.test(s) && !/^https?:/.test(s)) return null;   // nur http(s) oder relativ
+    return String(v);
+  }
   function escHtmlSafe(html){
-    var d=document.createElement("div"); d.innerHTML=String(html||"");
-    (function clean(x){ Array.prototype.slice.call(x.querySelectorAll("*")).forEach(function(n){
-      if(/^(script|style|iframe|object|embed|link|meta|svg|math|base|template|form|button|input|textarea|select|frame|frameset|applet)$/i.test(n.tagName)){ n.remove(); return; }
-      Array.prototype.slice.call(n.attributes).forEach(function(at){ var nm=(at.name||"").toLowerCase();
-        if(/^on/i.test(nm) || nm==="style" || nm.indexOf("xlink")===0 || nm==="xmlns" || ((/(href|src|action)$/i.test(nm))&&/^\s*(javascript|data|vbscript):/i.test(at.value))) n.removeAttribute(at.name);
-      }); }); })(d);
-    return d.innerHTML;
+    var body, out=document.createElement("div");
+    try{ body=new DOMParser().parseFromString(String(html||""), "text/html").body; }catch(e){ return ""; }
+    if(!body) return "";
+    (function copy(from, to){
+      for(var n=from.firstChild; n; n=n.nextSibling){
+        if(n.nodeType===3){ to.appendChild(document.createTextNode(n.nodeValue)); continue; }
+        if(n.nodeType!==1) continue;
+        var tag=String(n.tagName||"").toUpperCase();
+        if(DROP_WITH_CONTENT[tag]) continue;                      // samt Inhalt verwerfen
+        if(!OK_TAGS[tag]){ copy(n, to); continue; }               // unbekanntes Tag: nur Inhalt behalten
+        var e=document.createElement(tag);
+        for(var i=0;i<n.attributes.length;i++){
+          var at=n.attributes[i], nm=String(at.name||"").toLowerCase();
+          if(!OK_ATTRS[nm]) continue;                              // on*, style, xlink … fallen hier raus
+          var val=at.value;
+          if(nm==="href"||nm==="src"){ val=safeUrl(val); if(val===null) continue; }
+          try{ e.setAttribute(nm, val); }catch(err){}
+        }
+        if(tag==="A") e.setAttribute("rel","noopener noreferrer nofollow");
+        copy(n, e);
+        to.appendChild(e);
+      }
+    })(body, out);
+    return out.innerHTML;
   }
 
   /* ---- Hardware-Typen (Palette + Canvas) ---- */

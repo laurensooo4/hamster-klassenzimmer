@@ -141,9 +141,9 @@ function renderAuth(){
   const logoSrc = cfg.LOGO_URL || "logo-gywem.png";   // Standard: Schul-Logo (Fallback 🐹, falls Datei fehlt)
   const logo = `<img src="${esc(logoSrc)}" alt="Logo" style="max-height:92px;max-width:82%;object-fit:contain" onerror="this.outerHTML='${HAMSTER}'">`;
   const codeField = isReg ? (s.role==="teacher"
-      ? `<div class="field"><label>Lehrer-Code</label><input class="input" id="auCode" placeholder="Code von der Schulleitung" autocomplete="off"></div>`
+      ? `<div class="field"><label>Einladungscode</label><input class="input" id="auCode" placeholder="z. B. AB3KM-7PQXR-…" autocomplete="off" style="font-family:ui-monospace,Consolas,monospace;letter-spacing:1px"></div>`
       : `<div class="field"><label>Klassencode <span style="color:#7a8aa0;font-weight:600;text-transform:none;letter-spacing:0">(optional)</span></label><input class="input" id="auCode" placeholder="z. B. K7Q2MX – kann leer bleiben" autocomplete="off" style="text-transform:uppercase;letter-spacing:2px;font-family:monospace"></div>`) : "";
-  const foot = isReg ? (s.role==="teacher" ? "Lehrer:innen brauchen den Lehrer-Code." : "Mit Klassencode trittst du direkt bei – oder ohne starten und später beitreten.")
+  const foot = isReg ? (s.role==="teacher" ? "Lehrer:innen brauchen einen persönlichen Einladungscode von der Administration." : "Mit Klassencode trittst du direkt bei – oder ohne starten und später beitreten.")
                      : (allowReg ? 'Noch kein Account? Tippe oben auf "Registrieren".' : 'Deine Zugangsdaten bekommst du von deiner Schule.');
   app().innerHTML = `
   <div class="auth-wrap"><div class="auth-card">
@@ -202,7 +202,7 @@ async function doRegister(){
   if(!/^[a-z0-9_.\-]{3,20}$/.test(u)){ authMsg("Benutzername: 3-20 Zeichen, nur Buchstaben/Zahlen/._-"); return; }
   if(!first||!last){ authMsg("Bitte Vor- und Nachnamen eingeben."); return; }
   if(p.length<6){ authMsg("Das Passwort muss mindestens 6 Zeichen haben."); return; }
-  if(role==="teacher" && !code){ authMsg("Bitte den Lehrer-Code eingeben."); return; }
+  if(role==="teacher" && !code){ authMsg("Bitte den Einladungscode eingeben."); return; }
   const displayName = first+" "+last;
   setBusy(true);
   ACTIVE_TOOL=null;   // Standard: nach Registrierung Tool-Auswahl (bei Klassencode-Beitritt unten überschrieben)
@@ -211,7 +211,7 @@ async function doRegister(){
   if(role==="teacher"){
     const { data:ok, error:e1 } = await sb.rpc("check_teacher_code", { p_code: code });
     if(e1){ setBusy(false); authMsg("Prüfung fehlgeschlagen: "+e1.message); return; }
-    if(!ok){ setBusy(false); authMsg("Falscher Lehrer-Code."); return; }
+    if(!ok){ setBusy(false); authMsg("Dieser Einladungscode ist ungültig, schon benutzt oder abgelaufen."); return; }
   } else if(code){
     const { data:cn, error:e1 } = await sb.rpc("class_exists", { p_code: code });
     if(e1){ setBusy(false); authMsg("Prüfung fehlgeschlagen: "+e1.message); return; }
@@ -396,6 +396,10 @@ api.setClassJoinOpen = async (classId, open)=>{ const {error}=await sb.from("cla
 api.regenerateClassCode = async (classId)=>{ for(let t=0;t<6;t++){ const code=genCode(6); const {error}=await sb.from("classes").update({code}).eq("id",classId); if(!error) return code; if(!/duplicate|unique/i.test(error.message)) throw error; } throw new Error("Konnte keinen eindeutigen Code erzeugen."); };
 api.adminSetRole = async (userId, role)=>{ const {error}=await sb.rpc("admin_set_role",{p_user:userId, p_role:role}); if(error) throw error; };
 api.adminSetDisplayName = async (userId, name)=>{ const {error}=await sb.rpc("admin_set_display_name",{p_user:userId, p_display:name}); if(error) throw error; };
+/* ===== Lehrer-Einladungen (phaseZ): einmalige, ablaufende Codes statt festem Lehrer-Code ===== */
+api.adminListInvites = async ()=>{ const {data,error}=await sb.from("teacher_invites").select("token_hash,note,created_at,expires_at,used_at,used_by,user:used_by(display_name,username)").order("created_at",{ascending:false}); if(error) throw error; return data||[]; };
+api.adminCreateInvite = async (note, days)=>{ const {data,error}=await sb.rpc("admin_create_teacher_invite",{p_note:note||null, p_days:days||14}); if(error) throw error; return data; };
+api.adminDeleteInvite = async (hash)=>{ const {error}=await sb.from("teacher_invites").delete().eq("token_hash",hash); if(error) throw error; };
 /* ===== SQL-Playground: Datenbank-Bibliothek ===== */
 api.sqlListDatabases = async ()=>{ const {data,error}=await sb.rpc("shared_sql_databases"); if(error) throw error; return data||[]; };
 api.sandboxSqlDatabases = async ()=>{ const {data,error}=await sb.rpc("sandbox_sql_databases"); if(error) throw error; return data||[]; };   // Sandbox: geteilte + eigene (Lehrer) + Aufgaben-DBs (Schüler)
@@ -1056,13 +1060,71 @@ async function adminHome(){
     <div class="card">
       <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px"><h3 style="margin:0">👥 Nutzer:innen <span class="badge gray">${users.length}</span> <span class="muted" style="font-weight:600;font-size:12px">· ${tN} Lehrkräfte · ${sN} Schüler:innen${aN?" · "+aN+" Admin":""}</span></h3><div style="flex:1"></div>
         <button class="btn btn-ghost btn-sm" id="admImport" style="margin-right:8px">📥 Importieren</button><input class="input" id="admUsrSearch" placeholder="🔍 Name · Benutzername" style="max-width:260px"></div>
-      <div id="admUsers" style="margin-top:12px"></div></div>`;
+      <div id="admUsers" style="margin-top:12px"></div></div>
+    <div class="card" style="margin-top:16px">
+      <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px"><h3 style="margin:0">✉️ Lehrer-Einladungen</h3><div style="flex:1"></div>
+        <button class="btn btn-primary btn-sm" id="admNewInvite">+ Einladung erstellen</button></div>
+      <p class="muted" style="margin:6px 0 0;font-size:13px">Wer sich als <b>Lehrkraft</b> registrieren will, braucht einen Einladungscode von dir. Jeder Code gilt <b>einmal</b> und läuft ab.</p>
+      <div id="admInvites" style="margin-top:12px"></div></div>`;
   document.getElementById("admBack").onclick = ()=> route();   // zurück ins aktive Tool (nicht hart Hamster)
   document.getElementById("btnNewClass").onclick = ()=> newClassDialog({pickTool:true});
   const cs=document.getElementById("admClsSearch"), us=document.getElementById("admUsrSearch");
   cs.oninput=()=> renderAdminClasses(cs.value); us.oninput=()=> renderAdminUsers(us.value);
   document.getElementById("admImport").onclick = ()=> adminImportDialog();
-  renderAdminClasses(""); renderAdminUsers("");
+  document.getElementById("admNewInvite").onclick = ()=> newInviteDialog();
+  renderAdminClasses(""); renderAdminUsers(""); renderAdminInvites();
+}
+
+/* ---------- Admin: Lehrer-Einladungen (phaseZ) ---------- */
+async function renderAdminInvites(){
+  const el=document.getElementById("admInvites"); if(!el) return;
+  el.innerHTML = `<div class="muted" style="font-size:13px">Lade…</div>`;
+  let list=[];
+  try{ list = await api.adminListInvites(); }
+  catch(e){ el.innerHTML = `<div class="empty" style="padding:14px"><span class="ic">⚠️</span>Einladungen konnten nicht geladen werden. Wurde <code>schema_update_phaseZ_security.sql</code> schon eingespielt?</div>`; return; }
+  if(!list.length){ el.innerHTML = `<div class="empty" style="padding:14px"><span class="ic">✉️</span>Noch keine Einladung erstellt.</div>`; return; }
+  const now=Date.now();
+  const rows=list.map(v=>{
+    const used=!!v.used_at, exp=new Date(v.expires_at).getTime()<now;
+    const who=v.user?(v.user.display_name||v.user.username):"";
+    const status = used ? `<span class="badge gray">benutzt${who?" · "+esc(who):""}</span>`
+                : exp ? `<span class="badge gray">abgelaufen</span>`
+                      : `<span class="badge blue">offen bis ${esc(fmtDateTime(v.expires_at))}</span>`;
+    return `<tr><td class="stu">${esc(v.note||"–")}</td><td>${status}</td><td class="muted" style="font-size:12px">${esc(fmtDateTime(v.created_at))}</td>
+      <td style="white-space:nowrap"><button class="btn btn-sm btn-ghost" data-delinv="${esc(v.token_hash)}" title="Einladung entfernen">🗑️</button></td></tr>`;
+  }).join("");
+  el.innerHTML = `<div style="overflow:auto"><table class="matrix" style="width:100%"><thead><tr><th class="stu">Notiz</th><th>Status</th><th>Erstellt</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  el.querySelectorAll("[data-delinv]").forEach(b=> b.onclick=async()=>{
+    if(!confirm("Diese Einladung entfernen? Ein noch nicht benutzter Code wird dadurch ungültig.")) return;
+    try{ await api.adminDeleteInvite(b.dataset.delinv); toast("Einladung entfernt","ok"); renderAdminInvites(); }
+    catch(e){ toast(e.message||"Fehler","err"); }
+  });
+}
+function newInviteDialog(){
+  openModal(`<button class="x" onclick="closeModal()">✕</button>
+    <h3>✉️ Lehrer-Einladung erstellen</h3>
+    <p class="muted" style="margin:2px 0 14px">Der Code wird dir <b>nur einmal</b> angezeigt – danach ist er nicht mehr lesbar (er liegt nur verschlüsselt in der Datenbank).</p>
+    <div class="field"><label>Für wen? (Notiz)</label><input class="input" id="ivNote" maxlength="60" placeholder="z. B. Herr Glücks"></div>
+    <div class="field"><label>Gültig für</label><select class="input" id="ivDays">
+      <option value="7">7 Tage</option><option value="14" selected>14 Tage</option><option value="30">30 Tage</option><option value="90">90 Tage</option></select></div>
+    <button class="btn btn-primary btn-lg" id="ivGo">Einladung erstellen</button>`);
+  const note=document.getElementById("ivNote"); note.focus();
+  document.getElementById("ivGo").onclick = async ()=>{
+    const btn=document.getElementById("ivGo"); btn.disabled=true; btn.textContent="Erstelle…";
+    try{
+      const code = await api.adminCreateInvite(note.value.trim(), parseInt(document.getElementById("ivDays").value,10));
+      openModal(`<button class="x" onclick="closeModal()">✕</button>
+        <h3>✅ Einladung erstellt</h3>
+        <p class="muted" style="margin:2px 0 12px">Gib diesen Code weiter. Er funktioniert <b>genau einmal</b> und wird <b>nicht wieder angezeigt</b>.</p>
+        <div style="background:var(--bg,#f7f9fc);border:2px dashed var(--line,#e6ebf2);border-radius:12px;padding:16px;text-align:center;font-family:ui-monospace,Consolas,monospace;font-size:20px;font-weight:800;letter-spacing:2px;word-break:break-all" id="ivCode">${esc(code)}</div>
+        <button class="btn btn-ghost btn-lg" id="ivCopy" style="margin-top:12px">📋 Kopieren</button>`);
+      document.getElementById("ivCopy").onclick = ()=>{
+        try{ navigator.clipboard.writeText(code); toast("Code kopiert ✓","ok"); }
+        catch(e){ toast("Bitte von Hand markieren und kopieren.","err"); }
+      };
+      renderAdminInvites();
+    }catch(e){ btn.disabled=false; btn.textContent="Einladung erstellen"; toast(e.message||"Fehler","err"); }
+  };
 }
 function renderAdminClasses(q){
   const el=document.getElementById("admClasses"); if(!el||!adminState) return;
@@ -3979,6 +4041,7 @@ async function javaAssignmentEditorPage(classId, existing, prefillTpl, isTemplat
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
         <span class="acts"><button class="abtn on" id="jvSubStart" title="Dateien, die Schüler:innen bekommen">📝 Startdateien</button><button class="abtn" id="jvSubSol" title="Deine Lösung (Schüler:innen sehen sie nie – außer du gibst sie frei)">🏆 Musterlösung</button></span>
         <span class="muted" style="font-size:12px" id="jvSubHint">Diese Dateien bekommen die Schüler:innen als Start.</span></div>
+      <div class="muted" style="font-size:12px;margin-top:6px">🙈 <b>Ausgeblendete</b> Startdateien werden im Schüler-Editor nicht angezeigt, aber <b>mitkompiliert</b> – sie sind technisch auslesbar. Lösungen und Prüf-Geheimnisse gehören in die <b>🏆 Musterlösung</b> bzw. in <b>versteckte Testfälle</b>; die liegen serverseitig geschützt.</div>
     </div>
     <div id="jvHost" style="--jvMin:480px;height:60vh;min-height:480px"></div>`;
   document.getElementById("back").onclick = ()=>{ syncJavaEditor(); backTo(); };
@@ -4120,6 +4183,13 @@ async function javaSandboxProject(projectId){
 }
 
 const PATCH_NOTES = [
+  { v:"2.37", date:"10. August 2026", title:"🔒 Sicherheits-Update", items:[
+    `<b>Lehrer-Registrierung neu:</b> Statt eines festen Lehrer-Codes gibt es jetzt <b>persönliche Einladungscodes</b>. Die Administration erstellt sie im Admin-Bereich unter „✉️ Lehrer-Einladungen"; jeder Code gilt <b>genau einmal</b> und läuft ab. <i>Der alte Code funktioniert nicht mehr.</i>`,
+    `<b>Konten besser geschützt:</b> Das Zurücksetzen eines Schüler-Passworts ist nur noch möglich, wenn die Schüler:in ohne dein Zutun in deiner Klasse ist (selbst beigetreten oder von der Administration eingetragen) – so kann sich niemand die Berechtigung selbst verschaffen. Außerdem lassen sich nur noch <b>Schüler:innen</b> in Klassen eintragen und zurücksetzen.`,
+    `<b>Abgaben:</b> Beim Hamster kann – wie bei den anderen Werkzeugen längst – nichts mehr in Klassen abgegeben werden, in denen man nicht Mitglied ist.`,
+    `<b>Filius:</b> Die Webbrowser-Vorschau zeigt Schüler-Seiten jetzt über eine strenge Positivliste an (nur erlaubte Elemente) – eingebauter Schadcode kann nicht mehr ausgeführt werden.`,
+    `<b>Java – wichtig für Lehrkräfte:</b> 🙈 ausgeblendete Startdateien werden im Editor nicht angezeigt, aber <b>mitkompiliert</b> und sind daher auslesbar. Sie sind <b>kein Versteck für Lösungen</b>. Musterlösungen und versteckte Testfälle liegen weiterhin serverseitig geschützt – dort gehören Geheimnisse hin.`,
+  ]},
   { v:"2.36", date:"10. August 2026", title:"🌗 Heller Editor im hellen Design", items:[
     `<b>Echte Wahl zwischen hell und dunkel:</b> Im hellen Design sind der <b>Java-Editor samt Konsole</b> und der <b>Hamster-Editor</b> jetzt hell – weißer Hintergrund, dunkle Schrift und eine helle Syntax-Farbpalette. Im dunklen Design bleibt alles wie gewohnt dunkel.`,
     `Auch die <b>Hover-Erklärungen</b> im Java-Editor und die <b>Eingabezeile der Konsole</b> passen sich dem Design an.`,
@@ -4407,7 +4477,7 @@ function patchNotesDialog(){
 }
 
 /* ---------- Footer: Versionsnummer (aus den Patch-Notes) + Copyright ---------- */
-const APP_BUILD = "2026-08-10 17:00";   // letztes Update (im Patch-Notes-Dialog angezeigt)
+const APP_BUILD = "2026-08-10 19:20";   // letztes Update (im Patch-Notes-Dialog angezeigt)
 /* ============================================================================
    Browser-Zurück (SPA-History) + Favicon/Titel je Tool
    ============================================================================ */

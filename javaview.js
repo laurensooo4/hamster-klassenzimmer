@@ -490,7 +490,7 @@ JavaView.prototype._renderTabs = function(){
   this.el.tabs.innerHTML = vis.map(f => {
     const i = this.files.indexOf(f);
     const marks = (f.readonly ? '<span class="ic" title="schreibgeschützt">🔒</span>' : "") +
-                  (f.hidden ? '<span class="ic" title="für Schüler:innen unsichtbar">🙈</span>' : "");
+                  (f.hidden ? '<span class="ic" title="im Editor ausgeblendet (wird mitkompiliert – kein Versteck für Lösungen!)">🙈</span>' : "");
     return '<span class="jv-tab' + (f === act ? " on" : "") + '" data-fi="' + i + '">' + escH(f.name) + marks + "</span>";
   }).join("");
   const self = this;
@@ -506,7 +506,7 @@ JavaView.prototype._renderTabs = function(){
     this.el.fileacts.innerHTML =
       '<b style="color:var(--ink,#3c4858)">' + escH(f.name) + "</b>" +
       (flags ? '<label><input type="checkbox" data-fa="ro"' + (f.readonly ? " checked" : "") + "> 🔒 schreibgeschützt (für Schüler:innen)</label>" +
-               '<label><input type="checkbox" data-fa="hid"' + (f.hidden ? " checked" : "") + "> 🙈 versteckt (wird mitkompiliert)</label>" : "") +
+               '<label title="Blendet die Datei im Schüler-Editor aus. Sie wird mitkompiliert und ist daher technisch auslesbar – KEINE Musterlösungen oder Prüf-Geheimnisse hier ablegen! Dafür gibt es die Musterlösung und versteckte Testfälle."><input type="checkbox" data-fa="hid"' + (f.hidden ? " checked" : "") + "> 🙈 im Editor ausblenden</label>" : "") +
       '<button data-fa="ren">umbenennen</button>' +
       (this.files.length > 1 ? '<button class="del" data-fa="del">Datei löschen</button>' : "");
     const self2 = this;
