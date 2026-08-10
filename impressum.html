@@ -176,13 +176,20 @@ const DATEN = {
 (function(){
   function pref(){ try{ return localStorage.getItem("themePref")||"auto"; }catch(e){ return "auto"; } }
   function dark(p){ return p==="dark" || (p==="auto" && window.matchMedia && window.matchMedia("(prefers-color-scheme:dark)").matches); }
-  function apply(){ document.documentElement.setAttribute("data-theme", dark(pref())?"dark":"light"); }
+  function apply(){
+    var p=pref();
+    document.documentElement.setAttribute("data-theme", dark(p)?"dark":"light");
+    var b=document.getElementById("themeBtn");
+    if(b){ b.textContent = p==="dark"?"🌙":p==="light"?"☀️":"🌗";
+           b.title = "Design: "+(p==="dark"?"Dunkel":p==="light"?"Hell":"Automatisch (System)")+" – klicken zum Wechseln"; }
+  }
   apply();
   document.getElementById("themeBtn").onclick = function(){
     var order=["auto","light","dark"], next=order[(order.indexOf(pref())+1)%order.length];
     try{ localStorage.setItem("themePref", next); }catch(e){}
     apply();
   };
+  if(window.matchMedia){ try{ window.matchMedia("(prefers-color-scheme:dark)").addEventListener("change", function(){ if(pref()==="auto") apply(); }); }catch(e){} }
 })();
 
 /* Daten (aus dem DATEN-Block oben) sicher in die Seite schreiben */

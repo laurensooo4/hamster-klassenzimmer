@@ -1061,23 +1061,24 @@ async function adminHome(){
       <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px"><h3 style="margin:0">👥 Nutzer:innen <span class="badge gray">${users.length}</span> <span class="muted" style="font-weight:600;font-size:12px">· ${tN} Lehrkräfte · ${sN} Schüler:innen${aN?" · "+aN+" Admin":""}</span></h3><div style="flex:1"></div>
         <button class="btn btn-ghost btn-sm" id="admImport" style="margin-right:8px">📥 Importieren</button><input class="input" id="admUsrSearch" placeholder="🔍 Name · Benutzername" style="max-width:260px"></div>
       <div id="admUsers" style="margin-top:12px"></div></div>
+    ${((window.HAMSTER_CONFIG||{}).ALLOW_REGISTRATION === false) ? "" : `
     <div class="card" style="margin-top:16px">
       <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px"><h3 style="margin:0">✉️ Lehrer-Einladungen</h3><div style="flex:1"></div>
         <button class="btn btn-primary btn-sm" id="admNewInvite">+ Einladung erstellen</button></div>
       <p class="muted" style="margin:6px 0 0;font-size:13px">Wer sich als <b>Lehrkraft</b> registrieren will, braucht einen Einladungscode von dir. Jeder Code gilt <b>einmal</b> und läuft ab.</p>
-      <div id="admInvites" style="margin-top:12px"></div></div>`;
+      <div id="admInvites" style="margin-top:12px"></div></div>`}`;
   document.getElementById("admBack").onclick = ()=> route();   // zurück ins aktive Tool (nicht hart Hamster)
   document.getElementById("btnNewClass").onclick = ()=> newClassDialog({pickTool:true});
   const cs=document.getElementById("admClsSearch"), us=document.getElementById("admUsrSearch");
   cs.oninput=()=> renderAdminClasses(cs.value); us.oninput=()=> renderAdminUsers(us.value);
   document.getElementById("admImport").onclick = ()=> adminImportDialog();
-  document.getElementById("admNewInvite").onclick = ()=> newInviteDialog();
+  { const bi=document.getElementById("admNewInvite"); if(bi){ bi.onclick = ()=> newInviteDialog(); } }
   renderAdminClasses(""); renderAdminUsers(""); renderAdminInvites();
 }
 
 /* ---------- Admin: Lehrer-Einladungen (phaseZ) ---------- */
 async function renderAdminInvites(){
-  const el=document.getElementById("admInvites"); if(!el) return;
+  const el=document.getElementById("admInvites"); if(!el) return;   // fehlt auf dem Schulserver (Registrierung aus)
   el.innerHTML = `<div class="muted" style="font-size:13px">Lade…</div>`;
   let list=[];
   try{ list = await api.adminListInvites(); }
@@ -4183,6 +4184,12 @@ async function javaSandboxProject(projectId){
 }
 
 const PATCH_NOTES = [
+  { v:"2.39", date:"10. August 2026", title:"🎁 Release 1.0 – Feinschliff", items:[
+    `<b>Browser-Tab:</b> In den Werkzeugen stand das Symbol doppelt (einmal als Tab-Icon, einmal im Titel). Der Titel zeigt jetzt nur noch den Namen – das Symbol bleibt das Tab-Icon.`,
+    `<b>Impressum &amp; Lizenzen:</b> Der 🌗-Knopf zeigt dort jetzt – wie in der App – den <b>aktuellen</b> Zustand an (☀️ Hell, 🌙 Dunkel, 🌗 Automatisch) und wechselt bei Systemumstellung mit.`,
+    `<b>Schulserver:</b> Die Karte „Lehrer-Einladungen" erscheint nur noch dort, wo es auch eine Registrierung gibt. Auf dem Schulserver (Login-only) ist sie ausgeblendet.`,
+    `<b>Für den Schulserver neu:</b> fertige Skripte für ein <b>nächtliches Datenbank-Backup</b> samt geprüfter Wiederherstellung – siehe Anleitung im Docker-Paket.`,
+  ]},
   { v:"2.38", date:"10. August 2026", title:"📜 Lizenzen & Herkunft – wir nennen die Vorbilder", items:[
     `<b>Neue Seite „Lizenzen &amp; Herkunft":</b> Unten im Footer verlinkt. Dort steht jetzt vollständig, worauf diese Plattform aufbaut – mit Urheber:innen, Lizenzen und Quellen.`,
     `<b>Netzwerke:</b> Das Werkzeug heißt jetzt <b>🌐 Netzwerke</b> (statt „Filius") und nennt offen, dass es ein Nachbau der Lernsoftware <b>FILIUS</b> der Universität Siegen ist. Die Oberflächen-Grafiken stammen aus FILIUS und werden – wie es die <b>GNU GPL v3</b> verlangt – mit Urhebernennung und beiliegendem Lizenztext weitergegeben.`,
@@ -4484,7 +4491,7 @@ function patchNotesDialog(){
 }
 
 /* ---------- Footer: Versionsnummer (aus den Patch-Notes) + Copyright ---------- */
-const APP_BUILD = "2026-08-10 21:40";   // letztes Update (im Patch-Notes-Dialog angezeigt)
+const APP_BUILD = "2026-08-10 23:10";   // letztes Update (im Patch-Notes-Dialog angezeigt)
 /* ============================================================================
    Browser-Zurück (SPA-History) + Favicon/Titel je Tool
    ============================================================================ */
@@ -4495,7 +4502,8 @@ function setChrome(){
   const link = document.querySelector("link[rel='icon']");
   const t = ME && ACTIVE_TOOL ? TOOLS.find(x => x.id === ACTIVE_TOOL) : null;
   if(t){
-    document.title = t.icon + " " + t.name + " · " + base;
+    // Emoji NUR als Favicon, nicht im Titel – sonst zeigt der Browser-Tab das Symbol doppelt
+    document.title = t.name + " · " + base;
     if(link) link.href = "data:image/svg+xml," + encodeURIComponent("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>" + t.icon + "</text></svg>");
   } else {
     document.title = base;
