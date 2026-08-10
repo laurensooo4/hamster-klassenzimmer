@@ -4184,6 +4184,11 @@ async function javaSandboxProject(projectId){
 }
 
 const PATCH_NOTES = [
+  { v:"2.40", date:"10. August 2026", title:"↕️ Java: Konsole lässt sich jetzt richtig vergrößern", items:[
+    `<b>Konsole wächst wirklich mit:</b> Bisher blieb die Konsole beim Ziehen stehen, sobald der Editor seine Mindesthöhe erreicht hatte – es wurde faktisch nur der Editor größer. Jetzt wächst der ganze Bereich mit, sodass sich <b>Editor und Konsole beliebig hoch</b> ziehen lassen.`,
+    `<b>Die Seite scrollt beim Ziehen mit:</b> Am unteren Bildschirmrand war früher Schluss. Jetzt rollt die Seite automatisch weiter, solange du ziehst – auch über die Fensterhöhe hinaus.`,
+    `Beim Ziehen wird kein Text mehr versehentlich markiert, und in der Abgaben-Ansicht bleibt die Konsole auf eine sinnvolle Höhe begrenzt, damit der Code sichtbar bleibt.`,
+  ]},
   { v:"2.39", date:"10. August 2026", title:"🎁 Release 1.0 – Feinschliff", items:[
     `<b>Browser-Tab:</b> In den Werkzeugen stand das Symbol doppelt (einmal als Tab-Icon, einmal im Titel). Der Titel zeigt jetzt nur noch den Namen – das Symbol bleibt das Tab-Icon.`,
     `<b>Impressum &amp; Lizenzen:</b> Der 🌗-Knopf zeigt dort jetzt – wie in der App – den <b>aktuellen</b> Zustand an (☀️ Hell, 🌙 Dunkel, 🌗 Automatisch) und wechselt bei Systemumstellung mit.`,
@@ -4491,7 +4496,7 @@ function patchNotesDialog(){
 }
 
 /* ---------- Footer: Versionsnummer (aus den Patch-Notes) + Copyright ---------- */
-const APP_BUILD = "2026-08-10 23:10";   // letztes Update (im Patch-Notes-Dialog angezeigt)
+const APP_BUILD = "2026-08-11 00:30";   // letztes Update (im Patch-Notes-Dialog angezeigt)
 /* ============================================================================
    Browser-Zurück (SPA-History) + Favicon/Titel je Tool
    ============================================================================ */

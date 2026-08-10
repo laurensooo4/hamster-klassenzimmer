@@ -224,15 +224,15 @@ function JavaView(host, opts){
       <div class="jv-tabs" data-r="tabs"></div>
       <div class="jv-fileacts" data-r="fileacts" style="display:none"></div>
       <div class="jv-robanner" data-r="robanner" style="display:none">🔒 Diese Datei ist vorgegeben und schreibgeschützt.</div>
-      <div class="jv-main">
-        <div class="jv-edwrap">
+      <div class="jv-main" data-r="main">
+        <div class="jv-edwrap" data-r="edwrap">
           <div class="jv-gutter" data-r="gutter">1</div>
           <div class="jv-codebox" data-r="codebox">
             <pre class="jv-hl" data-r="hl"></pre>
             <textarea class="jv-ed" data-r="ed" spellcheck="false" autocapitalize="off" autocomplete="off" wrap="off"></textarea>
           </div>
         </div>
-        <div class="jv-vresize" data-r="vresize" title="Konsolenhöhe ziehen"></div>
+        <div class="jv-vresize" data-r="vresize" title="Konsolenhöhe ziehen – nach oben ziehen macht die Konsole größer"></div>
         <div class="jv-console" data-r="console">
           <div class="jv-chead">KONSOLE<span class="sp"></span><button data-a="clear">leeren</button></div>
           <pre class="jv-cout" data-r="cout"></pre>
@@ -243,24 +243,27 @@ function JavaView(host, opts){
           </div>
         </div>
       </div>
-      <div class="jv-hgrip" data-r="hgrip" title="Editor-Gesamthöhe ziehen"></div>
+      <div class="jv-hgrip" data-r="hgrip" title="Gesamthöhe ziehen – nach unten ziehen vergrößert den Editor"></div>
     </div>
     <div class="jv-tip" data-r="tip"></div>`;
   this.root = host.firstElementChild;
   const R = sel => host.querySelector('[data-r="' + sel + '"]');
   this.el = { tabs:R("tabs"), fileacts:R("fileacts"), robanner:R("robanner"), gutter:R("gutter"),
               hl:R("hl"), ed:R("ed"), codebox:R("codebox"), cout:R("cout"), cin:R("cin"), cinp:R("cinp"),
-              status:R("status"), console:R("console"), vresize:R("vresize"), hgrip:R("hgrip"), tip:R("tip") };
+              status:R("status"), console:R("console"), vresize:R("vresize"), hgrip:R("hgrip"), tip:R("tip"),
+              edwrap:R("edwrap"), main:R("main") };
   this.el.btnRun  = this.root.querySelector('[data-a="run"]');
   this.el.btnStop = this.root.querySelector('[data-a="stop"]');
 
   /* gespeicherte Größen wiederherstellen (Gesamthöhe NICHT im view-Modus — Modals behalten ihr Layout) */
   try{
     const ch = parseInt(localStorage.getItem("jvConH") || "", 10);
-    if(ch >= 70 && ch <= 600) this.el.console.style.height = ch + "px";
+    /* im view-Modus (Modal, feste Höhe) eine große Konsole deckeln, sonst
+       sprengt sie das Fenster und der Code ist nicht mehr zu sehen */
+    if(ch >= 70) this.el.console.style.height = Math.min(ch, this.mode === "view" ? 300 : 6000) + "px";
     if(this.mode !== "view"){
       const th = parseInt(localStorage.getItem("jvTotH") || "", 10);
-      if(th >= 380 && th <= 2200) host.style.height = th + "px";
+      if(th >= 380 && th <= 8000) host.style.height = th + "px";
     }
   }catch(e){}
 
@@ -308,15 +311,39 @@ function JavaView(host, opts){
   ed.addEventListener("mousemove", (e) => self._hoverMove(e));
   ed.addEventListener("mouseleave", () => self._hideTip());
   ed.addEventListener("mousedown", () => self._hideTip());
-  /* Ziehgriffe */
+  /* ---- Ziehgriffe ------------------------------------------------------
+     Konsolen-Griff (zwischen Editor und Konsole): nach oben ziehen = Konsole
+     größer. Stößt der Editor an seine Mindesthöhe, wächst NICHT einfach nichts
+     mehr – dann wird der ganze Container höher (die Seite wird länger und
+     scrollt beim Ziehen automatisch mit). So lässt sich die Konsole beliebig
+     hoch ziehen, ohne dass der Editor verschwindet.
+     Unterer Griff: Gesamthöhe; der Zugewinn geht an den Editor.            */
+  const MIN_ED = 140;                 // = min-height von .jv-edwrap im CSS
+  const growTotal = (px) => {         // Container höher machen (nicht in Modals)
+    if(self.mode === "view") return false;
+    const tot = Math.min(8000, self.host.getBoundingClientRect().height + px);
+    self.host.style.height = tot + "px";
+    try{ localStorage.setItem("jvTotH", String(Math.round(tot))); }catch(e){}
+    return true;
+  };
   this._wireDrag(this.el.vresize, (dy, start) => {
-    const h = Math.max(70, Math.min(600, start - dy));
+    const h = Math.max(70, Math.min(6000, start - dy));
     self.el.console.style.height = h + "px";
-    try{ localStorage.setItem("jvConH", String(h)); }catch(e){}
+    /* Passen Konsole + Mindest-Editor noch in den Container?
+       (Der Editor kann wegen seiner CSS-Mindesthöhe nicht weiter schrumpfen –
+       ohne diese Prüfung liefe der Inhalt einfach unten heraus.)             */
+    const platz  = self.el.main.getBoundingClientRect().height;
+    const noetig = h + MIN_ED + self.el.vresize.getBoundingClientRect().height;
+    const fehlt  = Math.ceil(noetig - platz);
+    if(fehlt > 0 && !growTotal(fehlt)){
+      /* im view-Modus (Modal) bleibt die Höhe fest -> Konsole zurücknehmen */
+      self.el.console.style.height = Math.max(70, h - fehlt) + "px";
+    }
+    try{ localStorage.setItem("jvConH", String(Math.round(self.el.console.getBoundingClientRect().height))); }catch(e){}
     self._scrollOut();
   }, () => self.el.console.getBoundingClientRect().height);
   this._wireDrag(this.el.hgrip, (dy, start) => {
-    const h = Math.max(380, Math.min(2200, start + dy));
+    const h = Math.max(380, Math.min(8000, start + dy));
     self.host.style.height = h + "px";
     try{ localStorage.setItem("jvTotH", String(h)); }catch(e){}
   }, () => self.host.getBoundingClientRect().height);
@@ -326,15 +353,50 @@ function JavaView(host, opts){
   this._sigSoon();
 }
 
+/* Ziehen mit automatischem Mitscrollen: Kommt der Zeiger an den oberen oder
+   unteren Fensterrand, rollt die Seite weiter – sonst wäre am Bildschirmrand
+   Schluss und man könnte Editor/Konsole nicht höher ziehen als das Fenster. */
 JavaView.prototype._wireDrag = function(handle, onMove, getStart){
-  let startY = 0, startV = 0, active = false;
-  const move = (e) => { if(active) onMove(e.clientY - startY, startV); };
-  const up = () => { active = false; document.removeEventListener("pointermove", move); document.removeEventListener("pointerup", up); };
+  let startY = 0, startV = 0, active = false, lastY = 0, timer = null;
+  const RAND = 56, MAX_SCHRITT = 18;
+  const apply = () => onMove(lastY - startY, startV);
+  const tick = () => {
+    if(!active){ timer = null; return; }
+    const vh = window.innerHeight;
+    let d = 0;
+    if(lastY > vh - RAND)  d =  Math.min(MAX_SCHRITT, Math.ceil((lastY - (vh - RAND)) / 2));
+    else if(lastY < RAND)  d = -Math.min(MAX_SCHRITT, Math.ceil((RAND - lastY) / 2));
+    if(d){
+      const vorher = window.scrollY;
+      window.scrollBy(0, d);
+      /* Der Zeiger bleibt am selben Bildschirmpunkt, der Inhalt wandert darunter
+         weg -> Startpunkt mitziehen, damit weiter vergrößert wird. */
+      startY -= (window.scrollY - vorher);
+      apply();
+    }
+    timer = requestAnimationFrame(tick);
+  };
+  const move = (e) => {
+    if(!active) return;
+    lastY = e.clientY;
+    apply();
+    if(timer === null) timer = requestAnimationFrame(tick);
+  };
+  const up = () => {
+    active = false;
+    if(timer !== null){ cancelAnimationFrame(timer); timer = null; }
+    document.body.style.userSelect = "";
+    document.removeEventListener("pointermove", move);
+    document.removeEventListener("pointerup", up);
+    document.removeEventListener("pointercancel", up);
+  };
   handle.addEventListener("pointerdown", (e) => {
     e.preventDefault();
-    active = true; startY = e.clientY; startV = getStart();
+    active = true; startY = e.clientY; lastY = e.clientY; startV = getStart();
+    document.body.style.userSelect = "none";   // kein Text markieren beim Ziehen
     document.addEventListener("pointermove", move);
     document.addEventListener("pointerup", up);
+    document.addEventListener("pointercancel", up);
   });
 };
 
