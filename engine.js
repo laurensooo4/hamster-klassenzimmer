@@ -554,8 +554,15 @@ function injectStyles(){
   const st=document.createElement("style"); st.id="hv-styles";
   st.textContent = `
   .hv{--lh:22px;--cpad:12px;display:flex;flex-direction:column;gap:10px;font-family:"Nunito",sans-serif}
-  .hv .hv-main{display:grid;gap:12px;grid-template-columns:1.65fr 1fr;min-height:0}
+  /* Breitenverhaeltnis Editor:Territorium ist per Ziehgriff einstellbar (--edwA/--edwB) */
+  .hv .hv-main{display:grid;gap:6px;grid-template-columns:var(--edwA,1.65fr) 7px var(--edwB,1fr);min-height:0}
   .hv.solo .hv-main{grid-template-columns:1fr}
+  .hv .hv-vsplit{cursor:ew-resize;display:flex;align-items:center;justify-content:center;border-radius:4px}
+  .hv .hv-vsplit::after{content:"";width:3px;height:44px;border-radius:2px;background:#7a8aa0;opacity:.35}
+  .hv .hv-vsplit:hover::after{opacity:.7;background:#1cb0f6}
+  .hv .hv-hsplit{height:11px;margin-top:6px;cursor:ns-resize;display:flex;align-items:center;justify-content:center;border-radius:4px}
+  .hv .hv-hsplit::after{content:"";width:56px;height:3px;border-radius:2px;background:#7a8aa0;opacity:.35}
+  .hv .hv-hsplit:hover::after{opacity:.7;background:#1cb0f6}
   .hv.fill{height:auto}
   .hv.fill .hv-main{height:var(--edh,70vh);min-height:420px}
   .hv.fill .editor{min-height:340px}
@@ -607,7 +614,8 @@ function injectStyles(){
   .hv .ham svg{width:82%;height:82%;filter:drop-shadow(0 2px 2px rgba(0,0,0,.25))}
   .hv .ham.bonk .rot{animation:hvbonk .45s ease}
   @keyframes hvbonk{0%,100%{transform:rotate(var(--deg))}25%{transform:rotate(var(--deg)) translateX(-8%)}75%{transform:rotate(var(--deg)) translateX(8%)}}
-  .hv .ctrls{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:8px;border-top:1px solid #eef2f7;background:#fafbfd}
+  /* Steuerung sitzt ueber dem Territorium (rechte Spalte) */
+  .hv .ctrls{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:8px;border-bottom:1px solid #eef2f7;background:#fafbfd}
   .hv .cbtn{border:1px solid #e6ebf2;background:#fff;border-radius:9px;padding:7px 11px;font-weight:800;font-size:13px;cursor:pointer;font-family:inherit}
   .hv .cbtn.green{background:#58cc02;border-color:#46a302;color:#fff}.hv .cbtn.red{color:#ff4b4b}
   .hv .cbtn:disabled{opacity:.45;cursor:default}
@@ -660,6 +668,33 @@ class HamsterView{
   }
   destroy(){ this.stop=true; this.runState="idle"; if(this._ro) this._ro.disconnect(); this.el.innerHTML=""; }
 
+  /* Ziehgriff verdrahten. Kommt der Zeiger an den Fensterrand, rollt die Seite
+     automatisch mit - sonst waere am Bildschirmrand Schluss. Das Brett passt
+     sich von selbst an (ResizeObserver auf .boardWrap ruft _layout()). */
+  _wireSplit(handle, onMove){
+    if(!handle) return;
+    let aktiv=false, letzte=null, timer=null;
+    const RAND=56, SCHRITT=16;
+    const tick=()=>{
+      if(!aktiv){ timer=null; return; }
+      const vh=window.innerHeight;
+      let d=0;
+      if(letzte && letzte.clientY > vh-RAND) d =  Math.min(SCHRITT, Math.ceil((letzte.clientY-(vh-RAND))/2));
+      else if(letzte && letzte.clientY < RAND) d = -Math.min(SCHRITT, Math.ceil((RAND-letzte.clientY)/2));
+      if(d){ window.scrollBy(0,d); if(letzte) onMove(letzte); }
+      timer=requestAnimationFrame(tick);
+    };
+    const move=(e)=>{ if(!aktiv) return; letzte=e; onMove(e); if(timer===null) timer=requestAnimationFrame(tick); };
+    const up=()=>{ aktiv=false; if(timer!==null){ cancelAnimationFrame(timer); timer=null; }
+      document.body.style.userSelect="";
+      document.removeEventListener("pointermove",move); document.removeEventListener("pointerup",up); document.removeEventListener("pointercancel",up); };
+    handle.addEventListener("pointerdown",(e)=>{
+      e.preventDefault(); aktiv=true; letzte=e;
+      document.body.style.userSelect="none";
+      document.addEventListener("pointermove",move); document.addEventListener("pointerup",up); document.addEventListener("pointercancel",up);
+    });
+  }
+
   _build(){
     const m=this.mode;
     const hasEditor = (m==="solve"||m==="view");
@@ -671,6 +706,10 @@ class HamsterView{
           <div class="gut"><div class="gutInner">1</div></div>
           <div class="codebox"><pre class="codeHL"></pre><textarea class="code" spellcheck="false" wrap="off" ${m==="view"?"readonly":""}></textarea><div class="actLine"></div></div>
         </div>
+      </div>` : "";
+    /* Steuerung + Befehls-Übersicht gehören zum Territorium (rechte Spalte),
+       damit man die Befehle lesen kann, während links programmiert wird. */
+    const ctrlBar = hasEditor ? `
         <div class="ctrls">
           <button class="cbtn green run">▶ Start</button>
           <button class="cbtn pause" disabled>⏸</button>
@@ -679,9 +718,10 @@ class HamsterView{
           <button class="cbtn reset">⟲</button>
           ${this.showCommands?'<button class="cbtn cmds" type="button" title="Befehls-Übersicht">📖 Befehle</button>':''}
           <label class="speed">🐢<input type="range" class="sp" min="1" max="10" value="4">🐇</label>
-        </div>
-        ${this.showCommands?`<div class="hv-cheat" style="display:none"><div class="hv-cheat-head"><b>📖 Befehle &amp; Sprache</b><button class="cbtn cheatclose" type="button">✕ schließen</button></div><div class="hv-cheat-body">${CHEAT_HTML}</div></div>`:""}
-      </div>` : "";
+        </div>` : "";
+    const cheatPanel = (hasEditor && this.showCommands)
+      ? `<div class="hv-cheat" style="display:none"><div class="hv-cheat-head"><b>📖 Befehle &amp; Sprache</b><button class="cbtn cheatclose" type="button">✕ schließen</button></div><div class="hv-cheat-body">${CHEAT_HTML}</div></div>`
+      : "";
     const designTools = m==="design" ? `
       <div class="tools">
         <button class="tool on" data-tool="wall">🧱 Mauer</button>
@@ -704,12 +744,16 @@ class HamsterView{
     this.el.innerHTML = `
       <div class="hv-main">
         ${editorPane}
+        ${hasEditor?'<div class="hv-vsplit" title="Breite von Editor und Territorium ziehen"></div>':""}
         <div class="hv-pane">
           <div class="hv-ph">🌍 Territorium</div>
+          ${ctrlBar}
           ${designTools}
           <div class="boardWrap"><div class="board"></div></div>
+          ${cheatPanel}
         </div>
       </div>
+      ${hasEditor?'<div class="hv-hsplit" title="Höhe des Arbeitsbereichs ziehen"></div>':""}
       ${(hasEditor&&this.goal)?'<div class="hv-goal" style="display:none"></div>':''}
       ${statusBar}`;
 
@@ -751,6 +795,34 @@ class HamsterView{
       this.$(".stopb").onclick=()=>this._stopRun(false);
       this.$(".reset").onclick=()=>{ this._stopRun(true); this._resetModel(); this._clearOut(); this.runState="idle"; this._updateBtns(); };
       { const cb=this.$(".cmds"); if(cb){ const panel=this.$(".hv-cheat"); cb.onclick=()=>{ panel.style.display=(panel.style.display==="none"?"flex":"none"); }; const cc=this.$(".cheatclose"); if(cc) cc.onclick=()=>{ panel.style.display="none"; }; } }
+
+      /* ---- Ziehgriffe: Gesamthoehe und Breitenverhaeltnis ------------------
+         Beides wird gemerkt (localStorage), damit die einmal eingestellte
+         Aufteilung auch bei der naechsten Aufgabe erhalten bleibt.          */
+      try{
+        const hh=parseFloat(localStorage.getItem("hvEdH")||"");
+        if(hh>=35 && hh<=95) this.el.style.setProperty("--edh", hh+"vh");
+        const wf=parseFloat(localStorage.getItem("hvEdW")||"");
+        if(wf>=0.25 && wf<=0.8){
+          this.el.style.setProperty("--edwA", wf+"fr");
+          this.el.style.setProperty("--edwB", (1-wf)+"fr");
+        }
+      }catch(e){}
+      this._wireSplit(this.$(".hv-hsplit"), (ev)=>{
+        const main=this.$(".hv-main"); if(!main) return;
+        const px=ev.clientY - main.getBoundingClientRect().top;
+        const vh=Math.max(35, Math.min(95, px/window.innerHeight*100));
+        this.el.style.setProperty("--edh", vh+"vh");
+        try{ localStorage.setItem("hvEdH", vh.toFixed(1)); }catch(e){}
+      });
+      this._wireSplit(this.$(".hv-vsplit"), (ev)=>{
+        const main=this.$(".hv-main"); if(!main) return;
+        const r=main.getBoundingClientRect(); if(!r.width) return;
+        const f=Math.max(0.25, Math.min(0.8, (ev.clientX-r.left)/r.width));
+        this.el.style.setProperty("--edwA", f+"fr");
+        this.el.style.setProperty("--edwB", (1-f)+"fr");
+        try{ localStorage.setItem("hvEdW", f.toFixed(3)); }catch(e){}
+      });
     }
     if(m==="design"){
       this.$(".rIn").value=this.model.rows; this.$(".cIn").value=this.model.cols; this.$(".mIn").value=this.model.hamster.grains;

@@ -608,7 +608,7 @@ function assignmentEditorPage(classId, onDone, existing, tplMode){
     <div class="page-head" style="margin-top:0"><h3 style="margin:0">✏️ Editor &amp; Startcode</h3><div class="spacer"></div>
       <span class="acts"><button class="abtn on" id="aeCode" title="Startcode programmieren &amp; ausführen">📝 Code</button><button class="abtn" id="aeWelt" title="Start-Territorium bauen">🌍 Welt</button></span></div>
     <div class="card" style="margin-bottom:10px;padding:10px 14px"><span class="muted" style="font-size:13px">📝 <b>Code</b> – der Startcode für Schüler:innen, genau wie ihr Editor und mit <b>▶ Start</b> direkt ausführbar. &nbsp; 🌍 <b>Welt</b> – das Start-Territorium bauen.</span></div>
-    <div id="aeHost" style="--edh:74vh;min-height:560px"></div>
+    <div id="aeHost" style="--edh:70vh;min-height:560px"></div>
     <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap;align-items:center">
       ${tplMode?"":`<button class="btn btn-ghost" id="asSaveTpl" style="flex:none">💾 Als Vorlage</button>`}
       <button class="btn btn-primary btn-lg" id="asSave" style="max-width:320px">${esc(saveTxt)}</button>
@@ -713,7 +713,7 @@ function reviewSubmission(assignment, history, studentName, classId){
       <span class="muted" style="font-size:12px;display:block;margin-top:3px">🛠️ Live-Korrektur: Du kannst den Code bearbeiten &amp; laufen lassen – Änderungen werden nicht automatisch gespeichert.</span>
     </div>
     ${history.length>1?`<div class="card" style="margin-bottom:10px;padding:10px 14px"><b style="font-size:13px">Versionen (neueste zuerst):</b> <span id="verNav"></span></div>`:""}
-    <div id="reviewHost" style="--edh:76vh;min-height:560px"></div>
+    <div id="reviewHost" style="--edh:70vh;min-height:560px"></div>
     <div id="revStudentNote" style="margin-top:14px"></div>
     <div class="card" style="margin-top:14px">
       <h3 style="margin:0 0 8px">💬 Rückmeldung an ${esc(studentName)}</h3>
@@ -795,7 +795,7 @@ async function sampleManager(assignment, classId){
     <div id="smList"></div>
     <div class="page-head" style="margin-top:10px"><h3 id="smEditTitle" style="margin:0">➕ Neue Musterlösung</h3><div class="spacer"></div><span id="smEditHint" class="muted" style="font-size:12px"></span></div>
     <div class="field" style="max-width:420px"><label>Titel (optional)</label><input class="input" id="smTitleIn" placeholder="z. B. Kurze Lösung" maxlength="80"></div>
-    <div id="smEditHost" style="--edh:74vh;min-height:560px"></div>
+    <div id="smEditHost" style="--edh:70vh;min-height:560px"></div>
     <div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap;align-items:center">
       <button class="btn btn-primary btn-lg" id="smSave" style="max-width:260px">💾 Speichern</button>
       <button class="btn btn-ghost" id="smNew" style="display:none">➕ Neue (Editor leeren)</button>
@@ -874,7 +874,7 @@ async function solveAssignment(assignmentId){
     ${a.hint?`<div style="margin-bottom:12px"><button class="btn btn-ghost btn-sm" id="btnHint">💡 Tipp anzeigen</button><div id="hintBox" class="card" style="display:none;margin-top:8px;background:#fffaf0">💡 ${esc(a.hint)}</div></div>`:""}
     <div id="curComment" style="margin-bottom:12px">${curComment?`<div class="card" style="background:#eef6ff;border-color:#bcd9f5"><b>💬 Rückmeldung deiner Lehrkraft:</b><div style="margin-top:4px;white-space:pre-wrap">${esc(curComment.body)}</div></div>`:""}</div>
     <div id="editNote" class="editnote" style="display:none"></div>
-    <div id="solveHost" style="--edh:82vh;min-height:600px"></div>
+    <div id="solveHost" style="--edh:70vh;min-height:600px"></div>
     <div style="display:flex;gap:10px;margin-top:14px;align-items:center;flex-wrap:wrap">
       <button class="btn btn-primary btn-lg" id="btnSubmit" style="max-width:240px">📤 Abgeben</button>
       <button class="btn btn-ghost" id="btnToLive" style="display:none">↺ Zur aktuellen Version</button>
@@ -3334,7 +3334,7 @@ async function sandboxProject(classId, projectId){
       <span class="acts"><button class="abtn on" id="sbxCode" title="Programmieren">📝 Code</button><button class="abtn" id="sbxWelt" title="Welt bearbeiten">🌍 Welt</button></span>
       <button class="btn btn-primary btn-sm" id="sbxSave" style="margin-left:8px">💾 Speichern</button>
     </div>
-    <div id="sbxHost" style="--edh:80vh;min-height:600px"></div>`;
+    <div id="sbxHost" style="--edh:70vh;min-height:600px"></div>`;
   document.getElementById("sbxTitle").value = sandboxState.title;
   document.getElementById("back").onclick = ()=>{ syncSandbox(); sandboxHome(classId); };
   document.getElementById("sbxCode").onclick = ()=> setSandboxSub("code");
@@ -4184,6 +4184,12 @@ async function javaSandboxProject(projectId){
 }
 
 const PATCH_NOTES = [
+  { v:"2.41", date:"11. August 2026", title:"🐹 Hamster: neues Arbeitslayout", items:[
+    `<b>Steuerung sitzt jetzt über dem Territorium.</b> Start, Schritt, Stopp, Tempo – alles direkt über dem Spielfeld statt unter dem Editor.`,
+    `<b>📖 Befehle öffnen sich rechts</b> über dem Territorium. Damit kannst du die Befehlsübersicht lesen, <b>während</b> du links weiterprogrammierst.`,
+    `<b>Alles selbst einstellbar:</b> Ein Griff unter dem Arbeitsbereich zieht die <b>Höhe</b>, ein Griff zwischen Editor und Territorium das <b>Breitenverhältnis</b>. Beides wird gemerkt und gilt auch bei der nächsten Aufgabe.`,
+    `Der Arbeitsbereich startet etwas flacher als bisher, damit die Ausgaben darunter ohne Scrollen sichtbar sind.`,
+  ]},
   { v:"2.40", date:"10. August 2026", title:"↕️ Java: Konsole lässt sich jetzt richtig vergrößern", items:[
     `<b>Konsole wächst wirklich mit:</b> Bisher blieb die Konsole beim Ziehen stehen, sobald der Editor seine Mindesthöhe erreicht hatte – es wurde faktisch nur der Editor größer. Jetzt wächst der ganze Bereich mit, sodass sich <b>Editor und Konsole beliebig hoch</b> ziehen lassen.`,
     `<b>Die Seite scrollt beim Ziehen mit:</b> Am unteren Bildschirmrand war früher Schluss. Jetzt rollt die Seite automatisch weiter, solange du ziehst – auch über die Fensterhöhe hinaus.`,
@@ -4496,7 +4502,7 @@ function patchNotesDialog(){
 }
 
 /* ---------- Footer: Versionsnummer (aus den Patch-Notes) + Copyright ---------- */
-const APP_BUILD = "2026-08-11 00:30";   // letztes Update (im Patch-Notes-Dialog angezeigt)
+const APP_BUILD = "2026-08-11 17:10";   // letztes Update (im Patch-Notes-Dialog angezeigt)
 /* ============================================================================
    Browser-Zurück (SPA-History) + Favicon/Titel je Tool
    ============================================================================ */
