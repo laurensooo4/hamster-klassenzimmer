@@ -1028,7 +1028,7 @@ function changePasswordDialog(){
 
 /* ---------- Lehrer: Schüler-Passwort zurücksetzen ---------- */
 async function resetStudentPw(studentId, name){
-  if(!confirm("Passwort von "+name+" zurücksetzen? Es wird ein neues 6-stelliges Passwort erzeugt.")) return;
+  if(!confirm("Passwort von "+name+" zurücksetzen? Es wird ein neues Passwort erzeugt (10 Zeichen, Format XXXXX-XXXXX).")) return;
   const { data:newPw, error } = await sb.rpc("reset_student_password", { p_student: studentId });
   if(error){ toast(error.message||"Fehler","err"); return; }
   openModal(`<button class="x" onclick="closeModal()">✕</button>
@@ -4184,6 +4184,13 @@ async function javaSandboxProject(projectId){
 }
 
 const PATCH_NOTES = [
+  { v:"2.42", date:"11. August 2026", title:"🔐 Sicherheits-Release 1.1", items:[
+    `<b>Für den Schulserver:</b> Die Datenbank und die Administrationsoberfläche sind nicht mehr im Schulnetz erreichbar, sondern nur noch lokal. Von außen kommen ausschließlich Anmeldung und Datenzugriff durch – alles andere wird abgewiesen.`,
+    `<b>Passwort-Raten wird gebremst</b>, ohne dass eine ganze Klasse beim gleichzeitigen Anmelden ausgebremst wird.`,
+    `<b>Zurückgesetzte Passwörter</b> sind jetzt 10 Zeichen lang (Format XXXXX-XXXXX) statt sechsstellig – sechs Ziffern waren über eine öffentlich erreichbare Anmeldemaske zu leicht durchprobierbar.`,
+    `<b>Keine fremden Server mehr:</b> Die Supabase-Bibliothek wird als mitgelieferte, feste Fassung geladen statt von einem CDN. Die Plattform läuft damit vollständig offline im Schulnetz.`,
+    `Für Lehrkräfte ändert sich im Alltag nichts – alle Werkzeuge funktionieren unverändert.`,
+  ]},
   { v:"2.41", date:"11. August 2026", title:"🐹 Hamster: neues Arbeitslayout", items:[
     `<b>Steuerung sitzt jetzt über dem Territorium.</b> Start, Schritt, Stopp, Tempo – alles direkt über dem Spielfeld statt unter dem Editor.`,
     `<b>📖 Befehle öffnen sich rechts</b> über dem Territorium. Damit kannst du die Befehlsübersicht lesen, <b>während</b> du links weiterprogrammierst.`,
@@ -4502,7 +4509,7 @@ function patchNotesDialog(){
 }
 
 /* ---------- Footer: Versionsnummer (aus den Patch-Notes) + Copyright ---------- */
-const APP_BUILD = "2026-08-11 17:10";   // letztes Update (im Patch-Notes-Dialog angezeigt)
+const APP_BUILD = "2026-08-11 23:55";   // letztes Update (im Patch-Notes-Dialog angezeigt)
 /* ============================================================================
    Browser-Zurück (SPA-History) + Favicon/Titel je Tool
    ============================================================================ */

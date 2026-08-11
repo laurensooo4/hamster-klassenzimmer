@@ -254,8 +254,12 @@
   <footer id="appfoot"></footer>
   <div id="toast"></div>
 
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script>/* Offline-/Schulserver-Fallback: laedt die mitgelieferte lokale Kopie, falls das CDN nicht erreichbar ist */if(!window.supabase)document.write('<script src="supabase.local.js"><\/script>');</script>
+  <!-- Supabase-Bibliothek: bewusst die MITGELIEFERTE, gepinnte Kopie (v2.112.2)
+       statt eines CDN. Grund: Ein CDN-Skript mit schwebender Versionsangabe
+       koennte jederzeit ausgetauscht werden und haette dann vollen Zugriff auf
+       Anmeldedaten und Schuelerdaten. Ausserdem laeuft die Plattform so komplett
+       offline im Schulnetz, und die CSP kommt ohne Fremd-Domain aus. -->
+  <script src="supabase.local.js?v=2112"></script>
   <script src="config.js"></script>
   <script>/* Favicon optional per config.js (FAVICON_URL) austauschbar – z. B. auf dem Schulserver */(function(){try{var c=window.HAMSTER_CONFIG||{};if(c.FAVICON_URL){var l=document.querySelector("link[rel='icon']");if(!l){l=document.createElement("link");l.rel="icon";document.head.appendChild(l);}l.href=c.FAVICON_URL;}}catch(e){}})();</script>
   <script src="engine.js?v=h18"></script>
@@ -264,6 +268,6 @@
   <script src="filiusview.js?v=h5"></script>
   <script src="javaengine.js?v=j2"></script>
   <script src="javaview.js?v=j5"></script>
-  <script src="app.js?v=h47"></script>
+  <script src="app.js?v=h49"></script>
 </body>
 </html>
