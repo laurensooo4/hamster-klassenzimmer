@@ -277,6 +277,33 @@ rm -f "$FEHLERLOG"
 echo "[6/6] Starte alle Dienste wieder ..."
 docker compose up -d >/dev/null 2>&1
 
+# Warten, bis die Web-App wirklich wieder antwortet (neu in Release 1.1.2).
+# Das API-Gateway (Envoy) braucht nach einem Neustart rund eine Minute, bis es
+# als "healthy" gilt; der Web-Container startet erst danach. Ohne dieses Warten
+# meldet das Skript "FERTIG", waehrend die Seite noch nicht erreichbar ist -
+# und eine direkt danach ausgefuehrte Abnahme (check-security.sh) meldet
+# faelschlich, die Plattform sei kaputt.
+APPPORT="$(docker compose port frontend 80 2>/dev/null | sed 's/.*://')"
+if [ -n "${APPPORT:-}" ] && command -v curl >/dev/null 2>&1; then
+  printf "      Warte, bis die Web-App wieder antwortet "
+  APPOK=0
+  for _ in $(seq 1 40); do
+    if [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://127.0.0.1:${APPPORT}/" 2>/dev/null)" = "200" ]; then
+      APPOK=1; break
+    fi
+    printf "."; sleep 5
+  done
+  if [ "$APPOK" = "1" ]; then
+    echo " erreichbar."
+  else
+    echo ""
+    echo "      HINWEIS: Die Web-App antwortet nach 200 Sekunden noch nicht."
+    echo "      Die Daten sind eingespielt. Bitte kurz warten und dann pruefen:"
+    echo "         docker compose ps        (alles 'healthy'?)"
+    echo "         curl -I http://127.0.0.1:${APPPORT}/"
+  fi
+fi
+
 echo ""
 echo "============================================================"
 echo " FERTIG - wiederhergestellter Stand:"

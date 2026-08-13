@@ -66,6 +66,10 @@ if [ "$MODUS" = "aus" ]; then
   iptables -D DOCKER-USER -j HAMSTER-EGRESS 2>/dev/null || true
   iptables -F HAMSTER-EGRESS 2>/dev/null || true
   iptables -X HAMSTER-EGRESS 2>/dev/null || true
+  # Loopback-Schutz abraeumen: neue Kette und die alte Einzelregel.
+  iptables -t raw -D PREROUTING -d 127.0.0.0/8 -j HAMSTER-LOOPBACK 2>/dev/null || true
+  iptables -t raw -F HAMSTER-LOOPBACK 2>/dev/null || true
+  iptables -t raw -X HAMSTER-LOOPBACK 2>/dev/null || true
   iptables -t raw -D PREROUTING ! -i lo -d 127.0.0.0/8 -j DROP 2>/dev/null || true
   gruen "Fertig. Die Container duerfen wieder ueberallhin - Zustand wie vorher."
   exit 0
@@ -197,10 +201,29 @@ iptables -A HAMSTER-EGRESS -d 169.254.0.0/16 -j DROP
 # 6) Ins Internet darf weiterhin alles (Updates, Lets Encrypt).
 iptables -A HAMSTER-EGRESS -j RETURN
 
-# 7) Zusatzschutz gegen einen bekannten Docker-Fehler: Pakete von aussen mit
-#    Loopback-Zieladresse gar nicht erst annehmen. (-D vorher = idempotent)
+# 7) Zusatzschutz gegen einen bekannten Docker-Fehler: Pakete von AUSSEN mit
+#    Loopback-Zieladresse (127.x) gar nicht erst annehmen.
+#
+#    Frueher stand hier eine einzelne Regel  "! -i lo -d 127.0.0.0/8 -j DROP".
+#    Auf einem normalen Server ist das richtig. Unter WSL2 mit gespiegeltem
+#    Netzwerk kommt Verkehr an 127.0.0.1 aber legitim ueber eine ZUSAETZLICHE
+#    Schnittstelle namens "loopback0" herein - die Regel hat dort die eigene
+#    Web-App unerreichbar gemacht, obwohl alle Container liefen.
+#    Deshalb jetzt eine eigene Kette mit einer Liste erlaubter Schnittstellen.
+LOKAL="lo"
+if grep -qi microsoft /proc/version 2>/dev/null; then
+  ip -o link show 2>/dev/null | grep -q ' loopback0:' && LOKAL="\$LOKAL loopback0"
+fi
+iptables -t raw -N HAMSTER-LOOPBACK 2>/dev/null || true
+iptables -t raw -F HAMSTER-LOOPBACK
+for I in \$LOKAL; do
+  iptables -t raw -A HAMSTER-LOOPBACK -i "\$I" -j RETURN
+done
+iptables -t raw -A HAMSTER-LOOPBACK -j DROP
+# Alte Einzelregel aus frueheren Fassungen entfernen (sonst wirkt sie weiter).
 iptables -t raw -D PREROUTING ! -i lo -d 127.0.0.0/8 -j DROP 2>/dev/null || true
-iptables -t raw -I PREROUTING ! -i lo -d 127.0.0.0/8 -j DROP
+iptables -t raw -C PREROUTING -d 127.0.0.0/8 -j HAMSTER-LOOPBACK 2>/dev/null \
+  || iptables -t raw -I PREROUTING -d 127.0.0.0/8 -j HAMSTER-LOOPBACK
 EOF
     chmod 700 "$SKRIPT"
 

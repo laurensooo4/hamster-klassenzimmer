@@ -77,7 +77,23 @@ fi
 # ---------------------------------------------------------------------------
 titel "2. Ist die Administrationsoberflaeche von aussen dicht?"
 # ---------------------------------------------------------------------------
-hole(){ local c; c="$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 "$1" 2>/dev/null)"; [ -n "$c" ] || c="000"; printf '%s' "$c"; }
+# Antwortet die Web-App gerade nicht (000), wird mehrfach nachgefasst: nach
+# einem Neustart oder einer Wiederherstellung braucht das API-Gateway rund eine
+# Minute, bis der Web-Container ueberhaupt startet. Ohne dieses Nachfassen
+# meldet die Abnahme faelschlich "Plattform kaputt" (neu in Release 1.1.2).
+hole(){
+  local c i
+  for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+    c="$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 "$1" 2>/dev/null)"
+    [ -n "$c" ] || c="000"
+    [ "$c" != "000" ] && break
+    [ "$i" = "1" ] && printf '      (Web-App antwortet noch nicht - warte' >&2
+    printf '.' >&2
+    sleep 5
+  done
+  [ "$i" != "1" ] && printf ')\n' >&2
+  printf '%s' "$c"
+}
 BASIS="http://127.0.0.1:8080"
 
 C="$(hole "$BASIS/supabase/")"
@@ -119,8 +135,14 @@ else bad "Auth-Dienst antwortet nicht ueber den Proxy (HTTP $C)." "Anmeldung wae
 
 ANON="$(grep -oE '"[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"' frontend/config.docker.js 2>/dev/null | head -1 | tr -d '"')"
 if [ -n "$ANON" ]; then
-  C="$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 \
-       -H "apikey: $ANON" "$BASIS/supabase/rest/v1/classes?select=id&limit=1" 2>/dev/null)"; [ -n "$C" ] || C="000"
+  C="000"
+  for _ in 1 2 3 4 5 6; do
+    C="$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 \
+         -H "apikey: $ANON" "$BASIS/supabase/rest/v1/classes?select=id&limit=1" 2>/dev/null)"
+    [ -n "$C" ] || C="000"
+    [ "$C" != "000" ] && break
+    sleep 5
+  done
   if [ "$C" = "200" ]; then gut "Datenbank-Zugriff ueber den Proxy funktioniert (HTTP 200)."
   else bad "Datenbank-Zugriff liefert HTTP $C." "Die App koennte keine Daten laden."; fi
 else
@@ -144,11 +166,20 @@ if command -v iptables >/dev/null 2>&1 && [ "$(id -u)" -eq 0 ]; then
     warn "Keine Sperre gefunden." "sudo bash scripts/harden.sh"
   fi
   RAW="$(iptables -t raw -S PREROUTING 2>/dev/null || true)"
-  if printf '%s' "$RAW" | grep -q '127.0.0.0/8 -j DROP'; then
-    if printf '%s' "$RAW" | grep -q '! -i lo .*127.0.0.0/8 -j DROP'; then
-      gut "Loopback-Schutzregel ist korrekt auf externe Schnittstellen begrenzt."
+  LOOP="$(iptables -t raw -S HAMSTER-LOOPBACK 2>/dev/null || true)"
+  if [ -n "$LOOP" ]; then
+    # Neue Fassung (1.1.3): eigene Kette mit Liste erlaubter Schnittstellen.
+    if printf '%s' "$LOOP" | grep -q -- '-i lo -j RETURN'; then
+      gut "Loopback-Schutz laesst den eigenen Rechner durch ($(printf '%s' "$LOOP" | grep -c -- '-j RETURN') Schnittstelle(n) erlaubt)."
     else
-      bad "Die Loopback-Regel gilt AUCH fuer lo - das legt DNS, Anmeldung und Studio-Zugang lahm."           "sudo bash scripts/harden.sh --aus, dann Release 1.1 einspielen und erneut haerten."
+      bad "Der Loopback-Schutz laesst 'lo' NICHT durch - das legt DNS, Anmeldung und Studio-Zugang lahm." "sudo bash scripts/harden.sh erneut ausfuehren."
+    fi
+  elif printf '%s' "$RAW" | grep -q '127.0.0.0/8 -j DROP'; then
+    # Alte Fassung: einzelne Regel. Nur korrekt, wenn sie 'lo' ausnimmt.
+    if printf '%s' "$RAW" | grep -q -- '! -i lo .*127.0.0.0/8 -j DROP'; then
+      warn "Loopback-Schutz stammt aus einer aelteren Fassung." "Beim naechsten 'sudo bash scripts/harden.sh' wird er ersetzt."
+    else
+      bad "Die Loopback-Regel gilt AUCH fuer lo - das legt DNS, Anmeldung und Studio-Zugang lahm." "sudo bash scripts/harden.sh erneut ausfuehren."
     fi
   fi
   if systemctl is-enabled hamster-container-firewall.service >/dev/null 2>&1; then
