@@ -553,22 +553,22 @@ function injectStyles(){
   if(document.getElementById("hv-styles")) return;
   const st=document.createElement("style"); st.id="hv-styles";
   st.textContent = `
-  .hv{--lh:22px;--cpad:12px;display:flex;flex-direction:column;gap:10px;font-family:"Nunito",sans-serif}
+  .hv{--lh:22px;--cpad:12px;--hvBar:#fafbfd;display:flex;flex-direction:column;gap:10px;font-family:"Nunito",sans-serif}
   /* Breitenverhaeltnis Editor:Territorium ist per Ziehgriff einstellbar (--edwA/--edwB) */
   .hv .hv-main{display:grid;gap:6px;grid-template-columns:var(--edwA,1.65fr) 7px var(--edwB,1fr);min-height:0}
   .hv.solo .hv-main{grid-template-columns:1fr}
   .hv .hv-vsplit{cursor:ew-resize;display:flex;align-items:center;justify-content:center;border-radius:4px}
-  .hv .hv-vsplit::after{content:"";width:3px;height:44px;border-radius:2px;background:#7a8aa0;opacity:.35}
+  .hv .hv-vsplit::after{content:"";width:3px;height:44px;border-radius:2px;background:var(--muted,#7a8aa0);opacity:.35}
   .hv .hv-vsplit:hover::after{opacity:.7;background:#1cb0f6}
   .hv .hv-hsplit{height:11px;margin-top:6px;cursor:ns-resize;display:flex;align-items:center;justify-content:center;border-radius:4px}
-  .hv .hv-hsplit::after{content:"";width:56px;height:3px;border-radius:2px;background:#7a8aa0;opacity:.35}
+  .hv .hv-hsplit::after{content:"";width:56px;height:3px;border-radius:2px;background:var(--muted,#7a8aa0);opacity:.35}
   .hv .hv-hsplit:hover::after{opacity:.7;background:#1cb0f6}
   .hv.fill{height:auto}
   .hv.fill .hv-main{height:var(--edh,70vh);min-height:420px}
   .hv.fill .editor{min-height:340px}
   .hv.fill .boardWrap{min-height:200px}
-  .hv .hv-pane{position:relative;background:#fff;border:2px solid #e6ebf2;border-radius:14px;overflow:hidden;display:flex;flex-direction:column;min-width:0}
-  .hv .hv-ph{padding:8px 12px;border-bottom:1px solid #eef2f7;font-weight:800;font-size:13px;color:#7a8aa0;display:flex;align-items:center;gap:8px}
+  .hv .hv-pane{position:relative;background:var(--card,#fff);border:2px solid var(--line,#e6ebf2);border-radius:14px;overflow:hidden;display:flex;flex-direction:column;min-width:0}
+  .hv .hv-ph{padding:8px 12px;border-bottom:1px solid var(--line2,#eef2f7);font-weight:800;font-size:13px;color:var(--muted,#7a8aa0);display:flex;align-items:center;gap:8px}
   .hv .editor{display:flex;flex:1;min-height:300px;background:#1f2530;border-radius:0}
   .hv #g,.hv .gut{width:42px;flex:none;background:#2a313e;overflow:hidden;position:relative;border-right:1px solid #323a47}
   .hv .gutInner{position:absolute;top:0;left:0;right:0;padding:var(--cpad) 7px var(--cpad) 0;text-align:right;white-space:pre;font:15px/var(--lh) "JetBrains Mono",Consolas,monospace;color:#5d6675}
@@ -615,31 +615,43 @@ function injectStyles(){
   .hv .ham.bonk .rot{animation:hvbonk .45s ease}
   @keyframes hvbonk{0%,100%{transform:rotate(var(--deg))}25%{transform:rotate(var(--deg)) translateX(-8%)}75%{transform:rotate(var(--deg)) translateX(8%)}}
   /* Steuerung sitzt ueber dem Territorium (rechte Spalte) */
-  .hv .ctrls{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:8px;border-bottom:1px solid #eef2f7;background:#fafbfd}
-  .hv .cbtn{border:1px solid #e6ebf2;background:#fff;border-radius:9px;padding:7px 11px;font-weight:800;font-size:13px;cursor:pointer;font-family:inherit}
+  .hv .ctrls{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:8px;border-bottom:1px solid var(--line2,#eef2f7);background:var(--hvBar,#fafbfd)}
+  .hv .cbtn{border:1px solid var(--line,#e6ebf2);background:var(--card,#fff);color:var(--ink,#3c4858);border-radius:9px;padding:7px 11px;font-weight:800;font-size:13px;cursor:pointer;font-family:inherit}
   .hv .cbtn.green{background:#58cc02;border-color:#46a302;color:#fff}.hv .cbtn.red{color:#ff4b4b}
   .hv .cbtn:disabled{opacity:.45;cursor:default}
-  .hv .speed{margin-left:auto;display:flex;align-items:center;gap:6px;font-size:12px;color:#7a8aa0}
+  .hv .speed{margin-left:auto;display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted,#7a8aa0)}
   .hv .speed input{width:90px;accent-color:#e7a13a}
   .hv .cbtn.cmds{font-weight:800}
-  .hv .hv-cheat{position:absolute;inset:0;z-index:20;background:#fff;border-radius:13px;display:flex;flex-direction:column;overflow:hidden}
-  .hv .hv-cheat-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 12px;border-bottom:1px solid #eef2f7;background:#fafbfd;font-size:14px}
+  .hv .hv-cheat{position:absolute;inset:0;z-index:20;background:var(--card,#fff);border-radius:13px;display:flex;flex-direction:column;overflow:hidden;user-select:none;-webkit-user-select:none;-ms-user-select:none}
+  .hv .hv-cheat-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 12px;border-bottom:1px solid var(--line2,#eef2f7);background:var(--hvBar,#fafbfd);font-size:14px}
   .hv .hv-cheat-body{flex:1;overflow:auto;padding:8px 12px 14px}
-  .hv .hv-cheat h4{margin:12px 0 3px;font-size:11px;font-weight:900;color:#7a8aa0;text-transform:uppercase;letter-spacing:.6px}
+  .hv .hv-cheat h4{margin:12px 0 3px;font-size:11px;font-weight:900;color:var(--muted,#7a8aa0);text-transform:uppercase;letter-spacing:.6px}
   .hv .hv-cheat h4:first-child{margin-top:2px}
-  .hv .hv-cheat .crow{display:grid;grid-template-columns:minmax(130px,42%) 1fr;gap:10px;align-items:baseline;padding:4px 0;border-bottom:1px dashed #eef2f7}
-  .hv .hv-cheat code{font-family:"JetBrains Mono",Consolas,monospace;font-size:12px;color:#2b2f3a;background:#f3f5f9;padding:2px 6px;border-radius:6px;white-space:nowrap}
-  .hv .hv-cheat .crow span{font-size:12.5px;color:#5a6675}
-  .hv .tools{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:8px;border-bottom:1px solid #eef2f7;background:#fafbfd}
-  .hv .tool{border:1px solid #e6ebf2;background:#fff;border-radius:8px;padding:6px 9px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit}
+  .hv .hv-cheat .crow{display:grid;grid-template-columns:minmax(130px,42%) 1fr;gap:10px;align-items:baseline;padding:4px 0;border-bottom:1px dashed var(--line2,#eef2f7)}
+  .hv .hv-cheat code{font-family:"JetBrains Mono",Consolas,monospace;font-size:12px;color:var(--ink,#2b2f3a);background:var(--line2,#f3f5f9);padding:2px 6px;border-radius:6px;white-space:nowrap}
+  .hv .hv-cheat .crow span{font-size:12.5px;color:var(--muted,#5a6675)}
+  .hv .tools{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:8px;border-bottom:1px solid var(--line2,#eef2f7);background:var(--hvBar,#fafbfd)}
+  .hv .tool{border:1px solid var(--line,#e6ebf2);background:var(--card,#fff);color:var(--ink,#3c4858);border-radius:8px;padding:6px 9px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit}
   .hv .tool.on{border-color:#e7a13a;background:#fff7ea;color:#c9851f}
-  .hv .szi{width:42px;border:1px solid #e6ebf2;border-radius:7px;padding:4px;text-align:center;font-family:inherit}
+  .hv .szi{width:42px;border:1px solid var(--line,#e6ebf2);background:var(--card,#fff);color:var(--ink,#3c4858);border-radius:7px;padding:4px;text-align:center;font-family:inherit}
   .hv .status{display:flex;gap:8px;padding:0;flex-wrap:wrap}
-  .hv .stat{flex:1;min-width:60px;background:#f7f9fc;border:1px solid #eef2f7;border-radius:9px;padding:5px;text-align:center}
-  .hv .stat .v{font-weight:800;font-size:15px}.hv .stat .k{font-size:10px;color:#7a8aa0}
-  .hv .out{flex:0 0 auto;height:120px;min-height:64px;max-height:70vh;resize:vertical;overflow:auto;padding:7px 11px;border:2px solid #e6ebf2;border-radius:12px;font:12px/1.5 "JetBrains Mono",Consolas,monospace;background:#fff}
-  .hv .out:empty::before{content:"Ausgaben & Meldungen erscheinen hier …";color:#b6bfcc}
+  .hv .stat{flex:1;min-width:60px;background:var(--bg,#f7f9fc);border:1px solid var(--line2,#eef2f7);border-radius:9px;padding:5px;text-align:center}
+  .hv .stat .v{font-weight:800;font-size:15px}.hv .stat .k{font-size:10px;color:var(--muted,#7a8aa0)}
+  .hv .out{flex:0 0 auto;height:120px;min-height:64px;max-height:70vh;resize:vertical;overflow:auto;padding:7px 11px;border:2px solid var(--line,#e6ebf2);border-radius:12px;font:12px/1.5 "JetBrains Mono",Consolas,monospace;background:var(--card,#fff)}
+  .hv .out:empty::before{content:"Ausgaben & Meldungen erscheinen hier …";color:var(--muted,#b6bfcc)}
   .hv .out .err{color:#e63a3a;font-weight:700}.hv .out .ok{color:#46a302}.hv .out .say{color:#1899d6}
+  /* ---- Dunkler Modus ----------------------------------------------------
+     Die Umrahmung (Panes, Leisten, Knoepfe, Ausgabe, Spickzettel) folgt jetzt
+     den Farbvariablen aus index.html (--card/--line/--line2/--ink/--muted/--bg).
+     Hier stehen nur die Faelle, die im dunklen Modus eigene Werte brauchen. */
+  :root[data-theme="dark"] .hv{--hvBar:#19212b}
+  :root[data-theme="dark"] .hv .boardWrap{background:radial-gradient(circle at 50% 40%,#232c22,#1a2118)}
+  :root[data-theme="dark"] .hv .hv-goal.ok{background:#26361b;color:#a6e26a}
+  :root[data-theme="dark"] .hv .hv-goal.no{background:#3a3320;color:#e8cf7a}
+  :root[data-theme="dark"] .hv .tool.on{border-color:#6d5a26;background:#3a3320;color:#e8cf7a}
+  :root[data-theme="dark"] .hv .out .err{color:#ff8f8f}
+  :root[data-theme="dark"] .hv .out .ok{color:#9ee493}
+  :root[data-theme="dark"] .hv .out .say{color:#7ea4d8}
   @media(max-width:760px){.hv .hv-main{grid-template-columns:1fr}}`;
   document.head.appendChild(st);
 }
@@ -794,7 +806,15 @@ class HamsterView{
       this.$(".step").onclick=()=>this._stepOnce();
       this.$(".stopb").onclick=()=>this._stopRun(false);
       this.$(".reset").onclick=()=>{ this._stopRun(true); this._resetModel(); this._clearOut(); this.runState="idle"; this._updateBtns(); };
-      { const cb=this.$(".cmds"); if(cb){ const panel=this.$(".hv-cheat"); cb.onclick=()=>{ panel.style.display=(panel.style.display==="none"?"flex":"none"); }; const cc=this.$(".cheatclose"); if(cc) cc.onclick=()=>{ panel.style.display="none"; }; } }
+      { const cb=this.$(".cmds"); if(cb){ const panel=this.$(".hv-cheat"); cb.onclick=()=>{ panel.style.display=(panel.style.display==="none"?"flex":"none"); }; const cc=this.$(".cheatclose"); if(cc) cc.onclick=()=>{ panel.style.display="none"; };
+        /* Die Befehlsuebersicht ist zum Lesen da, nicht zum Herauskopieren:
+           Rechtsklick, Kopieren und Ziehen werden unterbunden (Markieren
+           verhindert bereits user-select:none in der CSS). */
+        panel.addEventListener("contextmenu", e=>{ e.preventDefault(); });
+        panel.addEventListener("copy",        e=>{ e.preventDefault(); });
+        panel.addEventListener("cut",         e=>{ e.preventDefault(); });
+        panel.addEventListener("dragstart",   e=>{ e.preventDefault(); });
+      } }
 
       /* ---- Ziehgriffe: Gesamthoehe und Breitenverhaeltnis ------------------
          Beides wird gemerkt (localStorage), damit die einmal eingestellte

@@ -1857,7 +1857,7 @@ async function studentClassView(classId){
       const com = s ? myComs.find(c=>c.submission_id===s.id && c.released) : null;
       const badge = s ? (s.passed===true?`<span class="badge">bestanden ✓</span>`:`<span class="badge gold">abgegeben</span>`) : `<span class="badge gray">offen</span>`;
       return `<div class="row clickrow" data-id="${a.id}" style="cursor:pointer">
-        <span class="grow"><span class="t">${esc(a.title)}</span>${a.description?`<span class="s">${esc(a.description.slice(0,70))}</span>`:""}${com?feedbackPreviewHtml(com.body):""}</span>
+        <span class="grow"><span class="t">${esc(a.title)}</span>${a.description?`<span class="s prev" title="${esc(a.description.slice(0,300))}">${esc(a.description)}</span>`:""}${com?feedbackPreviewHtml(com.body):""}</span>
         ${badge}<span style="margin-left:8px;color:#7a8aa0">→</span></div>`;
     }).join("")}</div>`
     : `<div class="empty"><span class="ic">📝</span>Noch keine Aufgaben. Schau später wieder rein!</div>`;
@@ -2212,7 +2212,7 @@ async function sqlStudentClassView(classId){
   const badge=(a)=>{ const s=subs.find(x=>x.assignment_id===a.id); if(!s) return '<span class="badge gray">offen</span>'; if(s.passed===true) return '<span class="badge">bestanden ✓</span>'; return '<span class="badge gold">in Bearbeitung</span>'; };
   const progress=(a)=>{ const ids=subIdsBy[a.id]||[], total=ids.length; if(!total) return ""; const sub=subs.find(x=>x.assignment_id===a.id), res=(sub&&sub.results)||{}; let g=0,y=0; for(const id of ids){ const st=res[id]; if(st==="correct")g++; else if(st==="wrong")y++; } const grey=total-g-y; const seg=(n,c)=> n>0?`<div style="flex:${n};background:${c}"></div>`:""; return `<div style="display:flex;align-items:center;gap:8px;margin-top:6px"><div style="display:flex;height:7px;flex:1;max-width:170px;border-radius:4px;overflow:hidden;background:var(--line2)">${seg(g,"var(--green)")}${seg(y,"var(--gold)")}${seg(grey,"var(--line2)")}</div><span class="muted" style="font-size:11.5px;font-weight:800">${g}/${total}</span></div>`; };
   const list = asgs.length ? `<div class="list">${asgs.map(a=>`
-      <div class="row clickrow" data-id="${a.id}" style="cursor:pointer"><span class="grow"><span class="t">${esc(a.title)}</span>${a.description?`<span class="s">${esc(a.description.slice(0,70))}</span>`:""}${feedback(a)}${progress(a)}</span>${badge(a)}<span style="margin-left:8px;color:#7a8aa0">→</span></div>`).join("")}</div>`
+      <div class="row clickrow" data-id="${a.id}" style="cursor:pointer"><span class="grow"><span class="t">${esc(a.title)}</span>${a.description?`<span class="s prev" title="${esc(a.description.slice(0,300))}">${esc(a.description)}</span>`:""}${feedback(a)}${progress(a)}</span>${badge(a)}<span style="margin-left:8px;color:#7a8aa0">→</span></div>`).join("")}</div>`
     : `<div class="empty"><span class="ic">📝</span>Noch keine Aufgaben. Schau später wieder rein!</div>`;
   document.getElementById("view").innerHTML = `
     <div class="page-head"><button class="crumb" id="back">← Meine Klassen</button></div>
@@ -2834,7 +2834,7 @@ async function filiusStudentClassView(classId){
   const badge=(a)=>{ const s=subs.find(x=>x.assignment_id===a.id); if(!s) return '<span class="badge gray">offen</span>'; return filiusPassed(filiusEvalSub(s,a.checks), a.checks)?'<span class="badge">bestanden ✓</span>':'<span class="badge gold">in Bearbeitung</span>'; };
   const progress=(a)=>{ const ids=(a.checks||[]).map(c=>c.id), total=ids.length; if(!total) return ""; const sub=subs.find(x=>x.assignment_id===a.id), res=sub?filiusEvalSub(sub,a.checks):{}; let g=0,y=0; for(const id of ids){ const st=res[id]; if(st==="correct")g++; else if(st==="wrong")y++; } const grey=total-g-y; const seg=(n,c)=> n>0?`<div style="flex:${n};background:${c}"></div>`:""; return `<div style="display:flex;align-items:center;gap:8px;margin-top:6px"><div style="display:flex;height:7px;flex:1;max-width:170px;border-radius:4px;overflow:hidden;background:var(--line2)">${seg(g,"var(--green)")}${seg(y,"var(--gold)")}${seg(grey,"var(--line2)")}</div><span class="muted" style="font-size:11.5px;font-weight:800">${g}/${total}</span></div>`; };
   const list = asgs.length ? `<div class="list">${asgs.map(a=>`
-      <div class="row clickrow" data-id="${a.id}" style="cursor:pointer"><span class="grow"><span class="t">${esc(a.title)}</span>${a.description?`<span class="s">${esc(a.description.slice(0,70))}</span>`:""}${feedback(a)}${progress(a)}</span>${badge(a)}<span style="margin-left:8px;color:#7a8aa0">→</span></div>`).join("")}</div>`
+      <div class="row clickrow" data-id="${a.id}" style="cursor:pointer"><span class="grow"><span class="t">${esc(a.title)}</span>${a.description?`<span class="s prev" title="${esc(a.description.slice(0,300))}">${esc(a.description)}</span>`:""}${feedback(a)}${progress(a)}</span>${badge(a)}<span style="margin-left:8px;color:#7a8aa0">→</span></div>`).join("")}</div>`
     : `<div class="empty"><span class="ic">📝</span>Noch keine Aufgaben. Schau später wieder rein!</div>`;
   document.getElementById("view").innerHTML = `
     <div class="page-head"><button class="crumb" id="back">← Meine Klassen</button></div>
@@ -3626,7 +3626,7 @@ async function javaStudentClassView(classId){
       else if(c.mode==="tests" && c.tests.length) badge = s.passed===true?`<span class="badge">Tests bestanden ✓</span>`:`<span class="badge gold">abgegeben</span>`;
       else badge=`<span class="badge gold">abgegeben</span>`;
       return `<div class="row clickrow" data-id="${a.id}" style="cursor:pointer">
-        <span class="grow"><span class="t">${esc(a.title)}</span>${a.description?`<span class="s">${esc(a.description.slice(0,70))}</span>`:""}${com?feedbackPreviewHtml(com.body):""}</span>
+        <span class="grow"><span class="t">${esc(a.title)}</span>${a.description?`<span class="s prev" title="${esc(a.description.slice(0,300))}">${esc(a.description)}</span>`:""}${com?feedbackPreviewHtml(com.body):""}</span>
         ${badge}<span style="margin-left:8px;color:#7a8aa0">→</span></div>`;
     }).join("")}</div>`
     : `<div class="empty"><span class="ic">📝</span>Noch keine Aufgaben. Schau später wieder rein!</div>`;
