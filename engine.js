@@ -605,7 +605,7 @@ function injectStyles(){
   .hv.editing .tile:hover{outline:2px solid rgba(231,161,58,.7);outline-offset:-2px;z-index:2}
   .hv .grains{display:flex;flex-wrap:wrap;gap:2px;align-items:center;justify-content:center;width:62%;height:62%;pointer-events:none}
   .hv .kern{width:max(5px,18%);aspect-ratio:1/1.5;border-radius:50%;background:radial-gradient(circle at 35% 30%,#f6cf52,#d99a1c);box-shadow:0 1px 1px rgba(120,80,0,.4)}
-  .hv .kbadge{position:absolute;top:2px;left:3px;font-size:max(8px,26%);font-weight:800;color:#7a5200;background:rgba(255,255,255,.92);border-radius:5px;padding:0 3px;line-height:1.3;z-index:5;pointer-events:none}
+  .hv .kbadge{position:absolute;top:2px;left:3px;font-size:clamp(8px,calc(var(--cell,40px) * .34),22px);font-weight:800;color:#7a5200;background:rgba(255,255,255,.92);border-radius:5px;padding:0 .18em;line-height:1.25;z-index:5;pointer-events:none}
   .hv .hv-goal{padding:9px 12px;border-radius:12px;font-weight:800;font-size:14.5px;text-align:center}
   .hv .hv-goal.ok{background:#e9ffd6;color:#46a302}
   .hv .hv-goal.no{background:#fff3d6;color:#c9851f}

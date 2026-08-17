@@ -199,7 +199,7 @@ async function doRegister(){
   const codeEl=document.getElementById("auCode"); const code=codeEl?codeEl.value.trim():"";
   const first=(document.getElementById("auFirst")||{value:""}).value.trim();
   const last=(document.getElementById("auLast")||{value:""}).value.trim();
-  if(!/^[a-z0-9_.\-]{3,20}$/.test(u)){ authMsg("Benutzername: 3-20 Zeichen, nur Buchstaben/Zahlen/._-"); return; }
+  if(!/^[a-z0-9_.\-]{3,32}$/.test(u)){ authMsg("Benutzername: 3-32 Zeichen, nur Buchstaben/Zahlen/._-"); return; }
   if(!first||!last){ authMsg("Bitte Vor- und Nachnamen eingeben."); return; }
   if(p.length<6){ authMsg("Das Passwort muss mindestens 6 Zeichen haben."); return; }
   if(role==="teacher" && !code){ authMsg("Bitte den Einladungscode eingeben."); return; }
@@ -1184,7 +1184,7 @@ function renameUserDialog(userId, name, currentUsername){
     const u=inp.value.trim().toLowerCase();
     const disp=(fi.value.trim()+" "+la.value.trim()).trim();
     const origDisp=String(name||"").replace(/\s+/g," ").trim();   // gleiche Normalisierung wie disp -> kein Schreib-Write bei reiner Whitespace-Differenz
-    if(!/^[a-z0-9_.\-]{3,20}$/.test(u)){ toast("Benutzername: 3–20 Zeichen: a–z, 0–9, Punkt, _ , -","err"); return; }
+    if(!/^[a-z0-9_.\-]{3,32}$/.test(u)){ toast("Benutzername: 3–32 Zeichen: a–z, 0–9, Punkt, _ , -","err"); return; }
     if(!disp){ toast("Bitte einen Vor- und/oder Nachnamen eingeben.","err"); return; }
     const unchanged = (u===currentUsername) && (disp===origDisp);
     if(unchanged){ closeModal(); return; }
@@ -1602,7 +1602,7 @@ function slugUser(first,last){
   const clean=s=>String(s||"").toLowerCase().replace(/[äöüßéèêáàâïîôûçñ]/g,c=>m[c]||"").replace(/[^a-z0-9]+/g,"");
   let u=clean(first); const l=clean(last); if(l) u+="."+l; u=u.replace(/^\.+|\.+$/g,"");
   if(u.length<3) u=(u+"abc").slice(0,3);
-  return u.slice(0,18);
+  return u.slice(0,30);   // 30 + bis zu 2 Ziffern Anhang = max. 32 (Pruefgrenze)
 }
 function genPass(){ const a="abcdefghijkmnpqrstuvwxyz23456789"; let s=""; const r=new Uint32Array(7); window.crypto.getRandomValues(r); for(let i=0;i<7;i++) s+=a[r[i]%a.length]; return s; }
 function importStudentsDialog(classId, classCode, onDone){
@@ -1642,7 +1642,7 @@ async function doImport(list, classCode, classId, onDone){
   for(let i=0;i<list.length;i++){
     const stu=list[i];
     const provided=(stu.username||"").toLowerCase().replace(/[^a-z0-9_.\-]/g,"");
-    let base=(provided.length>=3)?provided.slice(0,18):slugUser(stu.first,stu.last); let uname=base, k=1;
+    let base=(provided.length>=3)?provided.slice(0,30):slugUser(stu.first,stu.last); let uname=base, k=1;
     while(used.has(uname)) uname=base+(++k);
     const pass=(stu.password && stu.password.length>=6)?stu.password:genPass(); let res=null, ok=false, lastErr="";
     for(let attempt=0; attempt<6 && !ok; attempt++){
@@ -1711,7 +1711,7 @@ async function doAdminImport(list, role){
   for(let i=0;i<list.length;i++){
     const stu=list[i];
     const provided=(stu.username||"").toLowerCase().replace(/[^a-z0-9_.\-]/g,"");
-    let base=(provided.length>=3)?provided.slice(0,18):slugUser(stu.first,stu.last); let uname=base, k=1;
+    let base=(provided.length>=3)?provided.slice(0,30):slugUser(stu.first,stu.last); let uname=base, k=1;
     if(provided.length>=3){
       if(existing.has(uname)||used.has(uname)){ results.push({name:stu.name, username:uname, password:"", status:"übersprungen (existiert)"}); setCount(i+1); continue; }
     } else { while(existing.has(uname)||used.has(uname)) uname=base+(++k); }
