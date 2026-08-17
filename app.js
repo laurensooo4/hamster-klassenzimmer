@@ -390,6 +390,11 @@ api.removeClassTeacher = async (classId, teacherId)=>{ const {error}=await sb.fr
 api.transferClass = async (classId, newOwnerId)=>{ const {error}=await sb.rpc("transfer_class",{p_class:classId, p_new_owner:newOwnerId}); if(error) throw error; };
 api.removeMembership = async (classId, studentId)=>{ const {error}=await sb.from("memberships").delete().eq("class_id",classId).eq("student_id",studentId); if(error) throw error; };
 api.adminDeleteUser = async (userId)=>{ const {error}=await sb.rpc("admin_delete_user",{p_user:userId}); if(error) throw error; };
+/* Nutzerverwaltung (Phase AB): Sammelloeschung, Schutzschalter, IServ-Abgleich. */
+api.adminDeleteUsers    = async (ids)=>{ const {data,error}=await sb.rpc("admin_delete_users",{p_users:ids}); if(error) throw error; return data||{}; };
+api.adminSetNieLoeschen = async (userId,wert)=>{ const {error}=await sb.rpc("admin_set_nie_loeschen",{p_user:userId,p_wert:!!wert}); if(error) throw error; };
+api.adminIservVorschau  = async (namen)=>{ const {data,error}=await sb.rpc("admin_iserv_vorschau",{p_namen:namen}); if(error) throw error; return data||{}; };
+api.adminIservAbgleich  = async (namen)=>{ const {data,error}=await sb.rpc("admin_iserv_abgleich",{p_namen:namen}); if(error) throw error; return data||{}; };
 api.setAdmin = async (userId, makeAdmin)=>{ const {error}=await sb.rpc("set_admin",{p_user:userId, p_make:!!makeAdmin}); if(error) throw error; };
 api.adminRenameUser = async (userId, newName)=>{ const {error}=await sb.rpc("admin_rename_user",{p_user:userId, p_new:newName}); if(error) throw error; };
 api.setClassJoinOpen = async (classId, open)=>{ const {error}=await sb.from("classes").update({join_open:!!open}).eq("id",classId); if(error) throw error; };
@@ -1043,12 +1048,26 @@ async function resetStudentPw(studentId, name){
 let adminState=null;
 async function adminHome(){
   shell(`<div class="center-load"><span class="spin"></span>Admin lädt…</div>`);
-  let classes=[], users=[];
+  let classes=[], users=[], mships=[], cteach=[], neueFelder=true;
   try{
     const c=await sb.from("classes").select("*, teacher:teacher_id(display_name,username)").order("created_at",{ascending:false}); if(c.error) throw c.error; classes=c.data||[];
-    const u=await sb.from("profiles").select("id,username,display_name,role,is_admin").order("role"); if(u.error) throw u.error; users=u.data||[];
+    /* Die zusaetzlichen Spalten gibt es erst nach dem Datenbank-Update (Phase AB).
+       Fehlen sie, faellt die Ansicht auf den alten Umfang zurueck, statt kaputtzugehen. */
+    let u=await sb.from("profiles").select("id,username,display_name,role,is_admin,created_at,iserv_fehlt_seit,iserv_fehlt_anzahl,nie_loeschen").order("role");
+    if(u.error){ neueFelder=false; u=await sb.from("profiles").select("id,username,display_name,role,is_admin").order("role"); }
+    if(u.error) throw u.error; users=u.data||[];
+    const ms=await sb.from("memberships").select("student_id,class_id");   mships=ms.error?[]:(ms.data||[]);
+    const ct=await sb.from("class_teachers").select("teacher_id,class_id"); cteach=ct.error?[]:(ct.data||[]);
   }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
-  adminState={classes, users};
+  /* Klassen je Person: Schueler:innen ueber memberships, Lehrkraefte ueber
+     eigene Klassen UND Co-Lehrer-Eintraege. Als Menge, damit niemand doppelt
+     zaehlt, wenn er beides ist. */
+  const klassenVon=new Map();
+  const merk=(uid,cid)=>{ if(!uid||!cid) return; let s=klassenVon.get(uid); if(!s){ s=new Set(); klassenVon.set(uid,s); } s.add(cid); };
+  mships.forEach(m=> merk(m.student_id,m.class_id));
+  cteach.forEach(t=> merk(t.teacher_id,t.class_id));
+  classes.forEach(c=> merk(c.teacher_id,c.id));
+  adminState={classes, users, klassenVon, neueFelder, sel:new Set(), krit:{}};
   const tN=users.filter(u=>u.role==="teacher").length, sN=users.filter(u=>u.role==="student").length, aN=users.filter(u=>u.is_admin).length;
   document.getElementById("view").innerHTML = `
     <div class="page-head"><button class="crumb" id="admBack">← Lehrer-Ansicht</button></div>
@@ -1059,7 +1078,13 @@ async function adminHome(){
       <div id="admClasses" style="margin-top:12px"></div></div>
     <div class="card">
       <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px"><h3 style="margin:0">👥 Nutzer:innen <span class="badge gray">${users.length}</span> <span class="muted" style="font-weight:600;font-size:12px">· ${tN} Lehrkräfte · ${sN} Schüler:innen${aN?" · "+aN+" Admin":""}</span></h3><div style="flex:1"></div>
-        <button class="btn btn-ghost btn-sm" id="admImport" style="margin-right:8px">📥 Importieren</button><input class="input" id="admUsrSearch" placeholder="🔍 Name · Benutzername" style="max-width:260px"></div>
+        <button class="btn btn-ghost btn-sm" id="admIserv" style="margin-right:8px" title="Konten mit einer Liste aus IServ abgleichen">📋 IServ-Abgleich</button><button class="btn btn-ghost btn-sm" id="admImport" style="margin-right:8px">📥 Importieren</button><input class="input" id="admUsrSearch" placeholder="🔍 Name · Benutzername" style="max-width:260px"></div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px">
+        <select class="input" id="admFRole"  style="max-width:170px"><option value="">Alle Rollen</option><option value="student">Schüler:innen</option><option value="teacher">Lehrkräfte</option><option value="admin">Admins</option></select>
+        <select class="input" id="admFAnz"   style="max-width:180px"><option value="">Klassen: egal</option><option value="0">0 Klassen</option><option value="1">genau 1 Klasse</option><option value="2">2 und mehr</option></select>
+        <select class="input" id="admFClass" style="max-width:230px"><option value="">Alle Klassen</option>${classes.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join("")}</select>
+        <select class="input" id="admFIserv" style="max-width:230px"><option value="">IServ: egal</option><option value="fehlt">fehlt in der Liste</option><option value="vorschlag">Löschvorschlag</option><option value="schutz">geschützt</option></select>
+      </div>
       <div id="admUsers" style="margin-top:12px"></div></div>
     ${((window.HAMSTER_CONFIG||{}).ALLOW_REGISTRATION === false) ? "" : `
     <div class="card" style="margin-top:16px">
@@ -1070,10 +1095,19 @@ async function adminHome(){
   document.getElementById("admBack").onclick = ()=> route();   // zurück ins aktive Tool (nicht hart Hamster)
   document.getElementById("btnNewClass").onclick = ()=> newClassDialog({pickTool:true});
   const cs=document.getElementById("admClsSearch"), us=document.getElementById("admUsrSearch");
-  cs.oninput=()=> renderAdminClasses(cs.value); us.oninput=()=> renderAdminUsers(us.value);
+  cs.oninput=()=> renderAdminClasses(cs.value);
+  const admFilter=()=>{ adminState.krit={ q:us.value,
+      role:  document.getElementById("admFRole").value,
+      anz:   document.getElementById("admFAnz").value,
+      klasse:document.getElementById("admFClass").value,
+      iserv: document.getElementById("admFIserv").value };
+    renderAdminUsers(); };
+  us.oninput=admFilter;
+  ["admFRole","admFAnz","admFClass","admFIserv"].forEach(id=>{ const e=document.getElementById(id); if(e) e.onchange=admFilter; });
   document.getElementById("admImport").onclick = ()=> adminImportDialog();
+  { const bi=document.getElementById("admIserv"); if(bi) bi.onclick = ()=> adminIservDialog(); }
   { const bi=document.getElementById("admNewInvite"); if(bi){ bi.onclick = ()=> newInviteDialog(); } }
-  renderAdminClasses(""); renderAdminUsers(""); renderAdminInvites();
+  renderAdminClasses(""); renderAdminUsers(); renderAdminInvites();
 }
 
 /* ---------- Admin: Lehrer-Einladungen (phaseZ) ---------- */
@@ -1139,10 +1173,33 @@ function renderAdminClasses(q){
     : `<div class="empty" style="padding:14px"><span class="ic">🔍</span>Keine Klasse gefunden.</div>`;
   el.querySelectorAll(".card.click").forEach(c=> c.onclick=()=>{ viewFromAdmin=true; classViewFor(c.dataset.tool)(c.dataset.id); });
 }
-function renderAdminUsers(q){
+/* Tage seit einem Zeitstempel (fuer "fehlt seit N Tagen"). */
+function tageSeit(iso){ if(!iso) return null; const d=Math.floor((Date.now()-new Date(iso).getTime())/86400000); return d<0?0:d; }
+/* Loeschvorschlag: mindestens zwei Abgleiche gefehlt UND laenger als 14 Tage.
+   Ein einzelner Abgleich reicht bewusst NICHT - eine unvollstaendige Liste
+   soll niemanden auf die Loeschliste bringen. */
+function istLoeschvorschlag(u){ return (u.iserv_fehlt_anzahl||0)>=2 && tageSeit(u.iserv_fehlt_seit)>=14; }
+
+function renderAdminUsers(){
   const el=document.getElementById("admUsers"); if(!el||!adminState) return;
-  q=(q||"").trim().toLowerCase();
-  const list=adminState.users.filter(u=> !q || (u.display_name||"").toLowerCase().includes(q)||(u.username||"").toLowerCase().includes(q));
+  const k=adminState.krit||{};
+  const q=(k.q||"").trim().toLowerCase();
+  const anzKl=(u)=> (adminState.klassenVon.get(u.id)||new Set()).size;
+  const list=adminState.users.filter(u=>{
+    if(q && !((u.display_name||"").toLowerCase().includes(q)||(u.username||"").toLowerCase().includes(q))) return false;
+    if(k.role==="student" && u.role!=="student") return false;
+    if(k.role==="teacher" && !(u.role==="teacher" && !u.is_admin)) return false;
+    if(k.role==="admin"   && !u.is_admin) return false;
+    if(k.anz==="0" && anzKl(u)!==0) return false;
+    if(k.anz==="1" && anzKl(u)!==1) return false;
+    if(k.anz==="2" && anzKl(u)<2)   return false;
+    if(k.klasse && !(adminState.klassenVon.get(u.id)||new Set()).has(k.klasse)) return false;
+    if(k.iserv==="fehlt"     && !u.iserv_fehlt_seit) return false;
+    if(k.iserv==="vorschlag" && !istLoeschvorschlag(u)) return false;
+    if(k.iserv==="schutz"    && !u.nie_loeschen) return false;
+    return true;
+  });
+  adminState.gefiltert=list.map(u=>u.id);
   const rows=list.map(u=>{
     const nm=esc(u.display_name||u.username);
     const badge = u.is_admin?'<span class="badge" style="background:#ffe0b2;color:#b35900">Admin</span>':u.role==="teacher"?'<span class="badge blue">Lehrkraft</span>':'<span class="badge gray">Schüler:in</span>';
@@ -1156,16 +1213,149 @@ function renderAdminUsers(q){
       acts += `<button class="btn btn-sm btn-ghost" data-deluser="${u.id}" data-nm="${nm}" title="Account löschen">🗑️</button>`;
     }
     if(u.id!==ME.id) acts = `<button class="btn btn-sm btn-ghost" data-rename="${u.id}" data-nm="${nm}" data-un="${esc(u.username)}" title="Name & Benutzername ändern">✏️ Bearbeiten</button> ` + acts;
-    return `<tr><td class="stu clickable" data-prof="${u.id}" title="Profil ansehen">${nm}</td><td><code>${esc(u.username)}</code></td><td>${badge}</td><td style="white-space:nowrap">${acts}</td></tr>`;
+    const nk=anzKl(u);
+    const iserv = u.nie_loeschen ? '<span class="badge gray" title="wird nie markiert und nie sammelgelöscht">🔒 geschützt</span>'
+      : (u.iserv_fehlt_seit ? `<span class="badge" style="background:${istLoeschvorschlag(u)?"#ffd9d9":"#fff3d6"};color:${istLoeschvorschlag(u)?"#c62828":"#c9851f"}" title="fehlt in der IServ-Liste">${istLoeschvorschlag(u)?"🗑️ Löschvorschlag":"⚠️ fehlt"} · ${tageSeit(u.iserv_fehlt_seit)} T · ${u.iserv_fehlt_anzahl||1}×</span>`
+                             : '<span class="muted" style="font-size:12px">–</span>');
+    const sel = adminState.sel.has(u.id) ? " checked" : "";
+    const box = (u.is_admin||u.id===ME.id) ? "" : `<input type="checkbox" data-sel="${u.id}"${sel}>`;
+    return `<tr><td style="text-align:center">${box}</td><td class="stu clickable" data-prof="${u.id}" title="Profil ansehen">${nm}</td><td><code>${esc(u.username)}</code></td><td>${badge}</td><td style="text-align:center;font-weight:800">${nk}</td><td>${iserv}</td><td style="white-space:nowrap">${acts}</td></tr>`;
   }).join("");
-  el.innerHTML = list.length ? `<div style="overflow:auto"><table class="matrix" style="width:100%"><thead><tr><th class="stu">Name</th><th>Benutzername</th><th>Rolle</th><th>Aktionen</th></tr></thead><tbody>${rows}</tbody></table></div>`
-    : `<div class="empty" style="padding:14px"><span class="ic">🔍</span>Niemand gefunden.</div>`;
+  const nSel=adminState.sel.size;
+  const leiste = `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+      <span class="badge gray">${list.length} von ${adminState.users.length} angezeigt</span>
+      <button class="btn btn-sm btn-ghost" id="admSelAll">Angezeigte auswählen</button>
+      <button class="btn btn-sm btn-ghost" id="admSelNone"${nSel?"":" disabled"}>Auswahl aufheben</button>
+      <div style="flex:1"></div>
+      ${nSel?`<b>${nSel} ausgewählt</b>
+        <button class="btn btn-sm btn-ghost" id="admProtOn">🔒 schützen</button>
+        <button class="btn btn-sm btn-ghost" id="admProtOff">Schutz aufheben</button>
+        <button class="btn btn-sm" id="admBulkDel" style="background:#ff4b4b;color:#fff">🗑️ ${nSel} Konten löschen</button>`:""}
+    </div>`;
+  el.innerHTML = list.length ? leiste + `<div style="overflow:auto"><table class="matrix" style="width:100%"><thead><tr><th style="width:34px"></th><th class="stu">Name</th><th>Benutzername</th><th>Rolle</th><th title="Anzahl Klassen">Klassen</th><th>IServ</th><th>Aktionen</th></tr></thead><tbody>${rows}</tbody></table></div>`
+    : leiste + `<div class="empty" style="padding:14px"><span class="ic">🔍</span>Niemand gefunden.</div>`;
+  el.querySelectorAll("[data-sel]").forEach(b=> b.onchange=()=>{ if(b.checked) adminState.sel.add(b.dataset.sel); else adminState.sel.delete(b.dataset.sel); renderAdminUsers(); });
+  { const a=document.getElementById("admSelAll"); if(a) a.onclick=()=>{ (adminState.gefiltert||[]).forEach(id=>{ const u=adminState.users.find(x=>x.id===id); if(u && !u.is_admin && u.id!==ME.id) adminState.sel.add(id); }); renderAdminUsers(); }; }
+  { const a=document.getElementById("admSelNone"); if(a) a.onclick=()=>{ adminState.sel.clear(); renderAdminUsers(); }; }
+  { const a=document.getElementById("admProtOn");  if(a) a.onclick=()=> adminSchutzSetzen(true); }
+  { const a=document.getElementById("admProtOff"); if(a) a.onclick=()=> adminSchutzSetzen(false); }
+  { const a=document.getElementById("admBulkDel"); if(a) a.onclick=()=> adminSammelLoeschen(); }
   el.querySelectorAll("[data-prof]").forEach(b=> b.onclick=()=> adminUserProfile(b.dataset.prof));
   el.querySelectorAll("[data-rename]").forEach(b=> b.onclick=()=> renameUserDialog(b.dataset.rename, b.dataset.nm, b.dataset.un));
   el.querySelectorAll("[data-pw]").forEach(b=> b.onclick=()=> resetStudentPw(b.dataset.pw, b.dataset.nm));
   el.querySelectorAll("[data-deluser]").forEach(b=> b.onclick=async()=>{ if(!confirm("Account von "+b.dataset.nm+" WIRKLICH löschen? Alle zugehörigen Daten – bei Lehrkräften auch ihre erstellten Klassen – werden entfernt. Nicht umkehrbar.")) return; try{ await api.adminDeleteUser(b.dataset.deluser); toast("Account gelöscht","ok"); adminHome(); }catch(e){ toast(e.message||"Fehler","err"); } });
   el.querySelectorAll("[data-mkadmin]").forEach(b=> b.onclick=async()=>{ if(!confirm(b.dataset.nm+" zum Admin machen? (Behält die Lehrer-Rolle.)")) return; try{ await api.setAdmin(b.dataset.mkadmin, true); toast("Ist jetzt Admin ⭐","ok"); adminHome(); }catch(e){ toast(e.message||"Fehler","err"); } });
   el.querySelectorAll("[data-unadmin]").forEach(b=> b.onclick=async()=>{ if(!confirm(b.dataset.nm+" den Admin-Rang entziehen?")) return; try{ await api.setAdmin(b.dataset.unadmin, false); toast("Admin-Rang entfernt","ok"); adminHome(); }catch(e){ toast(e.message||"Fehler","err"); } });
+}
+
+/* ---------- Admin: Schutzschalter fuer die Auswahl ---------- */
+async function adminSchutzSetzen(wert){
+  const ids=[...adminState.sel]; if(!ids.length) return;
+  if(!confirm(ids.length+" Konten "+(wert?"schützen":"nicht mehr schützen")+"?\n\nGeschützte Konten werden beim IServ-Abgleich nie markiert und beim Sammellöschen übersprungen.")) return;
+  let ok=0;
+  for(const id of ids){ try{ await api.adminSetNieLoeschen(id, wert); ok++; }catch(e){} }
+  toast(ok+" Konten geändert", ok?"ok":"err");
+  adminState.sel.clear(); adminHome();
+}
+
+/* ---------- Admin: mehrere Konten auf einmal loeschen ---------- */
+async function adminSammelLoeschen(){
+  const ids=[...adminState.sel]; if(!ids.length) return;
+  const namen=adminState.users.filter(u=>ids.includes(u.id)).map(u=>u.display_name||u.username);
+  const frage = ids.length+" Konten endgültig löschen?\n\n"+namen.slice(0,15).join(", ")+(namen.length>15?" … und "+(namen.length-15)+" weitere":"")+
+    "\n\nMit dem Konto verschwinden ALLE Abgaben, Entwürfe und Sandbox-Projekte dieser Personen. Bei Lehrkräften auch die von ihnen erstellten Klassen.\n\nDas lässt sich nicht rückgängig machen.\n\nTippe zur Bestätigung die Anzahl ein:";
+  const ein=prompt(frage,"");
+  if(ein===null) return;
+  if(String(ein).trim()!==String(ids.length)){ toast("Abgebrochen – die Zahl stimmte nicht.","err"); return; }
+  try{
+    const r=await api.adminDeleteUsers(ids);
+    toast((r.geloescht||0)+" Konten gelöscht"+((r.uebersprungen||0)?", "+r.uebersprungen+" übersprungen (Admin oder geschützt)":""),"ok");
+    adminState.sel.clear(); adminHome();
+  }catch(e){ toast(e.message||"Fehler","err"); }
+}
+
+/* ---------- Admin: Abgleich mit einer Liste aus IServ ----------
+   Ablauf in zwei Schritten: erst ein Trockenlauf, der nur berichtet, dann auf
+   ausdrueckliche Bestaetigung der eigentliche Abgleich. Geloescht wird hier
+   nichts - nur markiert. */
+function adminIservDialog(){
+  openModal(`<button class="x" onclick="closeModal()">✕</button>
+    <h3>📋 Abgleich mit der IServ-Liste</h3>
+    <p class="muted" style="margin:2px 0 12px">Lade eine Datei mit allen Benutzernamen hoch, die es geben <b>muss</b> (CSV oder Textdatei, eine Person pro Zeile), oder füge die Namen unten ein.
+    Alle <b>Schülerkonten</b>, die dort fehlen, werden <b>markiert</b> – nicht gelöscht. Danach kannst du in der Nutzerliste nach der Markierung filtern.</p>
+    <div class="field"><label>Datei (CSV oder .txt)</label><input class="input" type="file" id="ivFile" accept=".csv,.txt,text/csv,text/plain"></div>
+    <div class="field"><label>…oder Namen einfügen</label><textarea class="input" id="ivText" style="min-height:120px;font-family:monospace;font-size:13px" placeholder="max.mustermann&#10;erika.musterfrau&#10;tom.klein"></textarea></div>
+    <p class="muted" style="margin:0 0 12px;font-size:12.5px">Bei mehreren Spalten wird die Spalte <b>Benutzername</b> / <b>username</b> / <b>Account</b> verwendet, sonst die erste. Groß- und Kleinschreibung ist egal.</p>
+    <div id="ivMsg" class="auth-msg" style="display:none"></div>
+    <div style="display:flex;gap:10px"><button class="btn btn-ghost" id="ivCancel" style="flex:none">Abbrechen</button><button class="btn btn-primary" id="ivPruef" style="flex:1">Prüfen (ändert nichts)</button></div>
+    <div id="ivStage" style="margin-top:14px"></div>`, true);
+  document.getElementById("ivCancel").onclick = closeModal;
+  document.getElementById("ivFile").onchange = (ev)=>{
+    const f=ev.target.files && ev.target.files[0]; if(!f) return;
+    const r=new FileReader();
+    r.onload = ()=>{ document.getElementById("ivText").value = String(r.result||""); };
+    r.readAsText(f, "utf-8");
+  };
+  document.getElementById("ivPruef").onclick = async ()=>{
+    const namen = parseIservNamen(document.getElementById("ivText").value);
+    const msg=document.getElementById("ivMsg");
+    if(namen.length<3){ msg.style.display="block"; msg.className="auth-msg err"; msg.textContent="Es wurden nur "+namen.length+" Namen erkannt. Das sieht nach einem Fehler aus – bitte die Datei prüfen."; return; }
+    msg.style.display="none";
+    const st=document.getElementById("ivStage");
+    st.innerHTML = `<div class="muted">Prüfe…</div>`;
+    try{
+      const v=await api.adminIservVorschau(namen);
+      const warn = v.anteil_prozent>=30;
+      st.innerHTML = `
+        <div class="card" style="margin-bottom:10px">
+          <table style="width:100%;font-size:14px">
+            <tr><td>Namen in der Liste</td><td style="text-align:right;font-weight:800">${v.namen_in_liste}</td></tr>
+            <tr><td>davon hier gefunden</td><td style="text-align:right;font-weight:800">${v.gefunden}</td></tr>
+            <tr><td>Schülerkonten insgesamt</td><td style="text-align:right;font-weight:800">${v.schueler_gesamt}</td></tr>
+            <tr><td><b>werden markiert</b> (fehlen in der Liste)</td><td style="text-align:right;font-weight:900;color:${warn?"#c62828":"#c9851f"}">${v.wuerde_markieren} (${v.anteil_prozent} %)</td></tr>
+            <tr><td>Markierung wird aufgehoben bei</td><td style="text-align:right;font-weight:800">${v.wuerde_loesen}</td></tr>
+            <tr><td>geschützte Konten (bleiben unberührt)</td><td style="text-align:right;font-weight:800">${v.geschuetzt}</td></tr>
+          </table>
+          ${(v.unbekannt&&v.unbekannt.length)?`<div class="muted" style="margin-top:8px;font-size:12.5px"><b>${v.unbekannt.length} Namen aus der Liste haben hier kein Konto</b> (Tippfehler oder neu): ${v.unbekannt.map(x=>esc(x)).join(" · ")}</div>`:""}
+        </div>
+        ${warn?`<div class="auth-msg err" style="display:block">Mehr als 30 % aller Schülerkonten würden markiert. Der Abgleich wird in diesem Fall <b>abgelehnt</b> – das ist typisch für eine unvollständig exportierte Liste. Bitte den Export prüfen.</div>`
+              :`<button class="btn btn-primary btn-lg" id="ivGo">Abgleich jetzt durchführen (${v.wuerde_markieren} markieren)</button>`}`;
+      const go=document.getElementById("ivGo");
+      if(go) go.onclick = async ()=>{
+        go.disabled=true; go.textContent="Läuft…";
+        try{ const r=await api.adminIservAbgleich(namen);
+          toast((r.markiert||0)+" markiert, "+(r.geloest||0)+" Markierungen aufgehoben","ok");
+          closeModal(); adminHome();
+        }catch(e){ toast(e.message||"Fehler","err"); go.disabled=false; go.textContent="Erneut versuchen"; }
+      };
+    }catch(e){
+      st.innerHTML="";
+      msg.style.display="block"; msg.className="auth-msg err";
+      msg.textContent = (e.message||"Fehler") + (String(e.message||"").indexOf("does not exist")>=0 ? " – wurde das Datenbank-Update (Phase AB) schon eingespielt?" : "");
+    }
+  };
+}
+
+/* Liest Benutzernamen aus CSV oder einfacher Liste.
+   Erkennt eine Kopfzeile mit "benutzername"/"username"/"account"/"login" und
+   nimmt dann genau diese Spalte, sonst die erste. Trennzeichen: ; , oder Tab. */
+function parseIservNamen(text){
+  const zeilen=String(text||"").split(/\r?\n/).map(z=>z.trim()).filter(Boolean);
+  if(!zeilen.length) return [];
+  const teile=(z)=> z.split(/[;,\t]/).map(x=>x.trim().replace(/^"|"$/g,""));
+  let spalte=0, start=0;
+  const kopf=teile(zeilen[0]).map(x=>x.toLowerCase());
+  const treffer=kopf.findIndex(x=> ["benutzername","username","account","login","kennung","nutzername"].includes(x));
+  if(treffer>=0){ spalte=treffer; start=1; }
+  else if(kopf.some(x=> ["vorname","nachname","name","klasse","email","e-mail"].includes(x))) { start=1; }
+  const raus=[];
+  for(let i=start;i<zeilen.length;i++){
+    const t=teile(zeilen[i]); let w=(t[spalte]||"").toLowerCase();
+    if(w.includes("@")) w=w.split("@")[0];            // E-Mail -> Benutzername
+    w=w.replace(/[^a-z0-9_.\-]/g,"");
+    if(w.length>=3) raus.push(w);
+  }
+  return [...new Set(raus)];
 }
 
 /* ---------- Admin: Benutzername ändern ---------- */

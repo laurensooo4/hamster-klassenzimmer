@@ -122,7 +122,20 @@ function parse(src){
     if(!looksLikeMethod())
       perr(tk().type==="eof" ? "Es fehlt 'void main() { … }'." : "Dein Programm muss in einer Methode stehen – beginne mit 'void main() { … }'.");
     const methods={};
-    while(tk().type!=="eof"){ skipMods(); if(tk().type==="eof")break; const m=method(); methods[m.name]=m; }
+    while(tk().type!=="eof"){
+      skipMods(); if(tk().type==="eof")break;
+      const m=method();
+      /* Jede Methode darf nur EINMAL vorkommen. Vorher wurde die zweite
+         Definition stillschweigend ueber die erste geschrieben - bei zwei
+         main-Methoden lief dann nur die letzte, ohne jede Meldung. */
+      if(Object.prototype.hasOwnProperty.call(methods, m.name))
+        throw {hamsterError:true,
+               message:"Compilerfehler: Die Methode '"+m.name+"' gibt es bereits weiter oben. "
+                       +"Jede Methode darf nur einmal geschrieben werden - gib ihr einen anderen Namen "
+                       +"oder loesche die zweite.",
+               line:m.line};
+      methods[m.name]=m;
+    }
     if(!methods.main) perr("Es fehlt 'void main() { … }'.");
     return {methods, main:methods.main.body};
   }
@@ -248,6 +261,35 @@ function compileCheck(ast){
   const methods=ast.methods||{};
   const BRET={vor:"void",linksUm:"void",gib:"void",nimm:"void",schreib:"void",vornFrei:"boolean",kornDa:"boolean",maulLeer:"boolean",getAnzahlKoerner:"int",getReihe:"int",getSpalte:"int",getBlickrichtung:"int",liesZahl:"int",liesZeichenkette:"String"};
   const cerr=(msg,line)=>{ throw {hamsterError:true, message:"Compilerfehler: "+msg, line}; };
+  /* Erwartete Parameterzahl der eingebauten Befehle.
+     Zahl = genau so viele, [von,bis] = Bereich, nicht aufgefuehrt = beliebig
+     (das gilt nur fuer schreib, das beliebig viele Werte ausgibt).
+     Vorher nahmen die Befehle ihre Argumente entgegen und ignorierten sie -
+     vor(5); lief deshalb als ein einzelner Schritt durch. */
+  const BARITY={vor:0,linksUm:0,gib:0,nimm:0,vornFrei:0,kornDa:0,maulLeer:0,
+                getAnzahlKoerner:0,getReihe:0,getSpalte:0,getBlickrichtung:0,
+                liesZahl:[0,1],liesZeichenkette:[0,1]};
+  const arityText=(name,min,max,n)=>{
+    const soll = (min===max)
+      ? (min===0 ? "keine Parameter" : (min===1 ? "genau einen Parameter" : "genau "+min+" Parameter"))
+      : (min+" bis "+max+" Parameter");
+    const ist  = (n===1 ? "einer angegeben" : n+" angegeben");
+    return "Die Methode '"+name+"' erwartet "+soll+", hier "+(n===0?"fehlen sie":"wurden "+ist)+"."
+         + ((min===0&&max===0) ? " Richtig ist: "+name+"();" : "");
+  };
+  function chkArity(c){
+    if(!c || c.kind!=="call") return;
+    const n = c.args ? c.args.length : 0;
+    const b = BARITY[c.name];
+    if(b!==undefined){
+      const min = Array.isArray(b)?b[0]:b, max = Array.isArray(b)?b[1]:b;
+      if(n<min || n>max) cerr(arityText(c.name,min,max,n), c.line);
+      return;
+    }
+    if(c.name in BRET) return;                 // schreib: beliebig viele Werte
+    const m = methods[c.name];
+    if(m){ const k=(m.params||[]).length; if(n!==k) cerr(arityText(c.name,k,k,n), c.line); }
+  }
   const lookup=(name,scopes)=>{ for(let i=scopes.length-1;i>=0;i--) if(scopes[i].has(name)) return scopes[i].get(name); if(name in GLOBT) return GLOBT[name]; return undefined; };
   const inChain=(name,scopes)=>{ for(const sc of scopes) if(sc.has(name)) return true; return false; };
   function tOf(e,scopes){
@@ -308,7 +350,7 @@ function compileCheck(ast){
     switch(e.kind){
       case "int": case "num": case "char": case "bool": case "str": break;
       case "ref": if(lookup(e.name,scopes)===undefined) cerr("Die Variable '"+e.name+"' wurde nicht deklariert. Deklariere sie zuerst mit einem Datentyp, z. B. \"int "+e.name+";\".", e.line); break;
-      case "call": for(const a of e.args) chkExpr(a,scopes); break;
+      case "call": for(const a of e.args) chkExpr(a,scopes); chkArity(e); break;
       case "bin": chkExpr(e.l,scopes); chkExpr(e.r,scopes);
         if(e.op==="/"){ const lt=tOf(e.l,scopes), rt=tOf(e.r,scopes); e.intDiv = !(lt==="double"||rt==="double"); }
         else if(e.op==="+" && tOf(e,scopes)==="String"){ e.l=strWrap(e.l,scopes); e.r=strWrap(e.r,scopes); }
@@ -342,6 +384,7 @@ function compileCheck(ast){
         chkExpr(s.idx,scopes); chkExpr(s.value,scopes); break;
       case "callstmt":
         for(const a of s.call.args) chkExpr(a,scopes);
+        chkArity(s.call);   /* eigener Zweig: Aufrufe als Anweisung (vor(5);) landen NICHT in chkExpr */
         if(s.call.name==="schreib") s.call.args = s.call.args.map(a=>strWrap(a,scopes));
         break;
       case "block": chkBlock(s.body,scopes,inLoop); break;
