@@ -28,8 +28,11 @@ set -uo pipefail
 
 # --- Einstellungen (bei Bedarf anpassen) ------------------------------------
 BACKUP_DIR="${BACKUP_DIR:-backups}"   # Zielordner (relativ zu supabase/docker)
-KEEP_DAYS="${KEEP_DAYS:-30}"          # taegliche Sicherungen so viele Tage behalten
-KEEP_MONTHLY="${KEEP_MONTHLY:-12}"    # zusaetzlich: Monats-Sicherung (jeweils 1. des Monats)
+# WICHTIG: KEEP_DAYS zaehlt TAGE, nicht Sicherungen. Wer zweimal taeglich sichert,
+# behaelt also 60 Dateien (30 Tage x 2) - das ist so gewollt und braucht keine
+# Anpassung. Nur der Platzbedarf verdoppelt sich.
+KEEP_DAYS="${KEEP_DAYS:-30}"          # Sicherungen aus den letzten so vielen TAGEN behalten
+KEEP_MONTHLY="${KEEP_MONTHLY:-12}"    # zusaetzlich: eine Kopie je Monat, so viele Monate
 DB="${DB:-postgres}"                  # Name der Datenbank
 
 cd "$(dirname "$0")/.." || { echo "FEHLER: Ordner nicht gefunden."; exit 1; }
@@ -147,12 +150,17 @@ if [ "$VERSCHLUESSELN" != "1" ]; then
   echo "    Verschluesselung einschalten: BACKUP_AGE_RECIPIENT in hardening.conf setzen."
 fi
 
-# --- Monats-Sicherung: am 1. des Monats eine Kopie dauerhaft aufheben --------
-if [ "$DAY_OF_MONTH" = "01" ]; then
-  MON="$BACKUP_DIR/monatlich_$(date +%Y-%m).sql.gz"
-  [ "$VERSCHLUESSELN" = "1" ] && MON="$MON.age"
+# --- Monats-Sicherung: eine Kopie je Monat dauerhaft aufheben ---------------
+# Frueher nur am 1. des Monats. Das ging schief, wenn der Server am 1. aus war
+# (Wochenende, Ferien) - dann fehlte der Monat fuer immer. Jetzt wird die
+# Monats-Kopie beim ERSTEN erfolgreichen Lauf des Monats angelegt, egal an
+# welchem Tag. Laeuft die Sicherung mehrmals taeglich, passiert trotzdem nur
+# einmal je Monat etwas: die Datei traegt den Monat im Namen.
+MON="$BACKUP_DIR/monatlich_$(date +%Y-%m).sql.gz"
+[ "$VERSCHLUESSELN" = "1" ] && MON="$MON.age"
+if [ ! -f "$MON" ]; then
   cp "$OUT" "$MON"
-  echo "OK: Monats-Sicherung angelegt ($(basename "$MON"))"
+  echo "OK: Monats-Sicherung fuer $(date +%Y-%m) angelegt ($(basename "$MON"))"
 fi
 
 # --- Aufraeumen --------------------------------------------------------------
