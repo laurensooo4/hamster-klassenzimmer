@@ -1563,14 +1563,16 @@ function renderAdminUsers(){
     }
     if(u.id!==ME.id) acts = `<button class="btn btn-sm btn-ghost" data-rename="${u.id}" data-nm="${nm}" data-un="${esc(u.username)}" title="Name & Benutzername ändern">✏️ Bearbeiten</button> ` + acts;
     const nk=anzKl(u);
-    const gesperrtBadge = sp ? '<span class="badge" style="background:#ffd9d9;color:#c62828" title="nach '+sp.fehlversuche+' Fehlversuchen gesperrt">🔒 gesperrt</span> ' : "";
-    const iserv = u.nie_loeschen ? '<span class="badge gray" title="wird nie markiert und nie sammelgelöscht">🔒 geschützt</span>'
-      : (u.iserv_fehlt_seit ? `<span class="badge" style="background:${istLoeschvorschlag(u)?"#ffd9d9":"#fff3d6"};color:${istLoeschvorschlag(u)?"#c62828":"#c9851f"}" title="fehlt in der IServ-Liste">${istLoeschvorschlag(u)?"🗑️ Löschvorschlag":"⚠️ fehlt"} · ${tageSeit(u.iserv_fehlt_seit)} T · ${u.iserv_fehlt_anzahl||1}×</span>`
-                             : '<span class="muted" style="font-size:12px">–</span>');
+    /* Sperre zuerst ermitteln: sie wird weiter unten fuer das Kennzeichen
+       UND fuer den Entsperren-Knopf gebraucht. */
     const sp = adminState.gesperrt && adminState.gesperrt.get(u.id);
     if(sp){
       acts = `<button class="btn btn-sm" data-entsperren="${u.id}" data-nm="${nm}" style="background:#ff4b4b;color:#fff" title="Konto wurde nach ${sp.fehlversuche} Fehlversuchen gesperrt">🔓 entsperren</button> ` + acts;
     }
+    const gesperrtBadge = sp ? '<span class="badge" style="background:#ffd9d9;color:#c62828" title="nach '+sp.fehlversuche+' Fehlversuchen gesperrt">🔒 gesperrt</span> ' : "";
+    const iserv = u.nie_loeschen ? '<span class="badge gray" title="wird nie markiert und nie sammelgelöscht">🔒 geschützt</span>'
+      : (u.iserv_fehlt_seit ? `<span class="badge" style="background:${istLoeschvorschlag(u)?"#ffd9d9":"#fff3d6"};color:${istLoeschvorschlag(u)?"#c62828":"#c9851f"}" title="fehlt in der IServ-Liste">${istLoeschvorschlag(u)?"🗑️ Löschvorschlag":"⚠️ fehlt"} · ${tageSeit(u.iserv_fehlt_seit)} T · ${u.iserv_fehlt_anzahl||1}×</span>`
+                             : '<span class="muted" style="font-size:12px">–</span>');
     const sel = adminState.sel.has(u.id) ? " checked" : "";
     const box = (u.is_admin||u.id===ME.id) ? "" : `<input type="checkbox" data-sel="${u.id}"${sel}>`;
     return `<tr><td style="text-align:center">${box}</td><td class="stu clickable" data-prof="${u.id}" title="Profil ansehen">${nm}</td><td><code>${esc(u.username)}</code></td><td>${badge}</td><td style="text-align:center;font-weight:800">${nk}</td><td>${gesperrtBadge}${iserv}</td><td style="white-space:nowrap">${acts}</td></tr>`;
@@ -4738,6 +4740,7 @@ async function javaSandboxProject(projectId){
 
 const PATCH_NOTES = [
   { v:"2.45", date:"25. August 2026", title:"🌍 Mehrere Welten je Aufgabe · 🔄 Klassenwechsel mit Abgaben", items:[
+    `<b>Behoben:</b> Im Admin-Bereich blieb die Liste der Nutzer:innen <b>leer</b> – obwohl der Zähler darüber die richtige Anzahl nannte. Ursache war ein Programmierfehler in der Fassung 2.44: eine Variable wurde eine Zeile zu früh benutzt, was die Liste beim Aufbau abbrechen ließ. Filter, Suche, Sammelauswahl und der Entsperren-Knopf sind damit wieder da.`,
     `<b>Eine Aufgabe, mehrere Start-Territorien.</b> Im Aufgaben-Editor gibt es über dem Editor die Leiste <b>Welten</b>. Mit <b>+ Welt</b> legst du ein weiteres Territorium an, mit <b>⧉ kopieren</b> eine Abwandlung des aktuellen. Der Startcode gilt für alle Welten – eine Abgabe ist erst bestanden, wenn sie in <b>jeder</b> Welt das Ziel erreicht. Damit fallen Lösungen auf, die nur auswendig gelernte Schrittzahlen benutzen.`,
     `<b>Für Schüler:innen:</b> über dem Editor stehen die Welten zum Umschalten – der Code bleibt dabei stehen. <b>🧪 in allen Welten testen</b> zeigt vor dem Abgeben, welche Welt schon klappt (✓) und welche noch nicht (✗).`,
     `<b>Beim Ziel „Soll-Zustand vergleichen"</b> wird der Soll-Zustand je Welt aus deinem Lösungscode neu berechnet. Läuft er in einer Welt nicht, sagt das Speichern das sofort.`,
