@@ -101,8 +101,24 @@
   ];
   function appByKey(k){ for(var i=0;i<APPS.length;i++) if(APPS[i].key===k) return APPS[i]; return null; }
 
+  /* Zahlenfelder, die aus einem gespeicherten Netz kommen, werden beim Laden
+     hart in Zahlen umgewandelt. Grund: Die Netze der Schueler:innen liegen als
+     JSON in der Datenbank, und die eigene Abgabe darf jede:r selbst schreiben.
+     Ohne diese Umwandlung koennte dort statt einer Portnummer HTML stehen, das
+     spaeter in der Lehreransicht angezeigt wird. */
+  var NETZ_ZAHLEN = ["x","y","echoPort","port","ttl","retention","gnMax"];
+  function zahlenErzwingen(n){
+    if(!n || typeof n!=="object") return n;
+    for(var i=0;i<NETZ_ZAHLEN.length;i++){
+      var k=NETZ_ZAHLEN[i];
+      if(n[k]===undefined || n[k]===null || typeof n[k]==="number") continue;
+      var v=parseFloat(n[k]);
+      if(isNaN(v)) delete n[k]; else n[k]=v;
+    }
+    return n;
+  }
   function normalizeNet(d){ d=d||{}; if(typeof d==="string"){ try{ d=JSON.parse(d); }catch(e){ d={}; } }
-    return { nodes:(d.nodes||[]).map(function(n){ return n; }), links:(d.links||[]).slice() }; }
+    return { nodes:(d.nodes||[]).map(zahlenErzwingen), links:(d.links||[]).slice() }; }
 
   /* ============================== Styles ================================== */
   function injectStyles(){
@@ -1411,7 +1427,7 @@
   /* ---- Echo-Server ---- */
   FiliusView.prototype._appEcho=function(n, mount){
     var self=this; if(n.echoActive===undefined) n.echoActive=true;
-    mount.innerHTML='<div style="display:flex;gap:8px;align-items:center;margin-bottom:8px"><button class="fv-btn" id="ecBtn">'+(n.echoActive?"Anhalten":"Starten")+'</button><label class="cap" style="width:auto">Port:</label><input class="fv-in" id="ecPort" value="'+esc(n.echoPort||7)+'" style="min-width:70px"></div><pre style="background:#111;color:#dedede;border-radius:8px;padding:8px;min-height:120px;font-size:12px">Echo-Server '+(n.echoActive?"läuft ● (Port "+(n.echoPort||7)+")":"angehalten")+'.\nSchickt eingehende Nachrichten unverändert zurück.</pre>';
+    mount.innerHTML='<div style="display:flex;gap:8px;align-items:center;margin-bottom:8px"><button class="fv-btn" id="ecBtn">'+(n.echoActive?"Anhalten":"Starten")+'</button><label class="cap" style="width:auto">Port:</label><input class="fv-in" id="ecPort" value="'+esc(n.echoPort||7)+'" style="min-width:70px"></div><pre style="background:#111;color:#dedede;border-radius:8px;padding:8px;min-height:120px;font-size:12px">Echo-Server '+(n.echoActive?"läuft ● (Port "+esc(n.echoPort||7)+")":"angehalten")+'.\nSchickt eingehende Nachrichten unverändert zurück.</pre>';
     mount.querySelector("#ecBtn").onclick=function(){ n.echoActive=!n.echoActive; self._changed(); self._renderDesk(n.id); };
     mount.querySelector("#ecPort").addEventListener("blur",function(){ var v=parseInt(this.value,10); if(v>0){ n.echoPort=v; self._changed(); } });
   };
