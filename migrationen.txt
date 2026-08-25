@@ -1,0 +1,41 @@
+# ============================================================================
+#  Reihenfolge der Datenbank-Aenderungen
+# ----------------------------------------------------------------------------
+#  scripts/update.sh arbeitet diese Liste von oben nach unten ab und spielt
+#  nur ein, was auf dem Server noch fehlt oder sich geaendert hat. Alle
+#  Dateien sind wiederholbar aufgebaut (idempotent).
+#
+#  Kommt eine neue Phase dazu, gehoert sie ANS ENDE dieser Liste.
+# ============================================================================
+schema.sql
+schema_update.sql
+schema_update_phaseB.sql
+schema_update_phaseC.sql
+schema_update_phaseD.sql
+schema_update_phaseE.sql
+schema_update_phaseF.sql
+schema_update_phaseG.sql
+schema_update_phaseH.sql
+schema_update_phaseI.sql
+schema_update_phaseJ.sql
+schema_update_phaseK.sql
+schema_update_phaseL.sql
+schema_update_phaseM.sql
+schema_update_phaseN.sql
+schema_update_phaseO.sql
+schema_update_phaseP.sql
+schema_update_phaseQ.sql
+schema_update_phaseR.sql
+schema_update_phaseS.sql
+schema_update_phaseT.sql
+schema_update_phaseU.sql
+schema_update_phaseV.sql
+schema_update_phaseW.sql
+schema_update_phaseX_java.sql
+schema_update_phaseY_java2.sql
+schema_update_phaseZ_security.sql
+schema_update_phaseZ2_reset.sql
+schema_update_phaseAA_benutzernamen.sql
+schema_update_phaseAB_verwaltung.sql
+schema_update_phaseAC_anmeldeschutz.sql
+schema_update_phaseAD_klassenwechsel.sql
