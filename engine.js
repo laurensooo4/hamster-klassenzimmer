@@ -121,7 +121,9 @@ function parse(src){
       perr("Klassen-/import-Syntax wird hier nicht unterstützt – bitte nur Methoden und 'void main()' verwenden");
     if(!looksLikeMethod())
       perr(tk().type==="eof" ? "Es fehlt 'void main() { … }'." : "Dein Programm muss in einer Methode stehen – beginne mit 'void main() { … }'.");
-    const methods={};
+    /* Prototypenlos: sonst treffen Namen wie toString oder valueOf die von
+       Object geerbten Funktionen statt der Methode des Schuelers. */
+    const methods=Object.create(null);
     while(tk().type!=="eof"){
       skipMods(); if(tk().type==="eof")break;
       const m=method();
@@ -218,8 +220,13 @@ function parse(src){
   function relE(){ let l=addE(); while(isOp("<")||isOp(">")||isOp("<=")||isOp(">=")){const op=toks[p++].value; l={kind:"bin",op,l,r:addE()};} return l; }
   function addE(){ let l=mulE(); while(isOp("+")||isOp("-")){const op=toks[p++].value; l={kind:"bin",op,l,r:mulE()};} return l; }
   function mulE(){ let l=unary(); while(isOp("*")||isOp("/")||isOp("%")){const op=toks[p++].value; l={kind:"bin",op,l,r:unary()};} return l; }
+  /* Typwort statt Zahl: '(int)' ist eine Umwandlung, '(5)' nur eine Klammer.
+     Beide haben denselben Tokentyp - unterscheidbar sind sie nur daran, dass
+     beim Schluesselwort der Wert der Text "int"/"char"/"double" ist. */
+  const istTypWort = (t)=> !!t && typeof t.value==="string"
+                        && (t.value==="int"||t.value==="double"||t.value==="char");
   function unary(){
-    if(isOp("(") && toks[p+1] && (toks[p+1].type==="int"||toks[p+1].type==="double"||toks[p+1].type==="char") && toks[p+2] && toks[p+2].type==="op" && toks[p+2].value===")"){
+    if(isOp("(") && istTypWort(toks[p+1]) && toks[p+2] && toks[p+2].type==="op" && toks[p+2].value===")"){
       const line=tk().line; p++; const to=tk().value; p++; eatOp(")"); return {kind:"cast", to, e:unary(), line};
     }
     if(isOp("!")){p++; return {kind:"not",e:unary()};} if(isOp("-")){p++; return {kind:"neg",e:unary()};} if(isOp("+")){p++; return unary();} return postfix(); }
@@ -259,16 +266,16 @@ function compileCheck(ast){
   const GLOBT={Territorium:"object"};
   ["NORD","OST","SUED","WEST","BLAU","BLUE","ROT","RED","GRUEN","GREEN","GELB","YELLOW","CYAN","MAGENTA","ORANGE","PINK","GRAU","GRAY","WEISS","WHITE"].forEach(k=>GLOBT[k]="int");
   const methods=ast.methods||{};
-  const BRET={vor:"void",linksUm:"void",gib:"void",nimm:"void",schreib:"void",vornFrei:"boolean",kornDa:"boolean",maulLeer:"boolean",getAnzahlKoerner:"int",getReihe:"int",getSpalte:"int",getBlickrichtung:"int",liesZahl:"int",liesZeichenkette:"String"};
+  const BRET=Object.assign(Object.create(null),{vor:"void",linksUm:"void",gib:"void",nimm:"void",schreib:"void",vornFrei:"boolean",kornDa:"boolean",maulLeer:"boolean",getAnzahlKoerner:"int",getReihe:"int",getSpalte:"int",getBlickrichtung:"int",liesZahl:"int",liesZeichenkette:"String"});
   const cerr=(msg,line)=>{ throw {hamsterError:true, message:"Compilerfehler: "+msg, line}; };
   /* Erwartete Parameterzahl der eingebauten Befehle.
      Zahl = genau so viele, [von,bis] = Bereich, nicht aufgefuehrt = beliebig
      (das gilt nur fuer schreib, das beliebig viele Werte ausgibt).
      Vorher nahmen die Befehle ihre Argumente entgegen und ignorierten sie -
      vor(5); lief deshalb als ein einzelner Schritt durch. */
-  const BARITY={vor:0,linksUm:0,gib:0,nimm:0,vornFrei:0,kornDa:0,maulLeer:0,
+  const BARITY=Object.assign(Object.create(null),{vor:0,linksUm:0,gib:0,nimm:0,vornFrei:0,kornDa:0,maulLeer:0,
                 getAnzahlKoerner:0,getReihe:0,getSpalte:0,getBlickrichtung:0,
-                liesZahl:[0,1],liesZeichenkette:[0,1]};
+                liesZahl:[0,1],liesZeichenkette:[0,1]});
   const arityText=(name,min,max,n)=>{
     const soll = (min===max)
       ? (min===0 ? "keine Parameter" : (min===1 ? "genau einen Parameter" : "genau "+min+" Parameter"))
@@ -277,6 +284,30 @@ function compileCheck(ast){
     return "Die Methode '"+name+"' erwartet "+soll+", hier "+(n===0?"fehlen sie":"wurden "+ist)+"."
          + ((min===0&&max===0) ? " Richtig ist: "+name+"();" : "");
   };
+  /* Auch fuer Territorium.xy(...) gilt eine feste Parameterzahl. Ohne diese
+     Pruefung lieferte Territorium.getAnzahlKoerner(r) still die Summe ALLER
+     Koerner, und Territorium.mauerDa(r) meldete "keine Mauer". */
+  /* Die Zahlen sind die ERLAUBTEN Parameteranzahlen, keine Spanne:
+     getAnzahlKoerner nimmt keine oder zwei - eine einzelne waere falsch. */
+  const TARITY={ getAnzahlReihen:[0], getAnzahlSpalten:[0], mauerDa:[2],
+                 getAnzahlKoerner:[0,2], getAnzahlHamster:[0,2] };
+  Object.setPrototypeOf(TARITY, null);
+  const terrArityText=(name,erlaubt,n)=>{
+    const wort=(k)=> k===0?"keine Parameter":(k===1?"genau einen Parameter":"genau "+k+" Parameter");
+    const soll= erlaubt.length===1 ? wort(erlaubt[0])
+              : erlaubt.map(wort).join(" oder ");
+    return "Die Methode 'Territorium."+name+"' erwartet "+soll+", hier "
+         + (n===0?"fehlen sie":(n===1?"wurde einer angegeben":"wurden "+n+" angegeben"))+".";
+  };
+  function chkTerrArity(e){
+    if(!e || e.kind!=="mcall") return;
+    if(!(e.obj && e.obj.kind==="ref" && e.obj.name==="Territorium")) return;
+    const b = TARITY[e.name];
+    if(b===undefined) return;                  // unbekannte Methode meldet die Laufzeit
+    const n = e.args ? e.args.length : 0;
+    if(b.indexOf(n)<0) cerr(terrArityText(e.name, b, n), e.line||curLineOf(e));
+  }
+  const curLineOf = (e)=> (e && e.line) || (e && e.obj && e.obj.line) || 0;
   function chkArity(c){
     if(!c || c.kind!=="call") return;
     const n = c.args ? c.args.length : 0;
@@ -360,7 +391,7 @@ function compileCheck(ast){
       case "newarray": chkExpr(e.size,scopes); break;
       case "arraylit": for(const x of e.elems) chkExpr(x,scopes); break;
       case "member": chkExpr(e.obj,scopes); break;
-      case "mcall": if(!(e.obj&&e.obj.kind==="ref"&&e.obj.name==="Territorium")) chkExpr(e.obj,scopes); for(const a of e.args) chkExpr(a,scopes); break;
+      case "mcall": chkTerrArity(e); if(!(e.obj&&e.obj.kind==="ref"&&e.obj.name==="Territorium")) chkExpr(e.obj,scopes); for(const a of e.args) chkExpr(a,scopes); break;
     }
   }
   const declType=s=> s.varType+(s.isArr?"[]":"");
@@ -436,6 +467,7 @@ function makeInterpreter(ast, model){
     }
   }
   const builtins={
+    __proto__: null,
     *vor(a,line){ guard(); const t=front(); if(blocked(t)) throw herr("MauerDaException","Der Hamster ist gegen eine Mauer gelaufen!",line); const h=ham(); h.row=t.r; h.col=t.c; beep("vor"); yield {line}; },
     *linksUm(a,line){ guard(); const h=ham(); h.dir=(h.dir+3)%4; beep("turn"); yield {line}; },
     *gib(a,line){ guard(); const h=ham(); if(h.grains<=0) throw herr("MaulLeerException","Der Hamster hat kein Korn im Maul zum Ablegen!",line); h.grains--; addGrain(h.row,h.col,1); beep("gib"); yield {line}; },

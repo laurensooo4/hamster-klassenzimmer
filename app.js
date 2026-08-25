@@ -291,8 +291,8 @@ const api = {
     if(error) throw error; return data||[];
   },
   // Lehrer-Ansicht: NUR eigene + Klassen, in denen ich Co-Lehrkraft bin (auch als Admin) – gefiltert nach aktivem Tool
-  async myTeacherClasses(){
-    const tool = ACTIVE_TOOL||"hamster";
+  async myTeacherClasses(toolArg){
+    const tool = toolArg || ACTIVE_TOOL || "hamster";
     const own = await sb.from("classes").select("*").eq("teacher_id", ME.id).eq("tool", tool); if(own.error) throw own.error;
     const ct = await sb.from("class_teachers").select("class_id").eq("teacher_id", ME.id); if(ct.error) throw ct.error;
     const coIds = (ct.data||[]).map(r=>r.class_id);
@@ -508,7 +508,15 @@ function runHeadless(code, territory){
   const model=HamsterEngine.toModel(territory);
   const m={rows:model.rows,cols:model.cols,walls:model.walls,grains:model.grains,hamster:model.hamster,onWrite:()=>{}};
   const it=HamsterEngine.makeInterpreter(ast,m); const g=it.run(); let n=0;
-  while(true){ const r=g.next(); if(r.done)break; if(++n>2000000) throw new Error("Zu viele Schritte – läuft der Code in eine Endlosschleife?"); }
+  /* Hier laeuft der Code OHNE Bildschirm - liesZahl()/liesZeichenkette() duerfen
+     also keinen Dialog oeffnen. Sonst bekaeme man beim Abgeben je Welt ein
+     Eingabefenster, und beim Klassenwechsel entschiede ein weggeklickter Dialog
+     ueber die gespeicherte Bewertung. Stumm liefert liesZahl 0, das ist wenigstens
+     bei jedem Durchlauf gleich. */
+  const _prompt=window.prompt; window.prompt=function(){ return null; };
+  try{
+    while(true){ const r=g.next(); if(r.done)break; if(++n>2000000) throw new Error("Zu viele Schritte – läuft der Code in eine Endlosschleife?"); }
+  } finally { window.prompt=_prompt; }
   return m;
 }
 /* Auto-Check eines Schüler-Codes gegen ein Ziel */
@@ -650,6 +658,7 @@ function aeRenderWeltBar(){
     if(n===null) return; w.name=(n.trim()||w.name).slice(0,40); aeRenderWeltBar();
   };
   { const d=document.getElementById("aeWDel"); if(d) d.onclick=()=>{
+      aeSync();                       // sonst geht der gerade getippte Startcode verloren
       if(s.welten.length<2) return;
       if(!confirm("Welt „"+aeWelt().name+"“ wirklich löschen?\n\nBereits abgegebene Lösungen werden dann nur noch in den übrigen Welten geprüft.")) return;
       s.welten.splice(s.wIdx,1); s.wIdx=Math.max(0, s.wIdx-1);
@@ -897,8 +906,12 @@ function assignmentEditorPage(classId, onDone, existing, tplMode){
    der Zielklasse eine Aufgabe der bisherigen Klasse zu. Hamster-Abgaben werden
    direkt danach neu bewertet - die Engine laeuft im Browser, deshalb passiert
    das hier und nicht im Server. */
-async function klassenwechselDialog(vonKlasse, studentId, name, onDone){
-  const ART = ACTIVE_TOOL || "hamster";
+async function klassenwechselDialog(vonKlasse, studentId, name, onDone, tool){
+  /* Das Lern-Tool kommt aus der Klasse, aus der heraus verschoben wird - nicht
+     aus ACTIVE_TOOL. Wer aus dem Admin-Bereich in eine SQL-Klasse springt, hat
+     dort weiterhin "hamster" stehen; der Wechsel haette dann auf den falschen
+     Tabellen gearbeitet und Hamster-Klassen als Ziel angeboten. */
+  const ART = tool || ACTIVE_TOOL || "hamster";
   const ladeAufgaben = (cid)=> ART==="sql"    ? api.sqlListAssignments(cid)
                              : ART==="filius" ? api.filiusListAssignments(cid)
                              : ART==="java"   ? api.javaListAssignments(cid)
@@ -907,7 +920,7 @@ async function klassenwechselDialog(vonKlasse, studentId, name, onDone){
     <h3>🔄 ${esc(name)} in eine andere Klasse</h3>
     <div id="kwBody"><div class="center-load"><span class="spin"></span>Klassen werden geladen…</div></div>`, true);
   let klassen=[];
-  try{ klassen=(await api.myTeacherClasses()).filter(c=> c.id!==vonKlasse); }
+  try{ klassen=(await api.myTeacherClasses(ART)).filter(c=> c.id!==vonKlasse); }
   catch(e){ const b=document.getElementById("kwBody"); if(b) b.innerHTML=errBox(e); return; }
   const body=document.getElementById("kwBody"); if(!body) return;
   if(!klassen.length){
@@ -1953,7 +1966,7 @@ async function teacherClassView(classId){
   document.getElementById("btnImport").onclick = ()=> importStudentsDialog(classId, cls.code, ()=>teacherClassView(classId));
   { const bt=document.getElementById("btnTeachers"); if(bt) bt.onclick=()=> classTeachersDialog(classId, cls); }
   document.querySelectorAll("[data-rmstu]").forEach(b=> b.onclick=async()=>{ if(!confirm(b.dataset.nm+" aus dieser Klasse entfernen? (Der Account bleibt bestehen.)")) return; try{ await api.removeMembership(classId, b.dataset.rmstu); toast("Entfernt","ok"); teacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } });
-  document.querySelectorAll("[data-move]").forEach(b=> b.onclick=()=> klassenwechselDialog(classId, b.dataset.move, b.dataset.nm, ()=> teacherClassView(classId)));
+  document.querySelectorAll("[data-move]").forEach(b=> b.onclick=()=> klassenwechselDialog(classId, b.dataset.move, b.dataset.nm, ()=> teacherClassView(classId), cls.tool||"hamster"));
   document.getElementById("btnNewAssign").onclick = ()=> assignmentEditorPage(classId, ()=>teacherClassView(classId));
   document.querySelectorAll("[data-edit]").forEach(b=> b.onclick=()=>{ const a=assignments.find(x=>x.id===b.dataset.edit); assignmentEditorPage(classId, ()=>teacherClassView(classId), a); });
   document.querySelectorAll("[data-sample]").forEach(b=> b.onclick=()=>{ const a=assignments.find(x=>x.id===b.dataset.sample); sampleManager(a, classId); });
@@ -2541,7 +2554,7 @@ async function sqlTeacherClassView(classId){
   document.querySelectorAll(".chip[data-prof]").forEach(b=> b.onclick=()=>{ const m=roster.find(r=>r.student_id===b.dataset.prof); const p=(m&&m.profiles)||{}; sqlStudentProfilePage(classId, b.dataset.prof, p.display_name||p.username||"?", p.username||""); });
   document.querySelectorAll("[data-stu]").forEach(b=> b.onclick=()=> resetStudentPw(b.dataset.stu, b.dataset.nm));
   document.querySelectorAll("[data-rmstu]").forEach(b=> b.onclick=async()=>{ if(!confirm(b.dataset.nm+" aus dieser Klasse entfernen? (Der Account bleibt bestehen.)")) return; try{ await api.removeMembership(classId, b.dataset.rmstu); toast("Entfernt","ok"); sqlTeacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } });
-  document.querySelectorAll("[data-move]").forEach(b=> b.onclick=()=> klassenwechselDialog(classId, b.dataset.move, b.dataset.nm, ()=> sqlTeacherClassView(classId)));
+  document.querySelectorAll("[data-move]").forEach(b=> b.onclick=()=> klassenwechselDialog(classId, b.dataset.move, b.dataset.nm, ()=> sqlTeacherClassView(classId), cls.tool||"sql"));
   document.getElementById("btnNewSqlAssign").onclick = ()=> sqlAssignmentEditorPage(classId, null);
   document.getElementById("btnSqlFromTpl").onclick = ()=> sqlPickTemplate(classId);
   document.querySelectorAll("[data-edit]").forEach(b=> b.onclick=()=> sqlAssignmentEditorPage(classId, {id:b.dataset.edit}));
@@ -2708,7 +2721,7 @@ function renderSqlReview(){
       <span id="sqlRevMsg" class="muted" style="display:block;margin-top:6px">${s.comment?(s.comment.released?'Für Schüler:in sichtbar ✓':'Gespeichert (noch nicht freigegeben)'):''}</span>
     </div>`:''}`;
   document.getElementById("back").onclick = ()=> sqlTeacherClassView(s.classId);
-  document.querySelectorAll("#revSubList .sqst").forEach(row=> row.onclick=()=>{ s.selected=+row.dataset.i; document.querySelectorAll("#revSubList .sqst").forEach(r=>{ const on=(+r.dataset.i===s.selected); r.style.background=on?'var(--line2)':''; r.style.borderRadius=on?'10px':''; }); renderSqlReviewRight(); });
+  document.querySelectorAll("#revSubList .sqst").forEach(row=> row.onclick=()=>{ s.selected=+row.dataset.i; document.querySelectorAll("#revSubList .sqst").forEach(r=>{ const on=(+r.dataset.i===s.selected); r.style.background=on?'var(--line2)':''; r.style.borderRadius=on?'10px':''; r.style.boxShadow=''; }); renderSqlReviewRight(); });
   { const sv=document.getElementById("sqlRevSave"); if(sv) sv.onclick=saveSqlReviewComment; }
   { const dl=document.getElementById("sqlRevDelete"); if(dl) dl.onclick=deleteSqlReviewComment; }
   renderSqlReviewRight();
@@ -3332,7 +3345,7 @@ async function filiusTeacherClassView(classId){
   document.querySelectorAll(".chip[data-prof]").forEach(b=> b.onclick=()=>{ const m=roster.find(r=>r.student_id===b.dataset.prof); const p=(m&&m.profiles)||{}; filiusStudentProfilePage(classId, b.dataset.prof, p.display_name||p.username||"?", p.username||""); });
   document.querySelectorAll("[data-stu]").forEach(b=> b.onclick=()=> resetStudentPw(b.dataset.stu, b.dataset.nm));
   document.querySelectorAll("[data-rmstu]").forEach(b=> b.onclick=async()=>{ if(!confirm(b.dataset.nm+" aus dieser Klasse entfernen? (Der Account bleibt bestehen.)")) return; try{ await api.removeMembership(classId, b.dataset.rmstu); toast("Entfernt","ok"); filiusTeacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } });
-  document.querySelectorAll("[data-move]").forEach(b=> b.onclick=()=> klassenwechselDialog(classId, b.dataset.move, b.dataset.nm, ()=> filiusTeacherClassView(classId)));
+  document.querySelectorAll("[data-move]").forEach(b=> b.onclick=()=> klassenwechselDialog(classId, b.dataset.move, b.dataset.nm, ()=> filiusTeacherClassView(classId), cls.tool||"filius"));
   document.getElementById("btnNewFilAssign").onclick = ()=> filiusAssignmentEditorPage(classId, null);
   document.getElementById("btnFilFromTpl").onclick = ()=> filiusPickTemplate(classId);
   document.querySelectorAll("[data-edit]").forEach(b=> b.onclick=()=> filiusAssignmentEditorPage(classId, {id:b.dataset.edit}));
@@ -3760,7 +3773,17 @@ function renderFiliusChecks(){
   host.querySelectorAll("[data-cdown]").forEach(b=> b.onclick=()=>{ const i=+b.dataset.cdown; if(i>=s.checks.length-1) return; const a=s.checks; [a[i+1],a[i]]=[a[i],a[i+1]]; renderFiliusChecks(); });
   host.querySelectorAll("[data-cdel]").forEach(b=> b.onclick=()=>{ const i=+b.dataset.cdel; s.checks.splice(i,1); renderFiliusChecks(); });
 }
-function wireCheckParams(box, check){ box.querySelectorAll(".filcp").forEach(inp=>{ inp.oninput=()=>{ check.params=check.params||{}; check.params[inp.dataset.k]=inp.value; }; inp.onchange=()=>{ check.params=check.params||{}; check.params[inp.dataset.k]=inp.value; }; }); }
+function wireCheckParams(box, check){
+  check.params = check.params || {};
+  box.querySelectorAll(".filcp").forEach(inp=>{
+    /* Ein <select> ohne vorgemerkte Auswahl zeigt die erste Option an - im
+       Zustand stand aber nichts. Das Speichern meldete dann "Feld fehlt",
+       obwohl im Formular sichtbar ein Wert stand. Deshalb einmal uebernehmen. */
+    if(inp.tagName==="SELECT" && !check.params[inp.dataset.k]) check.params[inp.dataset.k]=inp.value;
+    inp.oninput =()=>{ check.params=check.params||{}; check.params[inp.dataset.k]=inp.value; };
+    inp.onchange=()=>{ check.params=check.params||{}; check.params[inp.dataset.k]=inp.value; };
+  });
+}
 function filiusValidateChecks(checks){ for(let i=0;i<checks.length;i++){ const c=checks[i], t=FiliusEngine.CHECK_TYPES[c.type]; if(!t) continue; for(const f of t.fields){ const v=(c.params||{})[f.k]; if(v==null||String(v).trim()===""){ if(c.type==="count"&&f.k==="min"){ continue; } throw new Error("Prüfung "+(i+1)+" ("+t.label+"): Feld „"+f.label+"“ fehlt."); } } if(c.type==="count" && !(+((c.params||{}).min)>0)) c.params.min=1; } }
 async function filiusSaveAssignment(){
   const s=filiusAssignState; filiusSyncEditing();
@@ -4114,7 +4137,7 @@ async function javaTeacherClassView(classId){
   document.querySelectorAll(".chip[data-prof]").forEach(b=> b.onclick=()=>{ const m=roster.find(r=>r.student_id===b.dataset.prof); const p=(m&&m.profiles)||{}; javaStudentProfilePage(classId, b.dataset.prof, p.display_name||p.username||"?", p.username||""); });
   document.querySelectorAll("[data-stu]").forEach(b=> b.onclick=()=> resetStudentPw(b.dataset.stu, b.dataset.nm));
   document.querySelectorAll("[data-rmstu]").forEach(b=> b.onclick=async()=>{ if(!confirm(b.dataset.nm+" aus dieser Klasse entfernen? (Der Account bleibt bestehen.)")) return; try{ await api.removeMembership(classId, b.dataset.rmstu); toast("Entfernt","ok"); javaTeacherClassView(classId); }catch(e){ toast(e.message||"Fehler","err"); } });
-  document.querySelectorAll("[data-move]").forEach(b=> b.onclick=()=> klassenwechselDialog(classId, b.dataset.move, b.dataset.nm, ()=> javaTeacherClassView(classId)));
+  document.querySelectorAll("[data-move]").forEach(b=> b.onclick=()=> klassenwechselDialog(classId, b.dataset.move, b.dataset.nm, ()=> javaTeacherClassView(classId), cls.tool||"java"));
   document.getElementById("btnNewJvAssign").onclick = ()=> javaAssignmentEditorPage(classId, null);
   document.getElementById("btnJvFromTpl").onclick = ()=> javaPickTemplate(classId);
   document.querySelectorAll("[data-edit]").forEach(b=> b.onclick=()=> javaAssignmentEditorPage(classId, {id:b.dataset.edit}));
@@ -4741,6 +4764,13 @@ async function javaSandboxProject(projectId){
 const PATCH_NOTES = [
   { v:"2.45", date:"25. August 2026", title:"🌍 Mehrere Welten je Aufgabe · 🔄 Klassenwechsel mit Abgaben", items:[
     `<b>Behoben:</b> Im Admin-Bereich blieb die Liste der Nutzer:innen <b>leer</b> – obwohl der Zähler darüber die richtige Anzahl nannte. Ursache war ein Programmierfehler in der Fassung 2.44: eine Variable wurde eine Zeile zu früh benutzt, was die Liste beim Aufbau abbrechen ließ. Filter, Suche, Sammelauswahl und der Entsperren-Knopf sind damit wieder da.`,
+    `<b>Behoben – Klammern um eine Zahl:</b> <code>schreib((2) + 3);</code> gab still <b>3</b> aus statt 5, und <code>int x = (5);</code> meldete „Ausdruck erwartet". Der Übersetzer hielt die Klammer für eine Typumwandlung wie <code>(int)</code>. Echte Umwandlungen funktionieren unverändert.`,
+    `<b>Behoben – Territorium-Befehle mit falscher Parameterzahl:</b> <code>Territorium.getAnzahlKoerner(3)</code> lieferte kommentarlos die Körner des <i>ganzen</i> Territoriums, <code>Territorium.mauerDa(3)</code> antwortete immer „keine Mauer". Jetzt kommt eine Fehlermeldung mit Zeilennummer – wie schon bei <code>vor(5)</code>.`,
+    `<b>Behoben – Methodennamen wie <code>toString</code>:</b> Eine eigene Methode mit so einem Namen wurde nie ausgeführt (sie traf eine eingebaute JavaScript-Funktion), bei <code>hasOwnProperty</code> gab es sogar „Interner Fehler". Jetzt zählt nur, was im Programm steht.`,
+    `<b>Behoben – Auto-Bewertung fragte nach Eingaben:</b> Bei Aufgaben mit <code>liesZahl()</code> öffnete jede Bewertung im Hintergrund ein Eingabefenster – beim Abgeben eines pro Welt. Was dort eingetippt wurde, entschied über „bestanden". Die Bewertung läuft jetzt ohne Rückfrage und liefert bei jedem Durchlauf dasselbe Ergebnis.`,
+    `<b>Behoben – Welt löschen verwarf den Startcode:</b> Wer im Reiter „Code" tippte und dann eine Welt löschte, verlor das Getippte kommentarlos.`,
+    `<b>Behoben – Klassenwechsel aus dem Admin-Bereich:</b> Der Dialog richtete sich nach dem zuletzt gewählten Bereich statt nach der Klasse. Bei einer SQL-Klasse suchte er deshalb Hamster-Aufgaben, meldete „keine Aufgaben" und bot Hamster-Klassen als Ziel an.`,
+    `<b>Behoben – Netzwerk-Aufgaben:</b> Bei der Prüfung „Anzahl Komponenten" stand sichtbar ein Typ im Feld, gespeichert war aber keiner – das Speichern brach mit „Feld ‚Typ' fehlt" ab. Außerdem blieb in der SQL-Korrektur die zuerst gewählte Teilaufgabe dauerhaft markiert.`,
     `<b>Eine Aufgabe, mehrere Start-Territorien.</b> Im Aufgaben-Editor gibt es über dem Editor die Leiste <b>Welten</b>. Mit <b>+ Welt</b> legst du ein weiteres Territorium an, mit <b>⧉ kopieren</b> eine Abwandlung des aktuellen. Der Startcode gilt für alle Welten – eine Abgabe ist erst bestanden, wenn sie in <b>jeder</b> Welt das Ziel erreicht. Damit fallen Lösungen auf, die nur auswendig gelernte Schrittzahlen benutzen.`,
     `<b>Für Schüler:innen:</b> über dem Editor stehen die Welten zum Umschalten – der Code bleibt dabei stehen. <b>🧪 in allen Welten testen</b> zeigt vor dem Abgeben, welche Welt schon klappt (✓) und welche noch nicht (✗).`,
     `<b>Beim Ziel „Soll-Zustand vergleichen"</b> wird der Soll-Zustand je Welt aus deinem Lösungscode neu berechnet. Läuft er in einer Welt nicht, sagt das Speichern das sofort.`,
