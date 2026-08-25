@@ -4374,6 +4374,23 @@ async function javaSandboxProject(projectId){
 }
 
 const PATCH_NOTES = [
+  { v:"2.44", date:"25. August 2026", title:"🧹 Admin: Konten finden und aufräumen", items:[
+    `<b>Filter in der Nutzerverwaltung:</b> nach <b>Rolle</b> (Schüler:in / Lehrkraft / Admin), nach <b>Anzahl der Klassen</b> (0, genau 1, 2 und mehr), nach einer <b>bestimmten Klasse</b> und nach der IServ-Markierung. Alles kombinierbar, mit Live-Zähler.`,
+    `<b>Abgleich mit IServ:</b> Eine Liste aller Benutzernamen hochladen (CSV oder Textdatei) – alle Schülerkonten, die dort fehlen, werden <b>markiert</b>, nicht gelöscht. Vorher zeigt ein Trockenlauf genau, was passieren würde.`,
+    `<b>Fünf Sicherungen gegen Versehen:</b> Der Trockenlauf ändert nichts · ein Abgleich, der mehr als 30 % der Schülerkonten markieren würde, wird abgelehnt · als Löschvorschlag gilt ein Konto erst nach <b>zwei</b> Abgleichen und <b>14 Tagen</b> · Lehrkräfte und Admins werden nie markiert · einzelne Konten lassen sich auf <b>🔒 geschützt</b> setzen.`,
+    `<b>Sammellöschung:</b> Mehrere Konten auswählen und auf einmal entfernen – zur Bestätigung muss die Anzahl eingetippt werden. Admins, geschützte Konten und das eigene Konto werden immer übersprungen.`,
+    `Warum kein Ablaufdatum? Weil Wiederholer jede Prognose kaputtmachen. Verlässlich ist nur der Abgleich mit der Liste aus IServ.`,
+  ]},
+  { v:"2.43", date:"25. August 2026", title:"🐹 Hamster: klare Fehlermeldungen, dunkler Modus, Details", items:[
+    `<b>Jede Methode nur einmal:</b> Wer zweimal <code>void main()</code> schreibt, bekommt jetzt eine Fehlermeldung mit Zeilennummer. Vorher lief stillschweigend nur die letzte Methode – und niemand merkte es.`,
+    `<b>Falsche Parameterzahl wird gemeldet:</b> <code>vor(5);</code> lief bisher als ein einzelner Schritt. Jetzt: „Die Methode 'vor' erwartet keine Parameter". Gilt auch für eigene Methoden mit Parametern – und für Aufrufe in Bedingungen wie <code>if(vornFrei(3))</code>.`,
+    `<b>Dunkler Modus im Hamster-Editor:</b> Rahmen, Leisten, Knöpfe, Ausgabefeld und Befehlsübersicht sind jetzt wirklich dunkel – vorher stand ein dunkles Codefeld in einem weißen Kasten.`,
+    `<b>Die Zahl auf den Körnerhaufen wächst mit der Kachel.</b> Sie war vorher immer gleich klein, egal wie groß das Territorium war.`,
+    `<b>Befehlsübersicht ist schreibgeschützt:</b> Markieren, Rechtsklick und Kopieren sind dort abgeschaltet – die Befehle sollen getippt werden.`,
+    `<b>Aufgaben-Vorschau:</b> Der Text läuft jetzt über die ganze Zeile und endet mit „…", statt mitten im Wort abzubrechen.`,
+    `<b>Benutzernamen dürfen 32 Zeichen lang sein</b> (vorher 20, beim Import sogar nur 18).`,
+    `<b>Schon länger da, aber kaum bekannt:</b> Im Hamster- und Java-Editor funktionieren <b>Strg+Z</b> und <b>Strg+Y</b> – mit eigenem Verlauf über 400 Schritte.`,
+  ]},
   { v:"2.42", date:"11. August 2026", title:"🔐 Sicherheits-Release 1.1", items:[
     `<b>Für den Schulserver:</b> Die Datenbank und die Administrationsoberfläche sind nicht mehr im Schulnetz erreichbar, sondern nur noch lokal. Von außen kommen ausschließlich Anmeldung und Datenzugriff durch – alles andere wird abgewiesen.`,
     `<b>Passwort-Raten wird gebremst</b>, ohne dass eine ganze Klasse beim gleichzeitigen Anmelden ausgebremst wird.`,
@@ -4699,7 +4716,7 @@ function patchNotesDialog(){
 }
 
 /* ---------- Footer: Versionsnummer (aus den Patch-Notes) + Copyright ---------- */
-const APP_BUILD = "2026-08-11 23:55";   // letztes Update (im Patch-Notes-Dialog angezeigt)
+const APP_BUILD = "2026-08-25 21:30";   // letztes Update (im Patch-Notes-Dialog angezeigt)
 /* ============================================================================
    Browser-Zurück (SPA-History) + Favicon/Titel je Tool
    ============================================================================ */
