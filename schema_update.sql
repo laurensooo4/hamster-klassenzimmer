@@ -59,9 +59,17 @@ grant execute on function public.reset_student_password(uuid) to authenticated;
 revoke update on public.profiles from authenticated;
 grant update (display_name) on public.profiles to authenticated;
 
--- 7) Demo-/Testdaten entfernen (einmalig; specific & damit re-run-sicher) -------
-delete from auth.users where email = 'max.muster@hamster.local';
-delete from auth.users where email in ('qa.lehrer@hamster.local','qa.schueler@hamster.local');
--- (löscht via Cascade auch deren Klassen/Aufgaben/Abgaben)
+-- 7) Demo-/Testdaten entfernen -------------------------------------------------
+--    NUR, solange an dem Konto nichts hängt. Grund: Diese Datei läuft bei jedem
+--    Einspielen des Schemas erneut, und 'max.muster' ist ein Name, den es an
+--    einer Schule tatsächlich geben kann. Ohne diese Bedingung verschwände so
+--    ein echtes Konto samt Abgaben stillschweigend beim nächsten Update.
+delete from auth.users u
+ where u.email in ('max.muster@hamster.local',
+                   'qa.lehrer@hamster.local',
+                   'qa.schueler@hamster.local')
+   and not exists (select 1 from public.submissions s where s.student_id  = u.id)
+   and not exists (select 1 from public.memberships m where m.student_id  = u.id)
+   and not exists (select 1 from public.classes     c where c.teacher_id  = u.id);
 
 -- Fertig ✅
