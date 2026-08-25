@@ -395,6 +395,9 @@ api.adminDeleteUsers    = async (ids)=>{ const {data,error}=await sb.rpc("admin_
 api.adminSetNieLoeschen = async (userId,wert)=>{ const {error}=await sb.rpc("admin_set_nie_loeschen",{p_user:userId,p_wert:!!wert}); if(error) throw error; };
 api.adminIservVorschau  = async (namen)=>{ const {data,error}=await sb.rpc("admin_iserv_vorschau",{p_namen:namen}); if(error) throw error; return data||{}; };
 api.adminIservAbgleich  = async (namen)=>{ const {data,error}=await sb.rpc("admin_iserv_abgleich",{p_namen:namen}); if(error) throw error; return data||{}; };
+/* Anmeldeschutz (Phase AC): gesperrte Konten anzeigen und freigeben. */
+api.adminGesperrte  = async ()=>{ const {data,error}=await sb.rpc("admin_gesperrte_konten"); if(error) throw error; return data||[]; };
+api.adminEntsperren = async (userId)=>{ const {error}=await sb.rpc("admin_konto_entsperren",{p_user:userId}); if(error) throw error; };
 api.setAdmin = async (userId, makeAdmin)=>{ const {error}=await sb.rpc("set_admin",{p_user:userId, p_make:!!makeAdmin}); if(error) throw error; };
 api.adminRenameUser = async (userId, newName)=>{ const {error}=await sb.rpc("admin_rename_user",{p_user:userId, p_new:newName}); if(error) throw error; };
 api.setClassJoinOpen = async (classId, open)=>{ const {error}=await sb.from("classes").update({join_open:!!open}).eq("id",classId); if(error) throw error; };
@@ -1048,7 +1051,7 @@ async function resetStudentPw(studentId, name){
 let adminState=null;
 async function adminHome(){
   shell(`<div class="center-load"><span class="spin"></span>Admin lädt…</div>`);
-  let classes=[], users=[], mships=[], cteach=[], neueFelder=true;
+  let classes=[], users=[], mships=[], cteach=[], neueFelder=true, sperren=[];
   try{
     const c=await sb.from("classes").select("*, teacher:teacher_id(display_name,username)").order("created_at",{ascending:false}); if(c.error) throw c.error; classes=c.data||[];
     /* Die zusaetzlichen Spalten gibt es erst nach dem Datenbank-Update (Phase AB).
@@ -1057,6 +1060,9 @@ async function adminHome(){
     if(u.error){ neueFelder=false; u=await sb.from("profiles").select("id,username,display_name,role,is_admin").order("role"); }
     if(u.error) throw u.error; users=u.data||[];
     const ms=await sb.from("memberships").select("student_id,class_id");   mships=ms.error?[]:(ms.data||[]);
+    /* Gesperrte Konten. Fehlt die Funktion (Datenbank noch nicht aktualisiert),
+       bleibt die Liste leer und die Ansicht sieht aus wie bisher. */
+    try{ sperren=await api.adminGesperrte(); }catch(e){ sperren=[]; }
     const ct=await sb.from("class_teachers").select("teacher_id,class_id"); cteach=ct.error?[]:(ct.data||[]);
   }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
   /* Klassen je Person: Schueler:innen ueber memberships, Lehrkraefte ueber
@@ -1067,7 +1073,8 @@ async function adminHome(){
   mships.forEach(m=> merk(m.student_id,m.class_id));
   cteach.forEach(t=> merk(t.teacher_id,t.class_id));
   classes.forEach(c=> merk(c.teacher_id,c.id));
-  adminState={classes, users, klassenVon, neueFelder, sel:new Set(), krit:{}};
+  const gesperrt=new Map(); (sperren||[]).forEach(s=>{ if(s.gesperrt_seit) gesperrt.set(s.user_id, s); });
+  adminState={classes, users, klassenVon, neueFelder, sel:new Set(), krit:{}, gesperrt};
   const tN=users.filter(u=>u.role==="teacher").length, sN=users.filter(u=>u.role==="student").length, aN=users.filter(u=>u.is_admin).length;
   document.getElementById("view").innerHTML = `
     <div class="page-head"><button class="crumb" id="admBack">← Lehrer-Ansicht</button></div>
@@ -1214,12 +1221,17 @@ function renderAdminUsers(){
     }
     if(u.id!==ME.id) acts = `<button class="btn btn-sm btn-ghost" data-rename="${u.id}" data-nm="${nm}" data-un="${esc(u.username)}" title="Name & Benutzername ändern">✏️ Bearbeiten</button> ` + acts;
     const nk=anzKl(u);
+    const gesperrtBadge = sp ? '<span class="badge" style="background:#ffd9d9;color:#c62828" title="nach '+sp.fehlversuche+' Fehlversuchen gesperrt">🔒 gesperrt</span> ' : "";
     const iserv = u.nie_loeschen ? '<span class="badge gray" title="wird nie markiert und nie sammelgelöscht">🔒 geschützt</span>'
       : (u.iserv_fehlt_seit ? `<span class="badge" style="background:${istLoeschvorschlag(u)?"#ffd9d9":"#fff3d6"};color:${istLoeschvorschlag(u)?"#c62828":"#c9851f"}" title="fehlt in der IServ-Liste">${istLoeschvorschlag(u)?"🗑️ Löschvorschlag":"⚠️ fehlt"} · ${tageSeit(u.iserv_fehlt_seit)} T · ${u.iserv_fehlt_anzahl||1}×</span>`
                              : '<span class="muted" style="font-size:12px">–</span>');
+    const sp = adminState.gesperrt && adminState.gesperrt.get(u.id);
+    if(sp){
+      acts = `<button class="btn btn-sm" data-entsperren="${u.id}" data-nm="${nm}" style="background:#ff4b4b;color:#fff" title="Konto wurde nach ${sp.fehlversuche} Fehlversuchen gesperrt">🔓 entsperren</button> ` + acts;
+    }
     const sel = adminState.sel.has(u.id) ? " checked" : "";
     const box = (u.is_admin||u.id===ME.id) ? "" : `<input type="checkbox" data-sel="${u.id}"${sel}>`;
-    return `<tr><td style="text-align:center">${box}</td><td class="stu clickable" data-prof="${u.id}" title="Profil ansehen">${nm}</td><td><code>${esc(u.username)}</code></td><td>${badge}</td><td style="text-align:center;font-weight:800">${nk}</td><td>${iserv}</td><td style="white-space:nowrap">${acts}</td></tr>`;
+    return `<tr><td style="text-align:center">${box}</td><td class="stu clickable" data-prof="${u.id}" title="Profil ansehen">${nm}</td><td><code>${esc(u.username)}</code></td><td>${badge}</td><td style="text-align:center;font-weight:800">${nk}</td><td>${gesperrtBadge}${iserv}</td><td style="white-space:nowrap">${acts}</td></tr>`;
   }).join("");
   const nSel=adminState.sel.size;
   const leiste = `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px">
@@ -1240,6 +1252,11 @@ function renderAdminUsers(){
   { const a=document.getElementById("admProtOn");  if(a) a.onclick=()=> adminSchutzSetzen(true); }
   { const a=document.getElementById("admProtOff"); if(a) a.onclick=()=> adminSchutzSetzen(false); }
   { const a=document.getElementById("admBulkDel"); if(a) a.onclick=()=> adminSammelLoeschen(); }
+  el.querySelectorAll("[data-entsperren]").forEach(b=> b.onclick=async()=>{
+    if(!confirm("Konto von "+b.dataset.nm+" wieder freigeben?\n\nEs wurde nach mehreren falschen Passwörtern gesperrt. Bitte vorher sicherstellen, dass wirklich die richtige Person davorsitzt.")) return;
+    try{ await api.adminEntsperren(b.dataset.entsperren); toast("Konto freigegeben","ok"); adminHome(); }
+    catch(e){ toast(e.message||"Fehler","err"); }
+  });
   el.querySelectorAll("[data-prof]").forEach(b=> b.onclick=()=> adminUserProfile(b.dataset.prof));
   el.querySelectorAll("[data-rename]").forEach(b=> b.onclick=()=> renameUserDialog(b.dataset.rename, b.dataset.nm, b.dataset.un));
   el.querySelectorAll("[data-pw]").forEach(b=> b.onclick=()=> resetStudentPw(b.dataset.pw, b.dataset.nm));
