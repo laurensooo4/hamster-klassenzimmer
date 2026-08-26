@@ -10,10 +10,18 @@ alter table public.assignments add column if not exists position  int     not nu
 alter table public.assignments add column if not exists hint      text;
 
 -- 1b) bestehende Aufgaben in Erstell-Reihenfolge durchnummerieren -------------
+--     NUR, solange in einer Klasse ueberhaupt noch keine Reihenfolge vergeben
+--     wurde (alle Aufgaben stehen auf dem Standardwert 0). Sobald die Lehrkraft
+--     einmal sortiert hat oder eine Aufgabe "ganz nach oben" angelegt wurde,
+--     gibt es andere Werte - dann bleibt hier alles unangetastet.
+--     Ohne diese Bedingung setzt jedes erneute Einspielen die Reihenfolge auf
+--     "aelteste zuerst" zurueck, obwohl neue Aufgaben oben stehen sollen.
 update public.assignments a set position = sub.rn
-  from (select id, row_number() over (partition by class_id order by created_at) as rn
+  from (select id, class_id, row_number() over (partition by class_id order by created_at) as rn
         from public.assignments) sub
-  where a.id = sub.id;
+  where a.id = sub.id
+    and not exists (select 1 from public.assignments b
+                     where b.class_id = a.class_id and b.position <> 0);
 
 -- 2) Schüler sehen nur VERÖFFENTLICHTE Aufgaben (serverseitig) ----------------
 drop policy if exists assignments_student_read on public.assignments;

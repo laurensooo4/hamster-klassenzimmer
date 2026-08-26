@@ -10,8 +10,17 @@
 alter table public.submissions drop constraint if exists submissions_assignment_id_student_id_key;
 alter table public.submissions add column if not exists is_current boolean not null default true;
 
--- bestehende (je 1) Abgaben sind die aktuelle Version
-update public.submissions set is_current = true where is_current is distinct from true;
+-- bestehende (je 1) Abgaben sind die aktuelle Version.
+-- Wichtig: nur, wenn es fuer dieses Paar (Aufgabe, Schueler:in) noch KEINE
+-- aktuelle gibt. Sonst haetten nach einem erneuten Einspielen alle Versionen
+-- gleichzeitig die Markierung - und der eindeutige Index weiter unten liesse
+-- dieses Update scheitern, sobald jemand mehr als einmal abgegeben hat.
+update public.submissions s set is_current = true
+ where s.is_current is distinct from true
+   and not exists (select 1 from public.submissions n
+                    where n.assignment_id = s.assignment_id
+                      and n.student_id    = s.student_id
+                      and n.is_current);
 
 -- höchstens EINE aktuelle Abgabe je (Aufgabe, Schüler:in)
 create unique index if not exists submissions_one_current
