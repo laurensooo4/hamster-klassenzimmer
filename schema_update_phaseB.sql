@@ -6,22 +6,34 @@
 
 -- 1) assignments: neue Spalten ------------------------------------------------
 alter table public.assignments add column if not exists published boolean not null default true;
-alter table public.assignments add column if not exists position  int     not null default 0;
 alter table public.assignments add column if not exists hint      text;
 
--- 1b) bestehende Aufgaben in Erstell-Reihenfolge durchnummerieren -------------
---     NUR, solange in einer Klasse ueberhaupt noch keine Reihenfolge vergeben
---     wurde (alle Aufgaben stehen auf dem Standardwert 0). Sobald die Lehrkraft
---     einmal sortiert hat oder eine Aufgabe "ganz nach oben" angelegt wurde,
---     gibt es andere Werte - dann bleibt hier alles unangetastet.
---     Ohne diese Bedingung setzt jedes erneute Einspielen die Reihenfolge auf
---     "aelteste zuerst" zurueck, obwohl neue Aufgaben oben stehen sollen.
-update public.assignments a set position = sub.rn
-  from (select id, class_id, row_number() over (partition by class_id order by created_at) as rn
-        from public.assignments) sub
-  where a.id = sub.id
-    and not exists (select 1 from public.assignments b
-                     where b.class_id = a.class_id and b.position <> 0);
+-- 1b) Spalte 'position' anlegen und bestehende Aufgaben EINMALIG durchnummerieren
+--     Die Nummerierung laeuft ausschliesslich in dem Moment, in dem die Spalte
+--     ueberhaupt erst entsteht. Wird diese Datei spaeter noch einmal
+--     eingespielt - was seit dem automatischen Update regelmaessig passiert -,
+--     existiert die Spalte bereits und es geschieht hier NICHTS mehr.
+--
+--     Warum so streng: Die Zeile stand frueher ungeschuetzt hier und setzte bei
+--     jedem Lauf die Reihenfolge auf "aelteste zuerst" zurueck. Eine Bedingung
+--     ueber die Datenwerte reicht nicht, weil die erste Aufgabe einer Klasse
+--     regulaer die Position 0 traegt und damit wie ein unbenutzter Wert aussieht.
+do $$
+begin
+  if not exists (select 1 from information_schema.columns
+                  where table_schema = 'public'
+                    and table_name   = 'assignments'
+                    and column_name  = 'position') then
+    execute 'alter table public.assignments add column position int not null default 0';
+    execute $q$
+      update public.assignments a set position = sub.rn
+        from (select id, row_number() over (partition by class_id order by created_at) as rn
+              from public.assignments) sub
+       where a.id = sub.id
+    $q$;
+    raise notice 'Spalte position angelegt und bestehende Aufgaben durchnummeriert.';
+  end if;
+end $$;
 
 -- 2) Schüler sehen nur VERÖFFENTLICHTE Aufgaben (serverseitig) ----------------
 drop policy if exists assignments_student_read on public.assignments;
