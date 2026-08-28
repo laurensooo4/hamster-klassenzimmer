@@ -252,6 +252,8 @@ function shell(inner){
       <button class="btn btn-ghost btn-sm" id="homeBtn" title="Zur Tool-Auswahl" style="margin-left:8px">🏠</button>
       ${ACTIVE_TOOL?`<span style="margin-left:9px;font-weight:800;font-size:13.5px;color:var(--muted)">${esc((TOOLS.find(t=>t.id===ACTIVE_TOOL)||{}).name||"")}</span>`:""}
       <div class="spacer"></div>
+      <span id="tbSlot" style="display:flex;justify-content:center"></span>
+      <div class="spacer"></div>
       <button class="btn btn-ghost btn-sm" id="themeBtn" title="Design wechseln" style="margin-right:8px">🌗</button>
       ${roleBadge}
       <div class="usermenu">
@@ -1289,31 +1291,49 @@ async function solveAssignment(assignmentId){
                  wIdx:0, weltErgebnis:(current && current.results && typeof current.results==="object")? current.results : null };
   const statusHtml = current ? (current.passed===true?`<span class="badge">bestanden ✓</span>`:`<span class="badge gold">abgegeben</span>`) : `<span class="badge gray">offen</span>`;
   const curComment = current ? comments.find(c=>c.submission_id===current.id && c.released) : null;
+  /* Cockpit-Ansicht: Editor | Territorium | Abgaben nebeneinander - auf einem
+     Full-HD-Bildschirm ohne Scrollen. Der Abgeben-Knopf sitzt mittig im Kopf.
+     Unter ~1280 px (iPad) schaltet ein Umschalter zwischen Territorium und
+     Abgaben um; die rechte Spalte schiebt sich dann ueber das Territorium. */
+  { const v=document.getElementById("view"); if(v) v.classList.add("weit"); }
+  { const ts=document.getElementById("tbSlot"); if(ts) ts.innerHTML=`<button class="btn btn-primary" id="btnSubmit">📤 Abgeben</button>`; }
   document.getElementById("view").innerHTML = `
-    <div class="page-head"><button class="crumb" id="back">← zurück</button></div>
-    <div class="page-head" style="margin-top:0"><h2>${esc(a.title)}</h2><div class="spacer"></div><span id="solveStatus">${statusHtml}</span></div>
-    ${a.description?`<div class="card" style="margin-bottom:12px"><b>Aufgabe:</b> ${esc(a.description)}${a.goal?`<div class="muted" style="margin-top:6px;font-size:13px">🎯 Ziel: ${esc(goalLabel(a.goal))}${esc(weltenLabel(a))}</div>`:""}</div>`:""}
-    ${a.hint?`<div style="margin-bottom:12px"><button class="btn btn-ghost btn-sm" id="btnHint">💡 Tipp anzeigen</button><div id="hintBox" class="card" style="display:none;margin-top:8px;background:#fffaf0">💡 ${esc(a.hint)}</div></div>`:""}
-    <div id="curComment" style="margin-bottom:12px">${curComment?`<div class="card" style="background:#eef6ff;border-color:#bcd9f5"><b>💬 Rückmeldung deiner Lehrkraft:</b><div style="margin-top:4px;white-space:pre-wrap">${esc(curComment.body)}</div></div>`:""}</div>
+    <div class="page-head" style="gap:12px"><button class="crumb" id="back">← zurück</button><h2 style="margin:0">${esc(a.title)}</h2><span id="solveStatus">${statusHtml}</span><div class="spacer"></div>${a.hint?`<button class="btn btn-ghost btn-sm" id="btnHint">💡 Tipp anzeigen</button>`:""}</div>
+    ${a.description?`<div class="card" style="margin:0 0 10px;padding:12px 16px"><b>Aufgabe:</b> ${esc(a.description)}${a.goal?`<div class="muted" style="margin-top:5px;font-size:13px">🎯 Ziel: ${esc(goalLabel(a.goal))}${esc(weltenLabel(a))}</div>`:""}</div>`:""}
+    ${a.hint?`<div id="hintBox" class="card" style="display:none;margin:0 0 10px;background:#fffaf0">💡 ${esc(a.hint)}</div>`:""}
+    <div id="curComment" style="margin-bottom:10px">${curComment?`<div class="card" style="background:#eef6ff;border-color:#bcd9f5"><b>💬 Rückmeldung deiner Lehrkraft:</b><div style="margin-top:4px;white-space:pre-wrap">${esc(curComment.body)}</div></div>`:""}</div>
     <div id="editNote" class="editnote" style="display:none"></div>
     <div id="draftNote">${draftGeladen?`<div class="card" style="margin-bottom:10px;background:#f0f7ff;border-color:#bcd9f5;padding:9px 13px;font-size:13px">✏️ <b>Weiter, wo du warst:</b> dein automatisch gespeicherter Stand vom ${esc(fmtDateTime(draft.updated_at))} wurde geladen${current?` – noch nicht abgegeben. Über „🗂️ Meine Abgaben" kommst du an die abgegebene Fassung.`:"."}</div>`:""}</div>
-    <div id="solveWeltBarHome"><div class="card" id="solveWeltBar" style="margin-bottom:10px;padding:9px 12px;display:none"></div></div>
-    <div id="solveHost" style="--edh:70vh;min-height:600px"></div>
-    <div style="display:flex;gap:10px;margin-top:14px;align-items:center;flex-wrap:wrap">
-      <button class="btn btn-primary btn-lg" id="btnSubmit" style="max-width:240px">📤 Abgeben</button>
-      <button class="btn btn-ghost" id="btnToLive" style="display:none">↺ Zur aktuellen Version</button>
-      ${samples.length?`<button class="btn btn-ghost" id="btnSamples">🏆 Musterlösung${samples.length>1?"en":""} ansehen</button>`:""}
-      <span id="submitMsg" class="muted"></span>
-      <span id="draftMsg" class="muted" style="font-size:12px;margin-left:auto"></span>
-    </div>
-    <div class="card" id="myNoteCard" style="margin-top:14px">
-      <h3 style="margin:0 0 8px">✍️ Mein Kommentar an die Lehrkraft <span class="muted" style="font-weight:600;font-size:12px">(optional, zur geöffneten Abgabe)</span></h3>
-      <textarea class="input" id="myNote" style="min-height:64px" placeholder="z. B. eine Frage oder was du ausprobiert hast…"></textarea>
-      <div style="display:flex;gap:10px;align-items:center;margin-top:8px"><button class="btn btn-ghost" id="myNoteSave">Kommentar speichern</button><span id="myNoteMsg" class="muted" style="font-size:13px"></span></div>
-    </div>
-    <div id="histCard"></div>`;
+    <div class="sc-switch" id="scSwitch"><span class="pill"></span><button type="button" data-m="terr" class="on">🌍 Territorium</button><button type="button" data-m="abg">🗂️ Abgaben &amp; Kommentar</button></div>
+    <div class="cockpit" id="cockpit">
+      <div class="ck-main">
+        <div id="solveWeltBarHome"><div class="card" id="solveWeltBar" style="margin-bottom:10px;padding:9px 12px;display:none"></div></div>
+        <div id="solveHost" style="min-height:480px"></div>
+        <div style="display:flex;gap:10px;margin-top:10px;align-items:center;flex-wrap:wrap">
+          <button class="btn btn-ghost btn-sm" id="btnToLive" style="display:none">↺ Zur aktuellen Version</button>
+          ${samples.length?`<button class="btn btn-ghost btn-sm" id="btnSamples">🏆 Musterlösung${samples.length>1?"en":""} ansehen</button>`:""}
+          <span id="submitMsg" class="muted" style="font-size:13px"></span>
+          <span id="draftMsg" class="muted" style="font-size:12px;margin-left:auto"></span>
+        </div>
+      </div>
+      <aside class="ck-side">
+        <div id="histCard"></div>
+        <div class="card" id="myNoteCard">
+          <h3 style="margin:0 0 8px">✍️ Mein Kommentar an die Lehrkraft <span class="muted" style="font-weight:600;font-size:12px">(optional, zur geöffneten Abgabe)</span></h3>
+          <textarea class="input" id="myNote" style="min-height:64px" placeholder="z. B. eine Frage oder was du ausprobiert hast…"></textarea>
+          <div style="display:flex;gap:10px;align-items:center;margin-top:8px"><button class="btn btn-ghost" id="myNoteSave">Kommentar speichern</button><span id="myNoteMsg" class="muted" style="font-size:13px"></span></div>
+        </div>
+      </aside>
+    </div>`;
   document.getElementById("back").onclick = ()=> studentClassView(a.class_id);
-  if(a.hint){ const hb=document.getElementById("hintBox"), bh=document.getElementById("btnHint"); bh.onclick=()=>{ const show=hb.style.display==="none"; hb.style.display=show?"block":"none"; bh.textContent=show?"💡 Tipp verbergen":"💡 Tipp anzeigen"; }; }
+  { const sw=document.getElementById("scSwitch"), ck=document.getElementById("cockpit");
+    if(sw&&ck) sw.querySelectorAll("button[data-m]").forEach(b=> b.onclick=()=>{
+      const abg = b.dataset.m==="abg";
+      ck.classList.toggle("zeige-abgaben", abg);
+      sw.classList.toggle("zeige-abgaben", abg);
+      sw.querySelectorAll("button").forEach(x=> x.classList.toggle("on", x===b));
+    }); }
+  if(a.hint){ const hb=document.getElementById("hintBox"), bh=document.getElementById("btnHint"); if(hb&&bh) bh.onclick=()=>{ const show=hb.style.display==="none"; hb.style.display=show?"block":"none"; bh.textContent=show?"💡 Tipp verbergen":"💡 Tipp anzeigen"; }; }
   hamsterDraftStart(a.id, draftGeladen ? draft.code : null);
   { const w0=welten(a)[0];
     pageView = new HamsterView("#solveHost", { mode:"solve", model:w0.territory, code, fill:true, goal:w0.goal, commands: a.show_commands!==false,
@@ -4859,6 +4879,14 @@ async function javaSandboxProject(projectId){
 }
 
 const PATCH_NOTES = [
+  { v:"2.47", date:"29. August 2026", title:"🖥️ Cockpit-Ansicht · ✨ Feinschliff mit Leben", items:[
+    `<b>Alles im Blick, ohne Scrollen:</b> Die Aufgabenseite ordnet Editor, Territorium und „Meine Abgaben" jetzt <b>nebeneinander</b> an – auf einem Full-HD-Bildschirm ist alles gleichzeitig sichtbar. Der <b>📤 Abgeben</b>-Knopf sitzt mittig oben in der Kopfleiste.`,
+    `<b>Fürs iPad:</b> Unterhalb von ~1280 px erscheint oben ein Umschalter <b>🌍 Territorium / 🗂️ Abgaben</b> – die Abgaben-Spalte schiebt sich mit einer sanften Animation von rechts über das Territorium und wieder zurück.`,
+    `<b>„🎉 Ziel erreicht" verschiebt nichts mehr:</b> Der Platz für das Banner ist von Anfang an reserviert, es legt sich beim Einblenden über die Territoriumsfläche – das Territorium bleibt an Ort und Stelle.`,
+    `<b>Feinschliff-Animationen:</b> Knöpfe, Karten, Zeilen und Matrix-Zellen reagieren jetzt spürbar aufs Anfahren und Drücken – kleine, weiche Bewegungen, die Symbole nicken kurz. Keine Dauer-Animationen, nichts blinkt von allein; wer im System „Bewegung reduzieren" eingestellt hat, bekommt gar keine.`,
+    `<b>Die Undo/Redo-Pfeile</b> unter „Dein Programm" sind jetzt richtig herum gedreht.`,
+    `<b>Abgabe-Matrix:</b> Über allen anklickbaren Zellen (★, ✓, ✎) zeigt der Mauszeiger jetzt den Finger.`,
+  ]},
   { v:"2.46", date:"26. August 2026", title:"💾 Nichts geht mehr verloren · 🖥️ Aufgeräumter Arbeitsbereich", items:[
     `<b>Automatisches Speichern beim Tippen:</b> Jede Änderung am Code wird nach einer kurzen Tipp-Pause von selbst gesichert („💾 automatisch gespeichert" unten rechts). Ein Browser-Absturz oder ein versehentliches Zurück kostet höchstens den letzten Sekundenbruchteil. Beim nächsten Öffnen steht der Stand wieder da – mit dem Hinweis „Weiter, wo du warst".`,
     `<b>Lehrkräfte sehen, wer angefangen hat:</b> In der Abgabe-Matrix zeigt eine ✎-Zelle, dass jemand an einer Aufgabe arbeitet, aber noch nicht abgegeben hat. Ein Klick öffnet den Zwischenstand zum Ansehen und Laufenlassen – beim Schüler/bei der Schülerin ändert sich dadurch nichts.`,
@@ -5229,7 +5257,7 @@ function patchNotesDialog(){
 }
 
 /* ---------- Footer: Versionsnummer (aus den Patch-Notes) + Copyright ---------- */
-const APP_BUILD = "2026-08-26 01:30";   // letztes Update (im Patch-Notes-Dialog angezeigt)
+const APP_BUILD = "2026-08-29 00:30";   // letztes Update (im Patch-Notes-Dialog angezeigt)
 /* ============================================================================
    Browser-Zurück (SPA-History) + Favicon/Titel je Tool
    ============================================================================ */

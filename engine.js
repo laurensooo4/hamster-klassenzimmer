@@ -673,7 +673,12 @@ function injectStyles(){
   :root[data-theme="light"] .hv .c-str{color:#50a14f}
   :root[data-theme="light"] .hv .c-num{color:#b76b01}
   :root[data-theme="light"] .hv .c-com{color:#7a8aa0}
-  .hv .boardWrap{flex:1;min-height:300px;display:flex;align-items:center;justify-content:center;padding:12px;background:radial-gradient(circle at 50% 40%,#f4f8ee,#e9f0e0)}
+  .hv .boardWrap{position:relative;flex:1;min-height:300px;display:flex;align-items:center;justify-content:center;padding:12px;background:radial-gradient(circle at 50% 40%,#f4f8ee,#e9f0e0)}
+  /* "Ziel erreicht" verschiebt das Territorium NICHT: der Streifen oben ist von
+     Anfang an reserviert (padding-top, gleiche Hintergrundflaeche), das Banner
+     legt sich absolut darueber. Beim Einblenden bewegt sich nichts. */
+  .hv .boardWrap.hasgoal{padding-top:58px}
+  .hv .boardWrap .hv-goal{position:absolute;top:10px;left:12px;right:12px;z-index:4;margin:0}
   .hv .board{position:relative;display:grid;border-radius:9px;overflow:hidden;box-shadow:0 5px 16px rgba(60,80,40,.18),inset 0 0 0 2px rgba(255,255,255,.35);grid-template-columns:repeat(var(--cols),var(--cell));grid-template-rows:repeat(var(--rows),var(--cell))}
   .hv .tile{position:relative;width:var(--cell);height:var(--cell);display:flex;align-items:center;justify-content:center}
   .hv .tile.g0{background:#a7d96b}.hv .tile.g1{background:#9bcf5d}
@@ -697,6 +702,10 @@ function injectStyles(){
   /* Zeile unter "Dein Programm": Rueckgaengig / Wiederholen */
   .hv .edbar{display:flex;gap:6px;align-items:center;padding:6px 8px;border-bottom:1px solid var(--line2,#eef2f7);background:var(--hvBar,#fafbfd)}
   .hv .edbar .cbtn{padding:4px 13px;font-size:16px;line-height:1.2}
+  /* Die Pfeil-Zeichen wirken ungedreht "kopflastig" - Rueckgaengig zeigt um
+     90° gegen den Uhrzeigersinn gedreht nach links, Wiederholen nach rechts. */
+  .hv .edbar .eundo .pf{display:inline-block;transform:rotate(-90deg)}
+  .hv .edbar .eredo .pf{display:inline-block;transform:rotate(90deg)}
   /* Statusleiste und Ziel-Meldung leben jetzt im Territorium */
   .hv .hv-pane .status{padding:8px;border-top:1px solid var(--line2,#eef2f7);background:var(--hvBar,#fafbfd)}
   .hv .hv-pane .hv-goal{border-radius:0;border-bottom:1px solid var(--line2,#eef2f7)}
@@ -803,7 +812,7 @@ class HamsterView{
     const editorPane = hasEditor ? `
       <div class="hv-pane">
         <div class="hv-ph">📝 ${m==="view"?"Abgegebener Code":"Dein Programm"}</div>
-        ${m==="solve"?'<div class="edbar"><button class="cbtn eundo" type="button" title="Rückgängig (Strg+Z)">↺</button><button class="cbtn eredo" type="button" title="Wiederholen (Strg+Y)">↻</button><span style="font-size:11px;color:var(--muted,#7a8aa0)">Rückgängig · Wiederholen</span></div>':''}
+        ${m==="solve"?'<div class="edbar"><button class="cbtn eundo" type="button" title="Rückgängig (Strg+Z)"><span class="pf">↺</span></button><button class="cbtn eredo" type="button" title="Wiederholen (Strg+Y)"><span class="pf">↻</span></button><span style="font-size:11px;color:var(--muted,#7a8aa0)">Rückgängig · Wiederholen</span></div>':''}
         <div class="editor">
           <div class="gut"><div class="gutInner">1</div></div>
           <div class="codebox"><pre class="codeHL"></pre><textarea class="code" spellcheck="false" wrap="off" ${m==="view"?"readonly":""}></textarea><div class="actLine"></div></div>
@@ -854,9 +863,8 @@ class HamsterView{
           <div class="hv-ph">🌍 Territorium</div>
           ${ctrlBar}
           ${hasEditor?'<div class="hv-topslot"></div>':""}
-          ${(hasEditor&&this.goal)?'<div class="hv-goal" style="display:none"></div>':''}
           ${designTools}
-          <div class="boardWrap"><div class="board"></div></div>
+          <div class="boardWrap${(hasEditor&&this.goal)?' hasgoal':''}">${(hasEditor&&this.goal)?'<div class="hv-goal" style="display:none"></div>':''}<div class="board"></div></div>
           ${statusRow}
           ${cheatPanel}
         </div>

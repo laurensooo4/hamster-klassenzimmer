@@ -177,8 +177,9 @@
   .matrix-modal .mm-body{flex:1;overflow:auto;padding:16px 20px}
   .matrix-modal .mm-body .matrix-wrap{box-shadow:none;padding:0;overflow:visible}   /* .mm-body wird Scroll-Container -> Kopfzeile (top:0) UND Namensspalte (left:0) kleben korrekt */
   .cell{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:10px;font-size:17px;font-weight:900}
-  .cell.done{background:#e9ffd6;color:var(--green-d)}
-  .cell.pass{background:var(--green);color:#fff}
+  /* anklickbar -> Finger-Zeiger, wie bei den Entwurfs-Zellen */
+  .cell.done{background:#e9ffd6;color:var(--green-d);cursor:pointer}
+  .cell.pass{background:var(--green);color:#fff;cursor:pointer}
   .cell.none{background:var(--line2);color:#c4cdd9}
   .cell.draft{background:#e8f1ff;color:#3b7dd8;cursor:pointer;font-size:15px}
   .cell.draft:hover{background:#d7e8ff}
@@ -251,7 +252,31 @@
   :root[data-theme="dark"] .patch-fab{background:var(--card);color:var(--ink)}
   :root[data-theme="dark"] #appfoot{background:rgba(20,26,34,.93)}
   :root[data-theme="dark"] .auth-wrap{background:radial-gradient(1200px 500px at 50% -10%, #102438, transparent), var(--bg)}
+
+  /* ---------- Cockpit-Ansicht der Aufgabenseite (2.47) ---------------------
+     Editor | Territorium | Abgaben nebeneinander; Ziel: auf Full-HD alles im
+     Blick, ohne Scrollen. Unter 1280 px (iPad quer) uebernimmt ein Umschalter:
+     die Abgaben-Spalte schiebt sich von rechts ueber das Territorium. */
+  .container.weit{max-width:1780px;padding-bottom:14px}
+  .cockpit{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:14px;align-items:start;position:relative}
+  .ck-main{min-width:0}
+  .ck-side{min-width:0;display:flex;flex-direction:column;gap:12px}
+  .ck-side .card{margin-top:0!important}
+  .ck-side #histCard .card{margin-top:0!important}
+  .cockpit #solveHost{--edh:clamp(430px,calc(100vh - 468px),80vh)}
+  .sc-switch{display:none;position:relative;margin:0 auto 10px;background:var(--card);border:2px solid var(--line);border-radius:14px;padding:4px;width:340px;max-width:100%}
+  .sc-switch .pill{position:absolute;top:4px;bottom:4px;left:4px;width:calc(50% - 4px);background:var(--green);border-radius:10px;transition:transform .32s cubic-bezier(.3,1.2,.4,1)}
+  .sc-switch.zeige-abgaben .pill{transform:translateX(100%)}
+  .sc-switch button{position:relative;z-index:1;flex:1;border:none;background:none;font-family:inherit;font-weight:800;font-size:13.5px;padding:8px 6px;cursor:pointer;color:var(--muted);transition:color .25s;border-radius:10px}
+  .sc-switch button.on{color:#fff}
+  @media (max-width:1279px){
+    .cockpit{display:block}
+    .sc-switch{display:flex}
+    .ck-side{position:absolute;top:0;right:0;bottom:0;width:min(520px,calc(50% + 20px));z-index:6;background:var(--bg);padding:0 0 12px 12px;transform:translateX(112%);transition:transform .35s cubic-bezier(.3,1.05,.4,1);overflow:auto;box-shadow:-14px 0 26px rgba(40,60,90,.10);border-radius:14px 0 0 14px}
+    .cockpit.zeige-abgaben .ck-side{transform:none}
+  }
 </style>
+<link rel="stylesheet" href="polish.css?v=1">
 <script>(function(){try{var p=localStorage.getItem('themePref')||'auto';var d=p==='dark'||(p==='auto'&&window.matchMedia&&window.matchMedia('(prefers-color-scheme:dark)').matches);document.documentElement.setAttribute('data-theme',d?'dark':'light');}catch(e){}})();</script>
 </head>
 <body>
@@ -268,12 +293,13 @@
   <script src="supabase.local.js?v=2112"></script>
   <script src="config.js"></script>
   <script>/* Favicon optional per config.js (FAVICON_URL) austauschbar – z. B. auf dem Schulserver */(function(){try{var c=window.HAMSTER_CONFIG||{};if(c.FAVICON_URL){var l=document.querySelector("link[rel='icon']");if(!l){l=document.createElement("link");l.rel="icon";document.head.appendChild(l);}l.href=c.FAVICON_URL;}}catch(e){}})();</script>
-  <script src="engine.js?v=h22"></script>
+  <script src="engine.js?v=h23"></script>
   <script src="sqlengine.js?v=h23"></script>
   <script src="filiusengine.js?v=h5"></script>
   <script src="filiusview.js?v=h6"></script>
   <script src="javaengine.js?v=j2"></script>
   <script src="javaview.js?v=j5"></script>
-  <script src="app.js?v=h58"></script>
+  <script src="app.js?v=h59"></script>
+  <script src="polish.js?v=1"></script>
 </body>
 </html>
