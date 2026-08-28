@@ -401,6 +401,15 @@ api.adminIservAbgleich  = async (namen)=>{ const {data,error}=await sb.rpc("admi
 /* Anmeldeschutz (Phase AC): gesperrte Konten anzeigen und freigeben. */
 api.adminGesperrte  = async ()=>{ const {data,error}=await sb.rpc("admin_gesperrte_konten"); if(error) throw error; return data||[]; };
 api.adminEntsperren = async (userId)=>{ const {error}=await sb.rpc("admin_konto_entsperren",{p_user:userId}); if(error) throw error; };
+
+/* Entwuerfe (Phase AB/AE): automatisches Zwischenspeichern beim Tippen.
+   Lesen der Entwuerfe einer Klasse setzt die Lehrer-Leserechte aus Phase AE
+   voraus - fehlt die, liefert classDrafts einfach eine leere Liste. */
+api.myHamsterDraft     = async (aid)=>{ const {data,error}=await sb.from("hamster_drafts").select("code,updated_at").eq("assignment_id",aid).eq("student_id",ME.id).maybeSingle(); if(error) return null; return data||null; };
+api.saveHamsterDraft   = async (aid, code)=>{ const {error}=await sb.from("hamster_drafts").upsert({assignment_id:aid, student_id:ME.id, code, updated_at:new Date().toISOString()},{onConflict:"assignment_id,student_id"}); if(error) throw error; };
+api.deleteHamsterDraft = async (aid)=>{ try{ await sb.from("hamster_drafts").delete().eq("assignment_id",aid).eq("student_id",ME.id); }catch(e){} };
+api.classDrafts        = async (aids)=>{ if(!aids.length) return []; const {data,error}=await sb.from("hamster_drafts").select("assignment_id,student_id,code,updated_at").in("assignment_id",aids); if(error) return []; return data||[]; };
+
 api.setAdmin = async (userId, makeAdmin)=>{ const {error}=await sb.rpc("set_admin",{p_user:userId, p_make:!!makeAdmin}); if(error) throw error; };
 api.adminRenameUser = async (userId, newName)=>{ const {error}=await sb.rpc("admin_rename_user",{p_user:userId, p_new:newName}); if(error) throw error; };
 api.setClassJoinOpen = async (classId, open)=>{ const {error}=await sb.from("classes").update({join_open:!!open}).eq("id",classId); if(error) throw error; };
@@ -696,38 +705,26 @@ function solveRenderWeltBar(){
     return `<button class="abtn ${i===s.wIdx?'on':''}" data-sw="${i}" title="${esc(w.name)} anzeigen"${farbe?` style="color:${farbe}"`:""}>${zeichen} ${esc(w.name)}</button>`;
   }).join("");
   const geschafft=ws.filter(w=> res[w.id]===true).length;
-  const bilanz = Object.keys(res).length ? ` – zuletzt geprüft: <b>${geschafft} von ${ws.length}</b> geschafft.` : ".";
+  const bilanz = Object.keys(res).length ? `Zuletzt geprüft: <b>${geschafft} von ${ws.length}</b> Welten geschafft.` : `Bei jedem ▶ Start wird dein Programm in allen ${ws.length} Welten geprüft.`;
   el.innerHTML=
-    `<div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap">
-       <b style="font-size:13px">Welten:</b>${chips}
-       <div style="flex:1"></div>
-       <button class="btn btn-ghost btn-sm" id="solveTestAll" title="Deinen Code in allen Welten durchlaufen lassen">🧪 in allen Welten testen</button>
-     </div>
-     <div class="muted" style="font-size:12px;margin-top:6px">Dein Programm muss in <b>allen ${ws.length} Welten</b> funktionieren. Beim Umschalten bleibt dein Code stehen${bilanz}</div>`;
+    `<div style="text-align:center">
+       <div style="display:flex;gap:7px;align-items:center;justify-content:center;flex-wrap:wrap">${chips}</div>
+       <div class="muted" style="font-size:11.5px;margin-top:4px">${bilanz} Beim Umschalten bleibt dein Code stehen.</div>
+     </div>`;
   el.querySelectorAll("[data-sw]").forEach(b=> b.onclick=()=> solveSetWelt(+b.dataset.sw));
-  document.getElementById("solveTestAll").onclick=solveTestAlleWelten;
 }
 function solveSetWelt(i){
   const s=solveState; if(!s) return; const ws=welten(s.a);
   if(i===s.wIdx || !ws[i]) return;
   const code = pageView ? pageView.getCode() : "";
   s.wIdx=i;
+  unmountWeltBar("solveWeltBar","solveWeltBarHome");
   if(pageView){ try{ pageView.destroy(); }catch(e){} }
-  pageView = new HamsterView("#solveHost", { mode:"solve", model:ws[i].territory, code, fill:true, goal:ws[i].goal, commands: s.a.show_commands!==false });
-  solveRenderWeltBar();
+  pageView = new HamsterView("#solveHost", { mode:"solve", model:ws[i].territory, code, fill:true, goal:ws[i].goal, commands: s.a.show_commands!==false,
+                                            onCode: hamsterDraftTick, onRunEnd: solveAutoWeltCheck });
+  solveRenderWeltBar(); mountWeltBar("solveWeltBar");
 }
-function solveTestAlleWelten(){
-  const s=solveState; if(!s||!pageView) return;
-  const btn=document.getElementById("solveTestAll");
-  if(btn){ btn.disabled=true; btn.textContent="prüfe…"; }
-  setTimeout(()=>{
-    const ws=welten(s.a), r=gradeAllWorlds(pageView.getCode(), s.a);
-    s.weltErgebnis=r.results; solveRenderWeltBar();
-    if(r.passed===null){ toast("Für diese Aufgabe gibt es keinen Auto-Check.","ok"); return; }
-    const n=ws.filter(w=> r.results[w.id]===true).length;
-    toast(r.passed ? ("In allen "+ws.length+" Welten geschafft! 🎉") : (n+" von "+ws.length+" Welten geschafft."), r.passed?"ok":"err");
-  }, 10);
-}
+
 
 /* ---------- Lehrer-Korrektur: dieselbe Abgabe in jeder Welt ansehen ------- */
 function revRenderWeltBar(){
@@ -767,9 +764,10 @@ function revSetWelt(i){
   if(i===s.wIdx || !ws[i]) return;
   const code = pageView ? pageView.getCode() : ((s.viewing&&s.viewing.code)||"");
   s.wIdx=i;
+  unmountWeltBar("revWeltBar","revWeltBarHome");
   if(pageView){ try{ pageView.destroy(); }catch(e){} }
   pageView = new HamsterView("#reviewHost", { mode:"solve", model:ws[i].territory, code, fill:true, goal:ws[i].goal, commands:true });
-  revRenderWeltBar();
+  revRenderWeltBar(); mountWeltBar("revWeltBar");
 }
 
 /* ---------- Lehrer: Aufgabe stellen / bearbeiten (eigene Seite) ---------- */
@@ -1063,7 +1061,7 @@ function reviewSubmission(assignment, history, studentName, classId){
       <span class="muted" style="font-size:12px;display:block;margin-top:3px">🛠️ Live-Korrektur: Du kannst den Code bearbeiten &amp; laufen lassen – Änderungen werden nicht automatisch gespeichert.</span>
     </div>
     ${history.length>1?`<div class="card" style="margin-bottom:10px;padding:10px 14px"><b style="font-size:13px">Versionen (neueste zuerst):</b> <span id="verNav"></span></div>`:""}
-    <div class="card" id="revWeltBar" style="margin-bottom:10px;padding:9px 12px;display:none"></div>
+    <div id="revWeltBarHome"><div class="card" id="revWeltBar" style="margin-bottom:10px;padding:9px 12px;display:none"></div></div>
     <div id="reviewHost" style="--edh:70vh;min-height:560px"></div>
     <div id="revStudentNote" style="margin-top:14px"></div>
     <div class="card" style="margin-top:14px">
@@ -1097,10 +1095,11 @@ async function showReviewVersion(sub){
   const s=reviewState; if(!sub) return; s.viewing=sub;
   const passed = sub.passed===true ? `<span class="badge">bestanden ✓</span>` : `<span class="badge gold">abgegeben</span>`;
   const st=document.getElementById("revStatus"); if(st) st.innerHTML = passed + ` <span class="muted" style="font-size:12px">${esc(fmtDateTime(sub.submitted_at))}</span>`;
+  unmountWeltBar("revWeltBar","revWeltBarHome");
   if(pageView){ try{ pageView.destroy(); }catch(e){} }
   { const w=welten(s.assignment)[s.wIdx] || welten(s.assignment)[0];
     pageView = new HamsterView("#reviewHost", { mode:"solve", model:w.territory, code:sub.code, fill:true, goal:w.goal, commands:true }); }
-  revRenderWeltBar();
+  revRenderWeltBar(); mountWeltBar("revWeltBar");
   if(s.history.length>1) renderVerNav();
   const ta=document.getElementById("revComment"), rel=document.getElementById("revRelease"), del=document.getElementById("revDelete"), msg=document.getElementById("revMsg");
   if(ta) ta.value=""; if(rel) rel.checked=false; if(del) del.style.display="none"; if(msg) msg.textContent="";
@@ -1204,19 +1203,88 @@ async function saveSampleFromEditor(){
   }catch(e){ btn.disabled=false; btn.textContent=lbl; toast(e.message||"Fehler","err"); }
 }
 
+
+/* ---------- Automatisches Zwischenspeichern (Hamster) ----------------------
+   Jeder Tastendruck stoesst (mit 700 ms Ruhepause) ein Upsert in
+   hamster_drafts an. Ein Browser-Absturz oder ein versehentliches Zurueck
+   kostet damit hoechstens den letzten Sekundenbruchteil. */
+let _draftAid=null, _draftCode=null, _draftSavedCode=null, _draftT=null;
+function hamsterDraftStart(aid, gespeicherterStand){
+  _draftAid=aid; _draftCode=null; _draftSavedCode=gespeicherterStand; clearTimeout(_draftT); _draftT=null;
+}
+function hamsterDraftTick(code){
+  if(_draftAid==null) return;
+  _draftCode=code; clearTimeout(_draftT); _draftT=setTimeout(hamsterDraftFlush, 700);
+}
+async function hamsterDraftFlush(){
+  clearTimeout(_draftT); _draftT=null;
+  if(_draftAid==null || _draftCode==null || _draftCode===_draftSavedCode) return;
+  const aid=_draftAid, code=_draftCode;
+  try{
+    await api.saveHamsterDraft(aid, code);
+    _draftSavedCode=code;
+    const el=document.getElementById("draftMsg");
+    if(el) el.textContent="💾 automatisch gespeichert "+new Date().toLocaleTimeString("de-DE",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
+  }catch(e){
+    const el=document.getElementById("draftMsg");
+    if(el) el.textContent="⚠️ Zwischenspeichern gerade nicht möglich";
+  }
+}
+/* Wenn der Tab in den Hintergrund geht (Schliessen, Zurueck, Wechsel):
+   sofort sichern statt auf die Ruhepause zu warten. */
+document.addEventListener("visibilitychange", ()=>{ if(document.visibilityState==="hidden") hamsterDraftFlush(); });
+
+/* Welten-Leiste in den dafuer vorgesehenen Platz der Territorium-Spalte
+   haengen (mittig unter der Steuerung). Faellt der Platz weg - aeltere
+   engine.js im Zwischenspeicher -, bleibt die Leiste einfach ueber dem
+   Editor stehen. */
+function mountWeltBar(barId){
+  const bar=document.getElementById(barId); if(!bar) return;
+  const slot=pageView && pageView.topSlot ? pageView.topSlot() : null;
+  if(slot && bar.parentElement!==slot){
+    bar.classList.remove("card");
+    bar.style.margin="0"; bar.style.padding="0"; bar.style.border="none";
+    bar.style.background="transparent"; bar.style.width="100%";
+    slot.appendChild(bar);
+  }
+}
+/* Vor jedem Neuaufbau der Ansicht: die Leiste zurueck in ihren festen
+   Heimat-Anker retten. destroy() leert naemlich das Wurzelelement der Ansicht -
+   und wuerde die eingehaengte Leiste ersatzlos mitnehmen. */
+function unmountWeltBar(barId, homeId){
+  const bar=document.getElementById(barId), home=document.getElementById(homeId);
+  if(bar && home && bar.parentElement!==home) home.appendChild(bar);
+}
+/* Nach jedem Lauf (Start-Knopf) den Code still in ALLEN Welten pruefen und
+   die Haekchen in der Leiste auffrischen - der fruehere Extra-Knopf entfaellt. */
+function solveAutoWeltCheck(){
+  const s=solveState; if(!s||!pageView) return;
+  if(!hatMehrWelten(s.a)) return;
+  setTimeout(()=>{
+    if(!solveState || solveState!==s || !pageView) return;
+    const r=gradeAllWorlds(pageView.getCode(), s.a);
+    s.weltErgebnis=r.results; solveRenderWeltBar();
+  }, 10);
+}
+
 /* ---------- Schüler: Aufgabe lösen (Historie, Kommentare, Musterlösung) ---------- */
 async function solveAssignment(assignmentId){
   shell(`<div class="center-load"><span class="spin"></span>Aufgabe lädt…</div>`);
-  let a, history=[], comments=[], samples=[], notes=[];
+  let a, history=[], comments=[], samples=[], notes=[], draft=null;
   try{
     a = await api.getAssignment(assignmentId);
     history = await api.mySubmissions(assignmentId);
     comments = await api.myComments(history.map(s=>s.id));
     samples = await api.releasedSamples(assignmentId);
     try{ notes = await api.submissionNotes(history.map(s=>s.id)); }catch(e){ notes=[]; }
+    try{ draft = await api.myHamsterDraft(assignmentId); }catch(e){ draft=null; }
   }catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
   const current = history.find(s=>s.is_current) || null;
-  const code = current ? current.code : (a.starter_code || DEFAULT_STARTER);
+  let code = current ? current.code : (a.starter_code || DEFAULT_STARTER);
+  /* Automatisch gespeicherter Entwurf: nur laden, wenn er wirklich vom
+     zuletzt abgegebenen Stand abweicht - sonst gibt es nichts wiederherzustellen. */
+  let draftGeladen = false;
+  if(draft && (draft.code||"").trim() && draft.code!==code){ code=draft.code; draftGeladen=true; }
   solveState = { a, history, comments, samples, notes, current, viewingId: current?current.id:null,
                  wIdx:0, weltErgebnis:(current && current.results && typeof current.results==="object")? current.results : null };
   const statusHtml = current ? (current.passed===true?`<span class="badge">bestanden ✓</span>`:`<span class="badge gold">abgegeben</span>`) : `<span class="badge gray">offen</span>`;
@@ -1228,13 +1296,15 @@ async function solveAssignment(assignmentId){
     ${a.hint?`<div style="margin-bottom:12px"><button class="btn btn-ghost btn-sm" id="btnHint">💡 Tipp anzeigen</button><div id="hintBox" class="card" style="display:none;margin-top:8px;background:#fffaf0">💡 ${esc(a.hint)}</div></div>`:""}
     <div id="curComment" style="margin-bottom:12px">${curComment?`<div class="card" style="background:#eef6ff;border-color:#bcd9f5"><b>💬 Rückmeldung deiner Lehrkraft:</b><div style="margin-top:4px;white-space:pre-wrap">${esc(curComment.body)}</div></div>`:""}</div>
     <div id="editNote" class="editnote" style="display:none"></div>
-    <div class="card" id="solveWeltBar" style="margin-bottom:10px;padding:9px 12px;display:none"></div>
+    <div id="draftNote">${draftGeladen?`<div class="card" style="margin-bottom:10px;background:#f0f7ff;border-color:#bcd9f5;padding:9px 13px;font-size:13px">✏️ <b>Weiter, wo du warst:</b> dein automatisch gespeicherter Stand vom ${esc(fmtDateTime(draft.updated_at))} wurde geladen${current?` – noch nicht abgegeben. Über „🗂️ Meine Abgaben" kommst du an die abgegebene Fassung.`:"."}</div>`:""}</div>
+    <div id="solveWeltBarHome"><div class="card" id="solveWeltBar" style="margin-bottom:10px;padding:9px 12px;display:none"></div></div>
     <div id="solveHost" style="--edh:70vh;min-height:600px"></div>
     <div style="display:flex;gap:10px;margin-top:14px;align-items:center;flex-wrap:wrap">
       <button class="btn btn-primary btn-lg" id="btnSubmit" style="max-width:240px">📤 Abgeben</button>
       <button class="btn btn-ghost" id="btnToLive" style="display:none">↺ Zur aktuellen Version</button>
       ${samples.length?`<button class="btn btn-ghost" id="btnSamples">🏆 Musterlösung${samples.length>1?"en":""} ansehen</button>`:""}
       <span id="submitMsg" class="muted"></span>
+      <span id="draftMsg" class="muted" style="font-size:12px;margin-left:auto"></span>
     </div>
     <div class="card" id="myNoteCard" style="margin-top:14px">
       <h3 style="margin:0 0 8px">✍️ Mein Kommentar an die Lehrkraft <span class="muted" style="font-weight:600;font-size:12px">(optional, zur geöffneten Abgabe)</span></h3>
@@ -1244,9 +1314,11 @@ async function solveAssignment(assignmentId){
     <div id="histCard"></div>`;
   document.getElementById("back").onclick = ()=> studentClassView(a.class_id);
   if(a.hint){ const hb=document.getElementById("hintBox"), bh=document.getElementById("btnHint"); bh.onclick=()=>{ const show=hb.style.display==="none"; hb.style.display=show?"block":"none"; bh.textContent=show?"💡 Tipp verbergen":"💡 Tipp anzeigen"; }; }
+  hamsterDraftStart(a.id, draftGeladen ? draft.code : null);
   { const w0=welten(a)[0];
-    pageView = new HamsterView("#solveHost", { mode:"solve", model:w0.territory, code, fill:true, goal:w0.goal, commands: a.show_commands!==false }); }
-  solveRenderWeltBar();
+    pageView = new HamsterView("#solveHost", { mode:"solve", model:w0.territory, code, fill:true, goal:w0.goal, commands: a.show_commands!==false,
+                                              onCode: hamsterDraftTick, onRunEnd: solveAutoWeltCheck }); }
+  solveRenderWeltBar(); mountWeltBar("solveWeltBar");
   renderHistoryCard();
   const sb2=document.getElementById("btnSamples"); if(sb2) sb2.onclick=()=> openSamplesViewer(a, samples);
   document.getElementById("btnToLive").onclick = ()=> loadVersion(solveState.current);
@@ -1333,6 +1405,9 @@ async function submitSolution(){
     const wieViele = ws.length>1 ? (" ("+geschafft+" von "+ws.length+" Welten)") : "";
     document.getElementById("submitMsg").textContent = passed===true ? ("Super, Ziel erreicht!"+wieViele+" 🎉") : passed===false ? ("Abgegeben – Ziel noch nicht erfüllt"+wieViele+", du kannst es nochmal versuchen.") : "Abgegeben! ✓";
     setEditNote(); solveRenderWeltBar(); renderHistoryCard(); renderSolveComment(row.id); renderMyNote(row.id);
+    /* Der Entwurf ist jetzt abgegeben - Merker angleichen und Hinweis entfernen. */
+    _draftSavedCode = myCode; api.deleteHamsterDraft(a.id);
+    { const dn=document.getElementById("draftNote"); if(dn) dn.innerHTML=""; }
     btn.disabled=false; btn.textContent="📤 Erneut abgeben";
     toast("Abgegeben!","ok");
   }catch(e){ btn.disabled=false; btn.textContent="📤 Abgeben"; toast(e.message||"Fehler","err"); }
@@ -1916,9 +1991,10 @@ async function teacherClassView(classId){
     }).join("")}</div>`
     : `<div class="empty"><span class="ic">🎒</span>Noch keine Schüler:innen. Teile den Code <b>${esc(cls.code)}</b>!</div>`;
 
-  let assignments=[], subs=[];
+  let assignments=[], subs=[], hDrafts=[];
   try{ assignments = await api.listAssignments(classId); subs = await api.classSubmissions(assignments.map(a=>a.id)); }
   catch(e){ document.getElementById("view").innerHTML=errBox(e); return; }
+  try{ hDrafts = await api.classDrafts(assignments.map(a=>a.id)); }catch(e){ hDrafts=[]; }
 
   const assignHtml = assignments.length ? `<div class="list">${assignments.map(a=>`
       <div class="row"><span class="grow"><span class="t clickable" data-edit="${a.id}" title="Aufgabe bearbeiten">${esc(a.title)} ${a.published?"":'<span class="badge gold">Entwurf</span>'}</span><span class="s">${a.goal?`🎯 ${esc(goalLabel(a.goal))}`:"kein Auto-Check"}</span></span>
@@ -1979,9 +2055,14 @@ async function teacherClassView(classId){
   const userOf=(sid)=>{ const stu=roster.find(r=>r.student_id===sid); return (stu&&stu.profiles&&stu.profiles.username)||""; };
   const openProfile=(sid)=> studentProfilePage(classId, sid, nameOf(sid), userOf(sid));
   const paintMatrixInto=(host, q, close)=>{ if(!host) return;
-    host.innerHTML = (assignments.length&&roster.length) ? buildMatrix(roster, assignments, subs, q)
+    host.innerHTML = (assignments.length&&roster.length) ? buildMatrix(roster, assignments, subs, q, hDrafts)
       : `<div class="empty"><span class="ic">📊</span>${!assignments.length?"Stelle Aufgaben – dann erscheint hier, wer was abgegeben hat.":"Noch keine Schüler:innen in der Klasse."}</div>`;
     host.querySelectorAll(".cell[data-aid]").forEach(c=> c.onclick=()=>{ const aid=c.dataset.aid, sid=c.dataset.sid; const a=assignments.find(x=>x.id===aid); const hist=subs.filter(x=>x.assignment_id===aid && x.student_id===sid); if(!a||!hist.length) return; if(close) close(); reviewSubmission(a, hist, nameOf(sid), classId); });
+    host.querySelectorAll(".cell[data-draft-aid]").forEach(c=> c.onclick=()=>{
+      const a=assignments.find(x=>x.id===c.dataset.draftAid);
+      const d=hDrafts.find(x=>x.assignment_id===c.dataset.draftAid && x.student_id===c.dataset.draftSid);
+      if(a && d) openDraftViewer(a, d, nameOf(c.dataset.draftSid));
+    });
     host.querySelectorAll("[data-prof]").forEach(b=> b.onclick=()=>{ if(close) close(); openProfile(b.dataset.prof); });
   };
   paintMatrixInto(document.getElementById("matrixHost"), "", null);
@@ -1990,7 +2071,7 @@ async function teacherClassView(classId){
   document.querySelectorAll(".chip[data-prof]").forEach(b=> b.onclick=()=> openProfile(b.dataset.prof));
   document.querySelectorAll("[data-stu]").forEach(b=> b.onclick=()=> resetStudentPw(b.dataset.stu, b.dataset.nm));
 }
-function buildMatrix(roster, assignments, subs, q){
+function buildMatrix(roster, assignments, subs, q, drafts){
   q=(q||"").trim().toLowerCase();
   const nmeOf=stu=>(stu.profiles&&(stu.profiles.display_name||stu.profiles.username))||"?";
   const list = q ? roster.filter(stu=> nmeOfSafe(nmeOf(stu)).includes(q)) : roster;
@@ -2001,7 +2082,12 @@ function buildMatrix(roster, assignments, subs, q){
     const cells = assignments.map(a=>{
       const mine=subs.filter(x=>x.assignment_id===a.id && x.student_id===stu.student_id);
       const cur=mine.find(z=>z.is_current) || mine[0];
-      if(!cur) return `<td><span class="cell none">·</span></td>`;
+      if(!cur){
+        /* Noch keine Abgabe - aber vielleicht schon angefangen (Entwurf). */
+        const d=(drafts||[]).find(x=>x.assignment_id===a.id && x.student_id===stu.student_id && (x.code||"").trim());
+        if(d) return `<td><span class="cell draft" data-draft-aid="${a.id}" data-draft-sid="${stu.student_id}" title="angefangen, noch nicht abgegeben – Entwurf ansehen (Stand ${esc(fmtDateTime(d.updated_at))})">✎</span></td>`;
+        return `<td><span class="cell none">·</span></td>`;
+      }
       const cl=cur.passed===true?"pass":"done"; const ic=cur.passed===true?"★":"✓";
       const cnt=mine.length>1?`<sup style="font-size:9px;font-weight:800">${mine.length}</sup>`:"";
       return `<td><span class="cell ${cl}" data-aid="${a.id}" data-sid="${stu.student_id}" title="${mine.length} Abgabe(n) – ansehen">${ic}${cnt}</span></td>`;
@@ -2011,6 +2097,17 @@ function buildMatrix(roster, assignments, subs, q){
   return `<div class="matrix-wrap"><table class="matrix"><thead><tr><th class="stu">Schüler:in</th>${head}</tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 function nmeOfSafe(s){ return String(s||"").toLowerCase(); }
+
+/* Lehrkraft schaut in einen noch nicht abgegebenen Entwurf hinein. */
+function openDraftViewer(a, d, name){
+  openModal(`<button class="x" onclick="closeModal()">✕</button>
+    <h3>✏️ Entwurf von ${esc(name)}</h3>
+    <div class="card" style="background:#fff7e9;border-color:#ffe0a3;margin-bottom:10px;padding:9px 13px;font-size:13px">Noch <b>nicht abgegeben</b> – automatisch gespeicherter Stand vom <b>${esc(fmtDateTime(d.updated_at))}</b>. Du kannst ihn hier laufen lassen; beim Schüler/bei der Schülerin ändert sich dadurch nichts.</div>
+    <div id="dvHost" style="--edh:60vh;min-height:440px"></div>`, true);
+  if(modalView){ try{ modalView.destroy(); }catch(e){} }
+  { const w0=welten(a)[0];
+    modalView=new HamsterView("#dvHost",{mode:"solve", model:w0.territory, code:d.code, fill:true, goal:w0.goal, commands:true}); }
+}
 
 /* ---------- Lehrer: Aufgaben-Statistik / Dashboard ---------- */
 async function assignmentStats(assignment, classId){
@@ -4762,6 +4859,15 @@ async function javaSandboxProject(projectId){
 }
 
 const PATCH_NOTES = [
+  { v:"2.46", date:"26. August 2026", title:"💾 Nichts geht mehr verloren · 🖥️ Aufgeräumter Arbeitsbereich", items:[
+    `<b>Automatisches Speichern beim Tippen:</b> Jede Änderung am Code wird nach einer kurzen Tipp-Pause von selbst gesichert („💾 automatisch gespeichert" unten rechts). Ein Browser-Absturz oder ein versehentliches Zurück kostet höchstens den letzten Sekundenbruchteil. Beim nächsten Öffnen steht der Stand wieder da – mit dem Hinweis „Weiter, wo du warst".`,
+    `<b>Lehrkräfte sehen, wer angefangen hat:</b> In der Abgabe-Matrix zeigt eine ✎-Zelle, dass jemand an einer Aufgabe arbeitet, aber noch nicht abgegeben hat. Ein Klick öffnet den Zwischenstand zum Ansehen und Laufenlassen – beim Schüler/bei der Schülerin ändert sich dadurch nichts.`,
+    `<b>Die Kopfzeile der Abgabe-Matrix bleibt stehen:</b> Beim Scrollen durch eine große Klasse sind die Aufgabentitel jetzt immer sichtbar (die Matrix rollt in sich).`,
+    `<b>Aufgeräumter Arbeitsbereich:</b> „Dein Programm" und „Territorium" sind jetzt standardmäßig <b>gleich breit</b> – die Werkzeuge passen in eine Zeile. Die Statusleiste (Reihe/Spalte, Richtung, Körner) sitzt direkt im Territorium, die „🎉 Ziel erreicht"-Meldung ebenso. Dadurch rückt die Konsole nach oben und Fehlermeldungen fallen sofort ins Auge.`,
+    `<b>Welten beim Start geprüft:</b> Der Extra-Knopf „in allen Welten testen" ist weg – bei jedem ▶ Start wird dein Programm automatisch in <b>allen</b> Welten geprüft, die ✓/✗-Anzeige sitzt jetzt mittig unter der Steuerung des Territoriums.`,
+    `<b>↺ ↻ Rückgängig und Wiederholen</b> gibt es jetzt als Knöpfe unter „Dein Programm" (weiterhin auch Strg+Z / Strg+Y).`,
+    `<b>Die Befehls-Übersicht läuft nicht mehr über:</b> Lange Einträge wie <code>Territorium.getAnzahlKoerner(r,s)</code> brechen sauber um.`,
+  ]},
   { v:"2.45", date:"25. August 2026", title:"🌍 Mehrere Welten je Aufgabe · 🔄 Klassenwechsel mit Abgaben", items:[
     `<b>Behoben:</b> Im Admin-Bereich blieb die Liste der Nutzer:innen <b>leer</b> – obwohl der Zähler darüber die richtige Anzahl nannte. Ursache war ein Programmierfehler in der Fassung 2.44: eine Variable wurde eine Zeile zu früh benutzt, was die Liste beim Aufbau abbrechen ließ. Filter, Suche, Sammelauswahl und der Entsperren-Knopf sind damit wieder da.`,
     `<b>Behoben – Klammern um eine Zahl:</b> <code>schreib((2) + 3);</code> gab still <b>3</b> aus statt 5, und <code>int x = (5);</code> meldete „Ausdruck erwartet". Der Übersetzer hielt die Klammer für eine Typumwandlung wie <code>(int)</code>. Echte Umwandlungen funktionieren unverändert.`,
@@ -5123,7 +5229,7 @@ function patchNotesDialog(){
 }
 
 /* ---------- Footer: Versionsnummer (aus den Patch-Notes) + Copyright ---------- */
-const APP_BUILD = "2026-08-25 23:55";   // letztes Update (im Patch-Notes-Dialog angezeigt)
+const APP_BUILD = "2026-08-26 01:30";   // letztes Update (im Patch-Notes-Dialog angezeigt)
 /* ============================================================================
    Browser-Zurück (SPA-History) + Favicon/Titel je Tool
    ============================================================================ */

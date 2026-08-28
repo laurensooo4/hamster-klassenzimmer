@@ -630,7 +630,9 @@ function injectStyles(){
   st.textContent = `
   .hv{--lh:22px;--cpad:12px;--hvBar:#fafbfd;display:flex;flex-direction:column;gap:10px;font-family:"Nunito",sans-serif}
   /* Breitenverhaeltnis Editor:Territorium ist per Ziehgriff einstellbar (--edwA/--edwB) */
-  .hv .hv-main{display:grid;gap:6px;grid-template-columns:var(--edwA,1.65fr) 7px var(--edwB,1fr);min-height:0}
+  /* Standard 1:1 - so passen die Werkzeuge des Territoriums in eine Zeile.
+     Wer den Ziehgriff benutzt hat, behaelt seine Aufteilung (localStorage). */
+  .hv .hv-main{display:grid;gap:6px;grid-template-columns:var(--edwA,1fr) 7px var(--edwB,1fr);min-height:0}
   .hv.solo .hv-main{grid-template-columns:1fr}
   .hv .hv-vsplit{cursor:ew-resize;display:flex;align-items:center;justify-content:center;border-radius:4px}
   .hv .hv-vsplit::after{content:"";width:3px;height:44px;border-radius:2px;background:var(--muted,#7a8aa0);opacity:.35}
@@ -689,6 +691,15 @@ function injectStyles(){
   .hv .ham svg{width:82%;height:82%;filter:drop-shadow(0 2px 2px rgba(0,0,0,.25))}
   .hv .ham.bonk .rot{animation:hvbonk .45s ease}
   @keyframes hvbonk{0%,100%{transform:rotate(var(--deg))}25%{transform:rotate(var(--deg)) translateX(-8%)}75%{transform:rotate(var(--deg)) translateX(8%)}}
+  /* Welten-Leiste (von der App befuellt) mittig unter der Steuerung */
+  .hv .hv-topslot{display:flex;justify-content:center;padding:7px 8px;border-bottom:1px solid var(--line2,#eef2f7);background:var(--hvBar,#fafbfd)}
+  .hv .hv-topslot:empty{display:none}
+  /* Zeile unter "Dein Programm": Rueckgaengig / Wiederholen */
+  .hv .edbar{display:flex;gap:6px;align-items:center;padding:6px 8px;border-bottom:1px solid var(--line2,#eef2f7);background:var(--hvBar,#fafbfd)}
+  .hv .edbar .cbtn{padding:4px 13px;font-size:16px;line-height:1.2}
+  /* Statusleiste und Ziel-Meldung leben jetzt im Territorium */
+  .hv .hv-pane .status{padding:8px;border-top:1px solid var(--line2,#eef2f7);background:var(--hvBar,#fafbfd)}
+  .hv .hv-pane .hv-goal{border-radius:0;border-bottom:1px solid var(--line2,#eef2f7)}
   /* Steuerung sitzt ueber dem Territorium (rechte Spalte) */
   .hv .ctrls{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:8px;border-bottom:1px solid var(--line2,#eef2f7);background:var(--hvBar,#fafbfd)}
   .hv .cbtn{border:1px solid var(--line,#e6ebf2);background:var(--card,#fff);color:var(--ink,#3c4858);border-radius:9px;padding:7px 11px;font-weight:800;font-size:13px;cursor:pointer;font-family:inherit}
@@ -702,8 +713,10 @@ function injectStyles(){
   .hv .hv-cheat-body{flex:1;overflow:auto;padding:8px 12px 14px}
   .hv .hv-cheat h4{margin:12px 0 3px;font-size:11px;font-weight:900;color:var(--muted,#7a8aa0);text-transform:uppercase;letter-spacing:.6px}
   .hv .hv-cheat h4:first-child{margin-top:2px}
-  .hv .hv-cheat .crow{display:grid;grid-template-columns:minmax(130px,42%) 1fr;gap:10px;align-items:baseline;padding:4px 0;border-bottom:1px dashed var(--line2,#eef2f7)}
-  .hv .hv-cheat code{font-family:"JetBrains Mono",Consolas,monospace;font-size:12px;color:var(--ink,#2b2f3a);background:var(--line2,#f3f5f9);padding:2px 6px;border-radius:6px;white-space:nowrap}
+  .hv .hv-cheat .crow{display:grid;grid-template-columns:minmax(130px,56%) minmax(0,1fr);gap:10px;align-items:baseline;padding:4px 0;border-bottom:1px dashed var(--line2,#eef2f7)}
+  /* normal + anywhere: lange Befehle wie Territorium.getAnzahlKoerner(r,s)
+     brechen um, statt aus dem Kasten zu ragen */
+  .hv .hv-cheat code{font-family:"JetBrains Mono",Consolas,monospace;font-size:12px;color:var(--ink,#2b2f3a);background:var(--line2,#f3f5f9);padding:2px 6px;border-radius:6px;white-space:normal;overflow-wrap:anywhere;display:inline-block;line-height:1.5}
   .hv .hv-cheat .crow span{font-size:12.5px;color:var(--muted,#5a6675)}
   .hv .tools{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:8px;border-bottom:1px solid var(--line2,#eef2f7);background:var(--hvBar,#fafbfd)}
   .hv .tool{border:1px solid var(--line,#e6ebf2);background:var(--card,#fff);color:var(--ink,#3c4858);border-radius:8px;padding:6px 9px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit}
@@ -748,6 +761,7 @@ class HamsterView{
     this.hamDeg = DIRS[this.model.hamster.dir].deg;   // fortlaufender Drehwinkel (für korrekte Drehrichtung)
     this.code = opts.code!=null ? opts.code : "";
     this.onCode = opts.onCode || null;
+    this.onRunEnd = opts.onRunEnd || null;      // nach JEDEM Lauf (fertig oder Fehler)
     this.id = "hv"+(++_seq);
     this.cell=36; this.cells=[]; this.runState="idle"; this.stop=false; this.step=false; this.gen=null; this.actLineNo=null; this._loopActive=false;
     this.tool="wall"; this.paint=false; this.lastPaint=null;
@@ -789,6 +803,7 @@ class HamsterView{
     const editorPane = hasEditor ? `
       <div class="hv-pane">
         <div class="hv-ph">📝 ${m==="view"?"Abgegebener Code":"Dein Programm"}</div>
+        ${m==="solve"?'<div class="edbar"><button class="cbtn eundo" type="button" title="Rückgängig (Strg+Z)">↺</button><button class="cbtn eredo" type="button" title="Wiederholen (Strg+Y)">↻</button><span style="font-size:11px;color:var(--muted,#7a8aa0)">Rückgängig · Wiederholen</span></div>':''}
         <div class="editor">
           <div class="gut"><div class="gutInner">1</div></div>
           <div class="codebox"><pre class="codeHL"></pre><textarea class="code" spellcheck="false" wrap="off" ${m==="view"?"readonly":""}></textarea><div class="actLine"></div></div>
@@ -820,14 +835,17 @@ class HamsterView{
         <span style="font-size:12px;color:#7a8aa0">Spalten<input class="szi cIn" type="number" min="1" max="30"></span>
         <span style="font-size:12px;color:#7a8aa0">Maul<input class="szi mIn" type="number" min="0" max="99"></span>
       </div>` : "";
-    const statusBar = hasEditor ? `
+    /* Statusleiste wandert MIT ins Territorium (bessere Uebersicht); nur die
+       Konsole bleibt unter dem Arbeitsbereich - und rueckt damit nach oben,
+       weil die Statusleiste dort nicht mehr im Weg steht. */
+    const statusRow = hasEditor ? `
       <div class="status">
         <div class="stat"><div class="v stPos">–</div><div class="k">Reihe/Spalte</div></div>
         <div class="stat"><div class="v stDir">–</div><div class="k">Richtung</div></div>
         <div class="stat"><div class="v stMaul">–</div><div class="k">Körner im Maul</div></div>
         <div class="stat"><div class="v stFeld">–</div><div class="k">Körner im Feld</div></div>
-      </div>
-      <div class="out"></div>` : "";
+      </div>` : "";
+    const outRow = hasEditor ? `<div class="out"></div>` : "";
     this.el.innerHTML = `
       <div class="hv-main">
         ${editorPane}
@@ -835,14 +853,16 @@ class HamsterView{
         <div class="hv-pane">
           <div class="hv-ph">🌍 Territorium</div>
           ${ctrlBar}
+          ${hasEditor?'<div class="hv-topslot"></div>':""}
+          ${(hasEditor&&this.goal)?'<div class="hv-goal" style="display:none"></div>':''}
           ${designTools}
           <div class="boardWrap"><div class="board"></div></div>
+          ${statusRow}
           ${cheatPanel}
         </div>
       </div>
       ${hasEditor?'<div class="hv-hsplit" title="Höhe des Arbeitsbereichs ziehen"></div>':""}
-      ${(hasEditor&&this.goal)?'<div class="hv-goal" style="display:none"></div>':''}
-      ${statusBar}`;
+      ${outRow}`;
 
     // refs
     this.$=(s)=>this.el.querySelector(s);
@@ -881,6 +901,9 @@ class HamsterView{
       this.$(".step").onclick=()=>this._stepOnce();
       this.$(".stopb").onclick=()=>this._stopRun(false);
       this.$(".reset").onclick=()=>{ this._stopRun(true); this._resetModel(); this._clearOut(); this.runState="idle"; this._updateBtns(); };
+      { const u=this.$(".eundo"), r=this.$(".eredo");
+        if(u) u.onclick=()=>{ this._undoEdit(); this.code_.focus(); };
+        if(r) r.onclick=()=>{ this._redoEdit(); this.code_.focus(); }; }
       { const cb=this.$(".cmds"); if(cb){ const panel=this.$(".hv-cheat"); cb.onclick=()=>{ panel.style.display=(panel.style.display==="none"?"flex":"none"); }; const cc=this.$(".cheatclose"); if(cc) cc.onclick=()=>{ panel.style.display="none"; };
         /* Die Befehlsuebersicht ist zum Lesen da, nicht zum Herauskopieren:
            Rechtsklick, Kopieren und Ziehen werden unterbunden (Markieren
@@ -1017,8 +1040,8 @@ class HamsterView{
       while(this.runState==="paused" && !this.step && !this.stop) await sleep(40);
       if(this.stop) break;
       const wasStep=this.step; this.step=false;
-      let res; try{ res=this.gen.next(); }catch(e){ this._showErr(e); this.runState="error"; this._updateBtns(); this._loopActive=false; return; }
-      if(res.done){ this.runState="finished"; this._setActive(null); this._log("✓ Programm beendet.","ok"); this._showGoal(); this._updateBtns(); this._loopActive=false; this._onFinish&&this._onFinish(); return; }
+      let res; try{ res=this.gen.next(); }catch(e){ this._showErr(e); this.runState="error"; this._updateBtns(); this._loopActive=false; this.onRunEnd&&this.onRunEnd(this,"error"); return; }
+      if(res.done){ this.runState="finished"; this._setActive(null); this._log("✓ Programm beendet.","ok"); this._showGoal(); this._updateBtns(); this._loopActive=false; this._onFinish&&this._onFinish(); this.onRunEnd&&this.onRunEnd(this,"finished"); return; }
       const sig=res.value||{}; if(sig.line) this._setActive(sig.line); this._render();
       if(wasStep) this.runState="paused";
       this._updateBtns();
@@ -1089,6 +1112,7 @@ class HamsterView{
   getModel(){ return cloneModel(this.model); }
   reset(){ this._stopRun(true); this._resetModel(); if(this._clearOut) this._clearOut(); this.runState="idle"; if(this._updateBtns) this._updateBtns(); }
   onFinish(fn){ this._onFinish=fn; }
+  topSlot(){ return this.$(".hv-topslot"); }   // Platz fuer die Welten-Leiste
 }
 
 function grainHTML(n){

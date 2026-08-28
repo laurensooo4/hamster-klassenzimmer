@@ -39,3 +39,4 @@ schema_update_phaseAA_benutzernamen.sql
 schema_update_phaseAB_verwaltung.sql
 schema_update_phaseAC_anmeldeschutz.sql
 schema_update_phaseAD_klassenwechsel.sql
+schema_update_phaseAE_entwuerfe.sql

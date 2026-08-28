@@ -158,7 +158,9 @@
   .editnote{background:#fff7e6;border:1.5px solid #ffd98a;border-radius:12px;padding:9px 13px;font-size:13px;font-weight:700;color:#7a5a00;margin-bottom:10px}
 
   /* ---------- Matrix ---------- */
-  .matrix-wrap{overflow:auto;background:#fff;border-radius:var(--radius);box-shadow:var(--shadow);padding:6px}
+  /* max-height: die Matrix rollt in sich - nur so bleibt die Kopfzeile
+     (position:sticky) beim Scrollen sichtbar */
+  .matrix-wrap{overflow:auto;max-height:74vh;background:#fff;border-radius:var(--radius);box-shadow:var(--shadow);padding:6px}
   table.matrix{border-collapse:separate;border-spacing:0;width:100%;font-size:14px}
   table.matrix th,table.matrix td{padding:10px 12px;text-align:center;white-space:nowrap}
   table.matrix thead th{position:sticky;top:0;background:#fff;font-weight:900;color:var(--muted);border-bottom:2px solid var(--line);font-size:12.5px}
@@ -178,6 +180,8 @@
   .cell.done{background:#e9ffd6;color:var(--green-d)}
   .cell.pass{background:var(--green);color:#fff}
   .cell.none{background:var(--line2);color:#c4cdd9}
+  .cell.draft{background:#e8f1ff;color:#3b7dd8;cursor:pointer;font-size:15px}
+  .cell.draft:hover{background:#d7e8ff}
 
   /* ---------- SQL Aufgaben-Editor: Teilaufgaben-Liste ---------- */
   .sqedit{cursor:pointer;border:1.5px solid var(--line);border-radius:12px;padding:10px 13px;margin-bottom:8px;background:var(--card);transition:border-color .12s,background .12s,box-shadow .12s}
@@ -264,12 +268,12 @@
   <script src="supabase.local.js?v=2112"></script>
   <script src="config.js"></script>
   <script>/* Favicon optional per config.js (FAVICON_URL) austauschbar – z. B. auf dem Schulserver */(function(){try{var c=window.HAMSTER_CONFIG||{};if(c.FAVICON_URL){var l=document.querySelector("link[rel='icon']");if(!l){l=document.createElement("link");l.rel="icon";document.head.appendChild(l);}l.href=c.FAVICON_URL;}}catch(e){}})();</script>
-  <script src="engine.js?v=h21"></script>
+  <script src="engine.js?v=h22"></script>
   <script src="sqlengine.js?v=h23"></script>
   <script src="filiusengine.js?v=h5"></script>
   <script src="filiusview.js?v=h6"></script>
   <script src="javaengine.js?v=j2"></script>
   <script src="javaview.js?v=j5"></script>
-  <script src="app.js?v=h57"></script>
+  <script src="app.js?v=h58"></script>
 </body>
 </html>
