@@ -776,7 +776,7 @@ class HamsterView{
     this.tool="wall"; this.paint=false; this.lastPaint=null;
     this._build();
   }
-  destroy(){ this.stop=true; this.runState="idle"; if(this._ro) this._ro.disconnect(); this.el.innerHTML=""; }
+  destroy(){ this.stop=true; this.runState="idle"; if(this._ro) this._ro.disconnect(); if(this.out_&&this.out_.parentElement&&!this.el.contains(this.out_)) this.out_.remove(); this.out_=null; this.el.innerHTML=""; }
 
   /* Ziehgriff verdrahten. Kommt der Zeiger an den Fensterrand, rollt die Seite
      automatisch mit - sonst waere am Bildschirmrand Schluss. Das Brett passt
@@ -875,6 +875,9 @@ class HamsterView{
     // refs
     this.$=(s)=>this.el.querySelector(s);
     this.board=this.$(".board"); this.boardWrap=this.$(".boardWrap");
+    /* Konsole merken: die Aufgabenseite haengt sie in voller Breite unter das
+       Cockpit um - Logs muessen sie dort weiterhin erreichen. */
+    this.out_=this.$(".out");
     if(hasEditor){
       this.code_=this.$(".code"); this.codeHL=this.$(".codeHL"); this.gutInner=this.$(".gutInner"); this.actLine=this.$(".actLine");
       this.code_.value=this.code; this._refreshEditor();
@@ -1020,8 +1023,8 @@ class HamsterView{
   _layoutActive(){ if(this.actLineNo==null||!this.actLine)return; this.actLine.style.top=(12+(this.actLineNo-1)*22 - this.code_.scrollTop)+"px"; }
 
   /* ----- Output ----- */
-  _log(t,cls){ const o=this.$(".out"); if(!o)return; const d=document.createElement("div"); d.className=cls||""; d.textContent=t; o.appendChild(d); o.scrollTop=o.scrollHeight; }
-  _clearOut(){ const o=this.$(".out"); if(o)o.innerHTML=""; }
+  _log(t,cls){ const o=this.out_||this.$(".out"); if(!o)return; const d=document.createElement("div"); d.className=cls||""; d.textContent=t; o.appendChild(d); o.scrollTop=o.scrollHeight; }
+  _clearOut(){ const o=this.out_||this.$(".out"); if(o)o.innerHTML=""; }
 
   /* ----- Tempo ----- */
   _delay(){ const sp=this.$(".sp")?+this.$(".sp").value:5; return Math.round(600*Math.pow(0.6,sp-1)); }

@@ -258,12 +258,19 @@
      Blick, ohne Scrollen. Unter 1280 px (iPad quer) uebernimmt ein Umschalter:
      die Abgaben-Spalte schiebt sich von rechts ueber das Territorium. */
   .container.weit{max-width:1780px;padding-bottom:14px}
-  .cockpit{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:14px;align-items:start;position:relative}
+  .cockpit{display:grid;grid-template-columns:minmax(0,2fr) minmax(300px,1fr);gap:14px;align-items:start;position:relative;
+    --edh:clamp(430px,calc(100vh - 468px),80vh)}
   .ck-main{min-width:0}
-  .ck-side{min-width:0;display:flex;flex-direction:column;gap:12px}
-  .ck-side .card{margin-top:0!important}
-  .ck-side #histCard .card{margin-top:0!important}
-  .cockpit #solveHost{--edh:clamp(430px,calc(100vh - 468px),80vh)}
+  .ck-side{min-width:0}
+  /* Die Abgaben-Spalte sieht aus wie die beiden anderen: gleicher Rahmen,
+     gleiche Kopfzeile, gleiche Hoehe wie der Arbeitsbereich daneben. */
+  .side-pane{background:var(--card);border:2px solid var(--line);border-radius:14px;overflow:hidden;
+    display:flex;flex-direction:column;height:var(--edh,70vh);min-height:430px}
+  .side-pane .sp-head{padding:8px 12px;border-bottom:1px solid var(--line2);font-weight:800;font-size:13px;color:var(--muted);display:flex;align-items:center;gap:8px;flex:0 0 auto}
+  .side-pane .sp-body{flex:1;overflow:auto;padding:10px 12px}
+  .side-pane .sp-body .list{display:flex;flex-direction:column;gap:8px}
+  .side-pane .sp-foot{flex:0 0 auto;border-top:1px solid var(--line2);padding:10px 12px;background:var(--hvBar,#fafbfd)}
+  #solveOutHome .out{margin-top:12px}
   .sc-switch{display:none;position:relative;margin:0 auto 10px;background:var(--card);border:2px solid var(--line);border-radius:14px;padding:4px;width:340px;max-width:100%}
   .sc-switch .pill{position:absolute;top:4px;bottom:4px;left:4px;width:calc(50% - 4px);background:var(--green);border-radius:10px;transition:transform .32s cubic-bezier(.3,1.2,.4,1)}
   .sc-switch.zeige-abgaben .pill{transform:translateX(100%)}
@@ -293,13 +300,13 @@
   <script src="supabase.local.js?v=2112"></script>
   <script src="config.js"></script>
   <script>/* Favicon optional per config.js (FAVICON_URL) austauschbar – z. B. auf dem Schulserver */(function(){try{var c=window.HAMSTER_CONFIG||{};if(c.FAVICON_URL){var l=document.querySelector("link[rel='icon']");if(!l){l=document.createElement("link");l.rel="icon";document.head.appendChild(l);}l.href=c.FAVICON_URL;}}catch(e){}})();</script>
-  <script src="engine.js?v=h23"></script>
-  <script src="sqlengine.js?v=h23"></script>
+  <script src="engine.js?v=h24"></script>
+  <script src="sqlengine.js?v=h24"></script>
   <script src="filiusengine.js?v=h5"></script>
   <script src="filiusview.js?v=h6"></script>
   <script src="javaengine.js?v=j2"></script>
   <script src="javaview.js?v=j5"></script>
-  <script src="app.js?v=h59"></script>
+  <script src="app.js?v=h60"></script>
   <script src="polish.js?v=1"></script>
 </body>
 </html>

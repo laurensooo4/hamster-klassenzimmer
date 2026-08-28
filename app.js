@@ -724,7 +724,7 @@ function solveSetWelt(i){
   if(pageView){ try{ pageView.destroy(); }catch(e){} }
   pageView = new HamsterView("#solveHost", { mode:"solve", model:ws[i].territory, code, fill:true, goal:ws[i].goal, commands: s.a.show_commands!==false,
                                             onCode: hamsterDraftTick, onRunEnd: solveAutoWeltCheck });
-  solveRenderWeltBar(); mountWeltBar("solveWeltBar");
+  solveRenderWeltBar(); mountWeltBar("solveWeltBar"); mountKonsole();
 }
 
 
@@ -1257,6 +1257,15 @@ function unmountWeltBar(barId, homeId){
   const bar=document.getElementById(barId), home=document.getElementById(homeId);
   if(bar && home && bar.parentElement!==home) home.appendChild(bar);
 }
+
+/* Die Konsole der Hamster-Ansicht in voller Breite UNTER das Cockpit haengen -
+   so laeuft sie auch unter der Abgaben-Spalte durch (Skizze von Sebastian).
+   Die Engine schreibt ueber ihre gemerkte Referenz (out_) weiter hinein. */
+function mountKonsole(){
+  const home=document.getElementById("solveOutHome");
+  const out=pageView && pageView.out_;
+  if(home && out && out.parentElement!==home){ home.innerHTML=""; home.appendChild(out); }
+}
 /* Nach jedem Lauf (Start-Knopf) den Code still in ALLEN Welten pruefen und
    die Haekchen in der Leiste auffrischen - der fruehere Extra-Knopf entfaellt. */
 function solveAutoWeltCheck(){
@@ -1317,14 +1326,18 @@ async function solveAssignment(assignmentId){
         </div>
       </div>
       <aside class="ck-side">
-        <div id="histCard"></div>
-        <div class="card" id="myNoteCard">
-          <h3 style="margin:0 0 8px">✍️ Mein Kommentar an die Lehrkraft <span class="muted" style="font-weight:600;font-size:12px">(optional, zur geöffneten Abgabe)</span></h3>
-          <textarea class="input" id="myNote" style="min-height:64px" placeholder="z. B. eine Frage oder was du ausprobiert hast…"></textarea>
-          <div style="display:flex;gap:10px;align-items:center;margin-top:8px"><button class="btn btn-ghost" id="myNoteSave">Kommentar speichern</button><span id="myNoteMsg" class="muted" style="font-size:13px"></span></div>
+        <div class="side-pane">
+          <div class="sp-head">🗂️ Meine Abgaben <span class="badge gray" id="histCount" style="display:none">0</span></div>
+          <div class="sp-body" id="histCard"></div>
+          <div class="sp-foot" id="myNoteCard">
+            <h3 style="margin:0 0 8px;font-size:15px">✍️ Mein Kommentar an die Lehrkraft <span class="muted" style="font-weight:600;font-size:12px">(optional, zur geöffneten Abgabe)</span></h3>
+            <textarea class="input" id="myNote" style="min-height:58px" placeholder="z. B. eine Frage oder was du ausprobiert hast…"></textarea>
+            <div style="display:flex;gap:10px;align-items:center;margin-top:8px;flex-wrap:wrap"><button class="btn btn-ghost btn-sm" id="myNoteSave">Kommentar speichern</button><span id="myNoteMsg" class="muted" style="font-size:12.5px"></span></div>
+          </div>
         </div>
       </aside>
-    </div>`;
+    </div>
+    <div id="solveOutHome"></div>`;
   document.getElementById("back").onclick = ()=> studentClassView(a.class_id);
   { const sw=document.getElementById("scSwitch"), ck=document.getElementById("cockpit");
     if(sw&&ck) sw.querySelectorAll("button[data-m]").forEach(b=> b.onclick=()=>{
@@ -1338,7 +1351,7 @@ async function solveAssignment(assignmentId){
   { const w0=welten(a)[0];
     pageView = new HamsterView("#solveHost", { mode:"solve", model:w0.territory, code, fill:true, goal:w0.goal, commands: a.show_commands!==false,
                                               onCode: hamsterDraftTick, onRunEnd: solveAutoWeltCheck }); }
-  solveRenderWeltBar(); mountWeltBar("solveWeltBar");
+  solveRenderWeltBar(); mountWeltBar("solveWeltBar"); mountKonsole();
   renderHistoryCard();
   const sb2=document.getElementById("btnSamples"); if(sb2) sb2.onclick=()=> openSamplesViewer(a, samples);
   document.getElementById("btnToLive").onclick = ()=> loadVersion(solveState.current);
@@ -1396,17 +1409,21 @@ function loadVersion(sub){
 }
 function renderHistoryCard(){
   const s=solveState; const card=document.getElementById("histCard"); if(!card) return;
-  if(!s.history.length){ card.innerHTML=""; return; }
+  { const z=document.getElementById("histCount");
+    if(z){ z.textContent=s.history.length; z.style.display=s.history.length?"":"none"; } }
+  if(!s.history.length){
+    card.innerHTML=`<div class="empty" style="padding:22px 12px"><span class="ic">📤</span>Noch keine Abgabe.<br><span class="muted" style="font-size:12.5px">Wenn dein Programm läuft: oben auf „📤 Abgeben".</span></div>`;
+    return;
+  }
   const items = s.history.map(sub=>{
     const c = s.comments.find(x=>x.submission_id===sub.id && x.released);
     const badge = sub.passed===true?`<span class="badge">bestanden ✓</span>`:`<span class="badge gold">abgegeben</span>`;
     const live = sub.is_current?`<span class="badge blue">aktuell</span>`:"";
     const open = sub.id===s.viewingId?`<button class="btn btn-sm btn-ghost" disabled style="margin-left:8px;opacity:.5">geöffnet</button>`:`<button class="btn btn-sm btn-ghost" data-open="${sub.id}" style="margin-left:8px">Öffnen</button>`;
-    return `<div class="row"><span class="grow"><span class="t">${esc(fmtDateTime(sub.submitted_at))} ${live}</span>${c?`<span class="s">💬 ${esc(c.body.slice(0,90))}${c.body.length>90?"…":""}</span>`:""}</span>
+    return `<div class="row" style="flex-wrap:wrap"><span class="grow"><span class="t">${esc(fmtDateTime(sub.submitted_at))} ${live}</span>${c?`<span class="s">💬 ${esc(c.body.slice(0,90))}${c.body.length>90?"…":""}</span>`:""}</span>
       ${badge}${open}</div>`;
   }).join("");
-  card.innerHTML = `<div class="card" style="margin-top:16px"><h3 style="margin:0">🗂️ Meine Abgaben <span class="badge gray">${s.history.length}</span></h3>
-    <div class="list" style="margin-top:10px">${items}</div></div>`;
+  card.innerHTML = `<div class="list">${items}</div>`;
   card.querySelectorAll("[data-open]").forEach(b=> b.onclick=()=>{ const sub=s.history.find(x=>x.id===b.dataset.open); loadVersion(sub); });
 }
 async function submitSolution(){
@@ -5257,7 +5274,7 @@ function patchNotesDialog(){
 }
 
 /* ---------- Footer: Versionsnummer (aus den Patch-Notes) + Copyright ---------- */
-const APP_BUILD = "2026-08-29 00:30";   // letztes Update (im Patch-Notes-Dialog angezeigt)
+const APP_BUILD = "2026-08-29 01:15";   // letztes Update (im Patch-Notes-Dialog angezeigt)
 /* ============================================================================
    Browser-Zurück (SPA-History) + Favicon/Titel je Tool
    ============================================================================ */
