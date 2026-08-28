@@ -771,6 +771,7 @@ class HamsterView{
     this.code = opts.code!=null ? opts.code : "";
     this.onCode = opts.onCode || null;
     this.onRunEnd = opts.onRunEnd || null;      // nach JEDEM Lauf (fertig oder Fehler)
+    this.onLayout = opts.onLayout || null;      // Hoehe per Griff gezogen (vh) - fuer Spalten daneben
     this.id = "hv"+(++_seq);
     this.cell=36; this.cells=[]; this.runState="idle"; this.stop=false; this.step=false; this.gen=null; this.actLineNo=null; this._loopActive=false;
     this.tool="wall"; this.paint=false; this.lastPaint=null;
@@ -930,7 +931,7 @@ class HamsterView{
          Aufteilung auch bei der naechsten Aufgabe erhalten bleibt.          */
       try{
         const hh=parseFloat(localStorage.getItem("hvEdH")||"");
-        if(hh>=35 && hh<=95) this.el.style.setProperty("--edh", hh+"vh");
+        if(hh>=35 && hh<=95){ this.el.style.setProperty("--edh", hh+"vh"); this.onLayout&&this.onLayout(hh); }
         const wf=parseFloat(localStorage.getItem("hvEdW")||"");
         if(wf>=0.25 && wf<=0.8){
           this.el.style.setProperty("--edwA", wf+"fr");
@@ -942,6 +943,7 @@ class HamsterView{
         const px=ev.clientY - main.getBoundingClientRect().top;
         const vh=Math.max(35, Math.min(95, px/window.innerHeight*100));
         this.el.style.setProperty("--edh", vh+"vh");
+        this.onLayout&&this.onLayout(vh);
         try{ localStorage.setItem("hvEdH", vh.toFixed(1)); }catch(e){}
       });
       this._wireSplit(this.$(".hv-vsplit"), (ev)=>{

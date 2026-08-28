@@ -252,7 +252,7 @@ function shell(inner){
       <button class="btn btn-ghost btn-sm" id="homeBtn" title="Zur Tool-Auswahl" style="margin-left:8px">🏠</button>
       ${ACTIVE_TOOL?`<span style="margin-left:9px;font-weight:800;font-size:13.5px;color:var(--muted)">${esc((TOOLS.find(t=>t.id===ACTIVE_TOOL)||{}).name||"")}</span>`:""}
       <div class="spacer"></div>
-      <span id="tbSlot" style="display:flex;justify-content:center"></span>
+      <span id="tbSlot"></span>
       <div class="spacer"></div>
       <button class="btn btn-ghost btn-sm" id="themeBtn" title="Design wechseln" style="margin-right:8px">🌗</button>
       ${roleBadge}
@@ -723,7 +723,7 @@ function solveSetWelt(i){
   unmountWeltBar("solveWeltBar","solveWeltBarHome");
   if(pageView){ try{ pageView.destroy(); }catch(e){} }
   pageView = new HamsterView("#solveHost", { mode:"solve", model:ws[i].territory, code, fill:true, goal:ws[i].goal, commands: s.a.show_commands!==false,
-                                            onCode: hamsterDraftTick, onRunEnd: solveAutoWeltCheck });
+                                            onCode: hamsterDraftTick, onRunEnd: solveAutoWeltCheck, onLayout: cockpitHoehe });
   solveRenderWeltBar(); mountWeltBar("solveWeltBar"); mountKonsole();
 }
 
@@ -1258,13 +1258,23 @@ function unmountWeltBar(barId, homeId){
   if(bar && home && bar.parentElement!==home) home.appendChild(bar);
 }
 
+/* Der Hoehen-Griff des Arbeitsbereichs soll ALLE drei Spalten ziehen: die
+   Engine meldet die neue Hoehe, wir spiegeln sie auf das Cockpit - dort haengt
+   auch das Abgaben-Panel dran (height:var(--edh)). */
+function cockpitHoehe(vh){
+  const ck=document.getElementById("cockpit");
+  if(ck && vh>=35 && vh<=95) ck.style.setProperty("--edh", vh.toFixed(1)+"vh");
+}
 /* Die Konsole der Hamster-Ansicht in voller Breite UNTER das Cockpit haengen -
    so laeuft sie auch unter der Abgaben-Spalte durch (Skizze von Sebastian).
    Die Engine schreibt ueber ihre gemerkte Referenz (out_) weiter hinein. */
 function mountKonsole(){
   const home=document.getElementById("solveOutHome");
   const out=pageView && pageView.out_;
-  if(home && out && out.parentElement!==home){ home.innerHTML=""; home.appendChild(out); }
+  if(home && out && out.parentElement!==home){
+    home.classList.add("hv");          // .hv .out-Styles (inkl. Dunkelmodus) gelten weiter
+    home.innerHTML=""; home.appendChild(out);
+  }
 }
 /* Nach jedem Lauf (Start-Knopf) den Code still in ALLEN Welten pruefen und
    die Haekchen in der Leiste auffrischen - der fruehere Extra-Knopf entfaellt. */
@@ -1322,7 +1332,6 @@ async function solveAssignment(assignmentId){
           <button class="btn btn-ghost btn-sm" id="btnToLive" style="display:none">↺ Zur aktuellen Version</button>
           ${samples.length?`<button class="btn btn-ghost btn-sm" id="btnSamples">🏆 Musterlösung${samples.length>1?"en":""} ansehen</button>`:""}
           <span id="submitMsg" class="muted" style="font-size:13px"></span>
-          <span id="draftMsg" class="muted" style="font-size:12px;margin-left:auto"></span>
         </div>
       </div>
       <aside class="ck-side">
@@ -1337,7 +1346,8 @@ async function solveAssignment(assignmentId){
         </div>
       </aside>
     </div>
-    <div id="solveOutHome"></div>`;
+    <div id="solveOutHome"></div>
+    <span id="draftMsg"></span>`;
   document.getElementById("back").onclick = ()=> studentClassView(a.class_id);
   { const sw=document.getElementById("scSwitch"), ck=document.getElementById("cockpit");
     if(sw&&ck) sw.querySelectorAll("button[data-m]").forEach(b=> b.onclick=()=>{
@@ -1350,7 +1360,7 @@ async function solveAssignment(assignmentId){
   hamsterDraftStart(a.id, draftGeladen ? draft.code : null);
   { const w0=welten(a)[0];
     pageView = new HamsterView("#solveHost", { mode:"solve", model:w0.territory, code, fill:true, goal:w0.goal, commands: a.show_commands!==false,
-                                              onCode: hamsterDraftTick, onRunEnd: solveAutoWeltCheck }); }
+                                              onCode: hamsterDraftTick, onRunEnd: solveAutoWeltCheck, onLayout: cockpitHoehe }); }
   solveRenderWeltBar(); mountWeltBar("solveWeltBar"); mountKonsole();
   renderHistoryCard();
   const sb2=document.getElementById("btnSamples"); if(sb2) sb2.onclick=()=> openSamplesViewer(a, samples);

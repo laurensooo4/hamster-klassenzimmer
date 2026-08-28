@@ -269,8 +269,23 @@
   .side-pane .sp-head{padding:8px 12px;border-bottom:1px solid var(--line2);font-weight:800;font-size:13px;color:var(--muted);display:flex;align-items:center;gap:8px;flex:0 0 auto}
   .side-pane .sp-body{flex:1;overflow:auto;padding:10px 12px}
   .side-pane .sp-body .list{display:flex;flex-direction:column;gap:8px}
-  .side-pane .sp-foot{flex:0 0 auto;border-top:1px solid var(--line2);padding:10px 12px;background:var(--hvBar,#fafbfd)}
-  #solveOutHome .out{margin-top:12px}
+  /* var(--bg) statt der hv-internen Variable: die gibt es ausserhalb der
+     Hamster-Ansicht nicht - im Dunkelmodus blieb der Kasten sonst WEISS. */
+  .side-pane .sp-foot{flex:0 0 auto;border-top:1px solid var(--line2);padding:10px 12px;background:var(--bg)}
+  #solveOutHome{margin-top:12px;display:block}
+  /* Abgeben-Knopf: exakt in der Seitenmitte, egal was links/rechts steht */
+  .topbar{position:sticky}
+  .topbar #tbSlot{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:1}
+  @media (max-width:900px){ .topbar #tbSlot{position:static;transform:none} }
+  /* Der Hoehen-Griff spannt sich im Cockpit ueber die GANZE Breite - sein
+     Mittelstrich sitzt damit in der Seitenmitte, nicht in der Mitte von 2/3. */
+  .cockpit .hv .hv-hsplit{width:calc(150% + 14px);position:relative;z-index:3}
+  @media (max-width:1279px){ .cockpit .hv .hv-hsplit{width:100%} }
+  /* "automatisch gespeichert": kleines Schildchen oben rechts unter der Leiste */
+  #draftMsg{position:fixed;top:62px;right:16px;z-index:30;font-size:12px;color:var(--muted);
+    background:var(--card);border:1px solid var(--line);border-radius:10px;padding:4px 10px;
+    box-shadow:var(--shadow);pointer-events:none}
+  #draftMsg:empty{display:none}
   .sc-switch{display:none;position:relative;margin:0 auto 10px;background:var(--card);border:2px solid var(--line);border-radius:14px;padding:4px;width:340px;max-width:100%}
   .sc-switch .pill{position:absolute;top:4px;bottom:4px;left:4px;width:calc(50% - 4px);background:var(--green);border-radius:10px;transition:transform .32s cubic-bezier(.3,1.2,.4,1)}
   .sc-switch.zeige-abgaben .pill{transform:translateX(100%)}
@@ -300,13 +315,13 @@
   <script src="supabase.local.js?v=2112"></script>
   <script src="config.js"></script>
   <script>/* Favicon optional per config.js (FAVICON_URL) austauschbar – z. B. auf dem Schulserver */(function(){try{var c=window.HAMSTER_CONFIG||{};if(c.FAVICON_URL){var l=document.querySelector("link[rel='icon']");if(!l){l=document.createElement("link");l.rel="icon";document.head.appendChild(l);}l.href=c.FAVICON_URL;}}catch(e){}})();</script>
-  <script src="engine.js?v=h24"></script>
-  <script src="sqlengine.js?v=h24"></script>
+  <script src="engine.js?v=h25"></script>
+  <script src="sqlengine.js?v=h25"></script>
   <script src="filiusengine.js?v=h5"></script>
   <script src="filiusview.js?v=h6"></script>
   <script src="javaengine.js?v=j2"></script>
   <script src="javaview.js?v=j5"></script>
-  <script src="app.js?v=h60"></script>
+  <script src="app.js?v=h61"></script>
   <script src="polish.js?v=1"></script>
 </body>
 </html>
