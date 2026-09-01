@@ -253,50 +253,68 @@
   :root[data-theme="dark"] #appfoot{background:rgba(20,26,34,.93)}
   :root[data-theme="dark"] .auth-wrap{background:radial-gradient(1200px 500px at 50% -10%, #102438, transparent), var(--bg)}
 
-  /* ---------- Cockpit-Ansicht der Aufgabenseite (2.47) ---------------------
-     Editor | Territorium | Abgaben nebeneinander; Ziel: auf Full-HD alles im
-     Blick, ohne Scrollen. Unter 1280 px (iPad quer) uebernimmt ein Umschalter:
-     die Abgaben-Spalte schiebt sich von rechts ueber das Territorium. */
-  .container.weit{max-width:1780px;padding-bottom:14px}
-  .cockpit{display:grid;grid-template-columns:minmax(0,2fr) minmax(300px,1fr);gap:14px;align-items:start;position:relative;
-    --edh:clamp(430px,calc(100vh - 468px),80vh)}
-  .ck-main{min-width:0}
-  .ck-side{min-width:0}
-  /* Die Abgaben-Spalte sieht aus wie die beiden anderen: gleicher Rahmen,
-     gleiche Kopfzeile, gleiche Hoehe wie der Arbeitsbereich daneben. */
-  .side-pane{background:var(--card);border:2px solid var(--line);border-radius:14px;overflow:hidden;
-    display:flex;flex-direction:column;height:var(--edh,70vh);min-height:430px}
-  .side-pane .sp-head{padding:8px 12px;border-bottom:1px solid var(--line2);font-weight:800;font-size:13px;color:var(--muted);display:flex;align-items:center;gap:8px;flex:0 0 auto}
-  .side-pane .sp-body{flex:1;overflow:auto;padding:10px 12px}
-  .side-pane .sp-body .list{display:flex;flex-direction:column;gap:8px}
-  /* var(--bg) statt der hv-internen Variable: die gibt es ausserhalb der
-     Hamster-Ansicht nicht - im Dunkelmodus blieb der Kasten sonst WEISS. */
-  .side-pane .sp-foot{flex:0 0 auto;border-top:1px solid var(--line2);padding:10px 12px;background:var(--bg)}
-  #solveOutHome{margin-top:12px;display:block}
-  /* Abgeben-Knopf: exakt in der Seitenmitte, egal was links/rechts steht */
-  .topbar{position:sticky}
+  /* ---------- Aufgabenseite (2.47): Drei-Spalten-Layout ohne Seiten-Scroll --
+     Desktop (ab 1280 px): Territorium 30 | Code 40 | Abgaben 30. Zwei Regler:
+     links (in der Ansicht) verschiebt Territorium/Code bei fester Abgaben-
+     Spalte, rechts verschiebt Code/Abgaben bei festem Territorium. Die
+     Ausgabe sitzt unten am Bildschirmrand, ihr Griff zieht die Hoehe.
+     Mobil (unter 1280 px): Territorium|Code 50:50, "Meine Abgaben" tauscht
+     das Territorium aus. */
+  .container.weit{max-width:none;height:calc(100vh - 58px);display:flex;flex-direction:column;overflow:hidden;padding:8px 18px 10px}
+  .weit .page-head{margin:0 0 6px;flex:0 0 auto}
+  .weit .page-head h2{font-size:22px}
+  .weit > .card,.weit > div{flex:0 0 auto}
+  .weit .ab-desc{margin:0 0 8px;padding:10px 16px;max-height:24vh;overflow:auto}
   .topbar #tbSlot{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:1}
-  @media (max-width:900px){ .topbar #tbSlot{position:static;transform:none} }
-  /* Der Hoehen-Griff spannt sich im Cockpit ueber die GANZE Breite - sein
-     Mittelstrich sitzt damit in der Seitenmitte, nicht in der Mitte von 2/3. */
-  .cockpit .hv .hv-hsplit{width:calc(150% + 14px);position:relative;z-index:3}
-  @media (max-width:1279px){ .cockpit .hv .hv-hsplit{width:100%} }
-  /* "automatisch gespeichert": kleines Schildchen oben rechts unter der Leiste */
+  .topbar #tbSlot .btn{padding:8px 16px;font-size:14px}
+  @media (max-width:900px){ .topbar #tbSlot{position:static;transform:none} .topbar #tbSlot .btn{padding:7px 12px} }
+  .topbar #tbBack{margin-right:6px}
+  .cockpit{flex:1 1 auto!important;min-height:280px;position:relative;display:grid;gap:0;
+    grid-template-columns:minmax(0,1fr) 9px var(--ckB,29%);align-items:stretch}
+  .cockpit.ohne-abg{grid-template-columns:minmax(0,1fr) 0 0}
+  .cockpit.ohne-abg .ck-split,.cockpit.ohne-abg .ck-side{display:none}
+  .ck-main{min-width:0;min-height:0;display:flex;flex-direction:column}
+  #solveHost{flex:1;min-height:0}
+  .cockpit .hv{height:100%;display:flex;flex-direction:column}
+  .cockpit .hv.fill .hv-main{height:auto!important;flex:1;min-height:0}
+  .cockpit .hv .hv-hsplit{display:none}
+  /* Territorium LINKS, Code RECHTS: die beiden Ansichts-Spalten tauschen die
+     Plaetze rein per Raster - die Engine bleibt unangetastet. --edwA gilt
+     damit fuer die LINKE Spalte (Territorium). Standard 30:40. */
+  .cockpit .hv-main > .hv-pane:nth-child(1){grid-column:3;grid-row:1}
+  .cockpit .hv-main > .hv-vsplit{grid-column:2;grid-row:1}
+  .cockpit .hv-main > .hv-pane:nth-child(3){grid-column:1;grid-row:1}
+  .cockpit .hv{--edwA:3fr;--edwB:4fr}
+  .ck-split{cursor:ew-resize;display:flex;align-items:center;justify-content:center}
+  .ck-split::after{content:"";width:3px;height:44px;border-radius:2px;background:var(--muted);opacity:.35}
+  .ck-split:hover::after{opacity:.7;background:#1cb0f6}
+  .ck-side{min-width:0;min-height:0}
+  .side-pane{background:var(--card);border:2px solid var(--line);border-radius:14px;overflow:hidden;
+    display:flex;flex-direction:column;height:100%;min-height:0}
+  .side-pane .sp-head{padding:8px 12px;border-bottom:1px solid var(--line2);font-weight:800;font-size:13px;color:var(--muted);display:flex;align-items:center;gap:8px;flex:0 0 auto}
+  .side-pane .sp-body{flex:1;overflow:auto;padding:10px 12px;min-height:0}
+  .side-pane .sp-body .list{display:flex;flex-direction:column;gap:8px}
+  .side-pane .sp-foot{flex:0 0 auto;border-top:1px solid var(--line2);padding:10px 12px;background:var(--bg)}
+  /* Ausgabe: unten fixiert, Hoehe am Griff ziehbar */
+  #outGrip{flex:0 0 auto;height:11px;margin:4px 0 2px;cursor:ns-resize;display:flex;align-items:center;justify-content:center}
+  #outGrip::after{content:"";width:56px;height:3px;border-radius:2px;background:var(--muted);opacity:.35}
+  #outGrip:hover::after{opacity:.7;background:#1cb0f6}
+  #solveOutHome{flex:0 0 auto;display:block}
+  #solveOutHome .out{height:var(--outH,110px)!important;min-height:44px;max-height:55vh;resize:none}
   #draftMsg{position:fixed;top:62px;right:16px;z-index:30;font-size:12px;color:var(--muted);
     background:var(--card);border:1px solid var(--line);border-radius:10px;padding:4px 10px;
     box-shadow:var(--shadow);pointer-events:none}
   #draftMsg:empty{display:none}
-  .sc-switch{display:none;position:relative;margin:0 auto 10px;background:var(--card);border:2px solid var(--line);border-radius:14px;padding:4px;width:340px;max-width:100%}
-  .sc-switch .pill{position:absolute;top:4px;bottom:4px;left:4px;width:calc(50% - 4px);background:var(--green);border-radius:10px;transition:transform .32s cubic-bezier(.3,1.2,.4,1)}
-  .sc-switch.zeige-abgaben .pill{transform:translateX(100%)}
-  .sc-switch button{position:relative;z-index:1;flex:1;border:none;background:none;font-family:inherit;font-weight:800;font-size:13.5px;padding:8px 6px;cursor:pointer;color:var(--muted);transition:color .25s;border-radius:10px}
-  .sc-switch button.on{color:#fff}
   @media (max-width:1279px){
-    .cockpit{display:block}
-    .sc-switch{display:flex}
-    .ck-side{position:absolute;top:0;right:0;bottom:0;width:min(520px,calc(50% + 20px));z-index:6;background:var(--bg);padding:0 0 12px 12px;transform:translateX(112%);transition:transform .35s cubic-bezier(.3,1.05,.4,1);overflow:auto;box-shadow:-14px 0 26px rgba(40,60,90,.10);border-radius:14px 0 0 14px}
-    .cockpit.zeige-abgaben .ck-side{transform:none}
+    .cockpit{grid-template-columns:minmax(0,1fr) 0 0}
+    .ck-split,.ck-side{display:none}
+    .cockpit .hv{--edwA:1fr;--edwB:1fr}
+    .cockpit.mob-abg .hv-main > .hv-pane:nth-child(3){visibility:hidden}
+    /* Overlay im selben Rasterfeld wie die Hauptspalte - absolute Positionierung
+       wuerde sich am (leeren) dritten Rasterfeld ausrichten und rechts landen. */
+    .cockpit.mob-abg .ck-side{display:block;grid-column:1;grid-row:1;justify-self:start;width:calc(50% - 5px);height:100%;z-index:5}
   }
+  
 </style>
 <link rel="stylesheet" href="polish.css?v=1">
 <script>(function(){try{var p=localStorage.getItem('themePref')||'auto';var d=p==='dark'||(p==='auto'&&window.matchMedia&&window.matchMedia('(prefers-color-scheme:dark)').matches);document.documentElement.setAttribute('data-theme',d?'dark':'light');}catch(e){}})();</script>
@@ -321,7 +339,7 @@
   <script src="filiusview.js?v=h6"></script>
   <script src="javaengine.js?v=j2"></script>
   <script src="javaview.js?v=j5"></script>
-  <script src="app.js?v=h61"></script>
+  <script src="app.js?v=h62"></script>
   <script src="polish.js?v=1"></script>
 </body>
 </html>

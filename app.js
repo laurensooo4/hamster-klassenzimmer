@@ -249,11 +249,12 @@ function shell(inner){
   app().innerHTML = `
     <div class="topbar">
       <div class="brand"><img class="blogo" src="logo-gywem.png" alt="" onerror="this.outerHTML='<span class=&quot;h&quot;>${HAMSTER}</span>'"> Informatik am Gymnasium Wesermünde</div>
-      <button class="btn btn-ghost btn-sm" id="homeBtn" title="Zur Tool-Auswahl" style="margin-left:8px">🏠</button>
       ${ACTIVE_TOOL?`<span style="margin-left:9px;font-weight:800;font-size:13.5px;color:var(--muted)">${esc((TOOLS.find(t=>t.id===ACTIVE_TOOL)||{}).name||"")}</span>`:""}
       <div class="spacer"></div>
       <span id="tbSlot"></span>
       <div class="spacer"></div>
+      <span id="tbBack"></span>
+      <button class="btn btn-ghost btn-sm" id="homeBtn" title="Zur Tool-Auswahl" style="margin-right:8px">🏠</button>
       <button class="btn btn-ghost btn-sm" id="themeBtn" title="Design wechseln" style="margin-right:8px">🌗</button>
       ${roleBadge}
       <div class="usermenu">
@@ -1206,6 +1207,106 @@ async function saveSampleFromEditor(){
 }
 
 
+
+/* ---------- Cockpit-Verdrahtung (Regler, Ausgabe-Griff, Abgaben-Toggle) ----
+   Desktop: der linke Regler (in der Hamster-Ansicht) verschiebt Territorium/
+   Code, die Abgaben-Spalte bleibt. Der rechte Regler verschiebt Code/Abgaben,
+   das Territorium bleibt pixelgenau stehen. Der Griff unten zieht die Hoehe
+   der Ausgabezeile; die Spalten schrumpfen mit - die Seite scrollt nie. */
+function terrBreitePx(){
+  const hv=document.querySelector("#solveHost .hv-main");
+  if(!hv || hv.children.length<3) return null;
+  return hv.children[2].getBoundingClientRect().width;   // Kind 3 = Territorium (per CSS nach links getauscht)
+}
+function halteTerritorium(terrPx){
+  const hv=document.querySelector("#solveHost .hv-main");
+  const el=pageView && pageView.el;
+  if(!hv || !el || terrPx==null) return;
+  const codePx=Math.max(150, hv.getBoundingClientRect().width - 7 - terrPx);   // 7px = innerer Spalt der Ansicht
+  el.style.setProperty("--edwA", terrPx+"fr");
+  el.style.setProperty("--edwB", codePx+"fr");
+}
+function wireCockpit(a){
+  const ck=document.getElementById("cockpit");
+  const btn=document.getElementById("btnAbgToggle");
+  const mq=window.matchMedia("(min-width:1280px)");
+  const desktop=()=> mq.matches;
+
+  /* Mobil gilt 50:50 - dort duerfen keine Desktop-Spaltenwerte (Inline-Styles
+     der Engine/Regler) haengenbleiben, sonst verliert die Media-Query. Beim
+     Rueckweg auf Desktop kommt die gemerkte Aufteilung wieder. */
+  function passeSpaltenAn(){
+    const el=pageView && pageView.el; if(!el) return;
+    if(!mq.matches){ el.style.removeProperty("--edwA"); el.style.removeProperty("--edwB"); }
+    else{
+      const f=parseFloat(localStorage.getItem("hvEdW")||"");
+      if(f>=0.25 && f<=0.8){ el.style.setProperty("--edwA",f+"fr"); el.style.setProperty("--edwB",(1-f)+"fr"); }
+    }
+  }
+  passeSpaltenAn();
+  if(window.__ckMqH){ try{ mq.removeEventListener("change", window.__ckMqH); }catch(e){} }
+  window.__ckMqH=passeSpaltenAn;
+  mq.addEventListener("change", passeSpaltenAn);
+
+  /* gemerkte Einstellungen wiederherstellen */
+  try{
+    const b=parseFloat(localStorage.getItem("hamAbgW")||"");
+    if(b>=230) ck.style.setProperty("--ckB", b+"px");
+    if(desktop() && localStorage.getItem("hamAbgAus")==="1"){
+      ck.classList.add("ohne-abg");
+      /* Territorium behaelt seine 30 % der Seite: 30:70 innerhalb der Ansicht */
+      requestAnimationFrame(()=>{ const el=pageView&&pageView.el; if(el){ el.style.setProperty("--edwA","3fr"); el.style.setProperty("--edwB","7fr"); } });
+    }
+    const oh=parseFloat(localStorage.getItem("hamOutH")||"");
+    if(oh>=44){ const home=document.getElementById("solveOutHome"); if(home) home.style.setProperty("--outH", Math.min(oh, innerHeight*0.55)+"px"); }
+  }catch(e){}
+
+  /* Abgaben ein/aus - Desktop blendet die Spalte, mobil tauscht sie das Territorium */
+  if(btn) btn.onclick=()=>{
+    if(desktop()){
+      const t=terrBreitePx();
+      ck.classList.toggle("ohne-abg");
+      halteTerritorium(t);
+      try{ localStorage.setItem("hamAbgAus", ck.classList.contains("ohne-abg")?"1":"0"); }catch(e){}
+    } else {
+      ck.classList.toggle("mob-abg");
+      btn.innerHTML = ck.classList.contains("mob-abg") ? "🌍 Territorium" : "🗂️ Meine Abgaben";
+    }
+  };
+
+  /* rechter Regler: Code <-> Abgaben, Territorium bleibt stehen */
+  const sp=document.getElementById("ckSplit");
+  if(sp) sp.addEventListener("pointerdown",(e)=>{
+    e.preventDefault();
+    const t=terrBreitePx();
+    const move=(ev)=>{
+      const r=ck.getBoundingClientRect();
+      const b=Math.max(230, Math.min(r.width*0.55, r.right-ev.clientX));
+      ck.style.setProperty("--ckB", b+"px");
+      halteTerritorium(t);
+      try{ localStorage.setItem("hamAbgW", String(Math.round(b))); }catch(_){}
+    };
+    const up=()=>{ document.removeEventListener("pointermove",move); document.removeEventListener("pointerup",up); document.body.style.userSelect=""; };
+    document.body.style.userSelect="none";
+    document.addEventListener("pointermove",move); document.addEventListener("pointerup",up);
+  });
+
+  /* Griff ueber der Ausgabe: Hoehe ziehen, Unterkante bleibt am Bildschirmrand */
+  const grip=document.getElementById("outGrip"), home=document.getElementById("solveOutHome");
+  if(grip && home) grip.addEventListener("pointerdown",(e)=>{
+    e.preventDefault();
+    const unten=home.getBoundingClientRect().bottom;
+    const move=(ev)=>{
+      const h=Math.max(44, Math.min(innerHeight*0.55, unten-ev.clientY-8));
+      home.style.setProperty("--outH", h+"px");
+      try{ localStorage.setItem("hamOutH", String(Math.round(h))); }catch(_){}
+    };
+    const up=()=>{ document.removeEventListener("pointermove",move); document.removeEventListener("pointerup",up); document.body.style.userSelect=""; };
+    document.body.style.userSelect="none";
+    document.addEventListener("pointermove",move); document.addEventListener("pointerup",up);
+  });
+}
+
 /* ---------- Automatisches Zwischenspeichern (Hamster) ----------------------
    Jeder Tastendruck stoesst (mit 700 ms Ruhepause) ein Upsert in
    hamster_drafts an. Ein Browser-Absturz oder ein versehentliches Zurueck
@@ -1310,30 +1411,31 @@ async function solveAssignment(assignmentId){
                  wIdx:0, weltErgebnis:(current && current.results && typeof current.results==="object")? current.results : null };
   const statusHtml = current ? (current.passed===true?`<span class="badge">bestanden ✓</span>`:`<span class="badge gold">abgegeben</span>`) : `<span class="badge gray">offen</span>`;
   const curComment = current ? comments.find(c=>c.submission_id===current.id && c.released) : null;
-  /* Cockpit-Ansicht: Editor | Territorium | Abgaben nebeneinander - auf einem
-     Full-HD-Bildschirm ohne Scrollen. Der Abgeben-Knopf sitzt mittig im Kopf.
-     Unter ~1280 px (iPad) schaltet ein Umschalter zwischen Territorium und
-     Abgaben um; die rechte Spalte schiebt sich dann ueber das Territorium. */
+  /* Aufgabenseite nach Layout-Vorgabe: Desktop drei Spalten
+     Territorium 30 | Code 40 | Abgaben 30 mit Reglern dazwischen, Ausgabe
+     unten fixiert (Hoehengriff), kein Seiten-Scroll. Mobil (unter 1280 px)
+     zwei Spalten 50:50; "Meine Abgaben" tauscht das Territorium aus. */
   { const v=document.getElementById("view"); if(v) v.classList.add("weit"); }
   { const ts=document.getElementById("tbSlot"); if(ts) ts.innerHTML=`<button class="btn btn-primary" id="btnSubmit">📤 Abgeben</button>`; }
+  { const tb=document.getElementById("tbBack"); if(tb) tb.innerHTML=`<button class="btn btn-ghost btn-sm" id="tbBackBtn">← zurück</button>`; }
   document.getElementById("view").innerHTML = `
-    <div class="page-head" style="gap:12px"><button class="crumb" id="back">← zurück</button><h2 style="margin:0">${esc(a.title)}</h2><span id="solveStatus">${statusHtml}</span><div class="spacer"></div>${a.hint?`<button class="btn btn-ghost btn-sm" id="btnHint">💡 Tipp anzeigen</button>`:""}</div>
-    ${a.description?`<div class="card" style="margin:0 0 10px;padding:12px 16px"><b>Aufgabe:</b> ${esc(a.description)}${a.goal?`<div class="muted" style="margin-top:5px;font-size:13px">🎯 Ziel: ${esc(goalLabel(a.goal))}${esc(weltenLabel(a))}</div>`:""}</div>`:""}
-    ${a.hint?`<div id="hintBox" class="card" style="display:none;margin:0 0 10px;background:#fffaf0">💡 ${esc(a.hint)}</div>`:""}
-    <div id="curComment" style="margin-bottom:10px">${curComment?`<div class="card" style="background:#eef6ff;border-color:#bcd9f5"><b>💬 Rückmeldung deiner Lehrkraft:</b><div style="margin-top:4px;white-space:pre-wrap">${esc(curComment.body)}</div></div>`:""}</div>
+    <div class="page-head" style="gap:12px"><h2 style="margin:0">${esc(a.title)}</h2><span id="solveStatus">${statusHtml}</span><div class="spacer"></div>${a.hint?`<button class="btn btn-ghost btn-sm" id="btnHint">💡 Tipp anzeigen</button>`:""}<button class="btn btn-ghost btn-sm" id="btnAbgToggle">🗂️ Meine Abgaben</button></div>
+    ${a.description?`<div class="card ab-desc"><b>Aufgabe:</b> ${esc(a.description)}${a.goal?`<div class="muted" style="margin-top:5px;font-size:13px">🎯 Ziel: ${esc(goalLabel(a.goal))}${esc(weltenLabel(a))}</div>`:""}</div>`:""}
+    ${a.hint?`<div id="hintBox" class="card" style="display:none;margin:0 0 8px;background:#fffaf0">💡 ${esc(a.hint)}</div>`:""}
+    <div id="curComment">${curComment?`<div class="card" style="margin:0 0 8px;background:#eef6ff;border-color:#bcd9f5"><b>💬 Rückmeldung deiner Lehrkraft:</b><div style="margin-top:4px;white-space:pre-wrap">${esc(curComment.body)}</div></div>`:""}</div>
     <div id="editNote" class="editnote" style="display:none"></div>
-    <div id="draftNote">${draftGeladen?`<div class="card" style="margin-bottom:10px;background:#f0f7ff;border-color:#bcd9f5;padding:9px 13px;font-size:13px">✏️ <b>Weiter, wo du warst:</b> dein automatisch gespeicherter Stand vom ${esc(fmtDateTime(draft.updated_at))} wurde geladen${current?` – noch nicht abgegeben. Über „🗂️ Meine Abgaben" kommst du an die abgegebene Fassung.`:"."}</div>`:""}</div>
-    <div class="sc-switch" id="scSwitch"><span class="pill"></span><button type="button" data-m="terr" class="on">🌍 Territorium</button><button type="button" data-m="abg">🗂️ Abgaben &amp; Kommentar</button></div>
+    <div id="draftNote">${draftGeladen?`<div class="card" style="margin:0 0 8px;background:#f0f7ff;border-color:#bcd9f5;padding:9px 13px;font-size:13px">✏️ <b>Weiter, wo du warst:</b> dein automatisch gespeicherter Stand vom ${esc(fmtDateTime(draft.updated_at))} wurde geladen${current?` – noch nicht abgegeben. Über „🗂️ Meine Abgaben" kommst du an die abgegebene Fassung.`:"."}</div>`:""}</div>
     <div class="cockpit" id="cockpit">
       <div class="ck-main">
-        <div id="solveWeltBarHome"><div class="card" id="solveWeltBar" style="margin-bottom:10px;padding:9px 12px;display:none"></div></div>
-        <div id="solveHost" style="min-height:480px"></div>
-        <div style="display:flex;gap:10px;margin-top:10px;align-items:center;flex-wrap:wrap">
+        <div id="solveWeltBarHome"><div class="card" id="solveWeltBar" style="margin-bottom:8px;padding:8px 12px;display:none"></div></div>
+        <div id="solveHost"></div>
+        <div style="display:flex;gap:10px;margin-top:6px;align-items:center;flex-wrap:wrap;flex:0 0 auto">
           <button class="btn btn-ghost btn-sm" id="btnToLive" style="display:none">↺ Zur aktuellen Version</button>
           ${samples.length?`<button class="btn btn-ghost btn-sm" id="btnSamples">🏆 Musterlösung${samples.length>1?"en":""} ansehen</button>`:""}
           <span id="submitMsg" class="muted" style="font-size:13px"></span>
         </div>
       </div>
+      <div class="ck-split" id="ckSplit" title="Breite der Abgaben-Spalte ziehen"></div>
       <aside class="ck-side">
         <div class="side-pane">
           <div class="sp-head">🗂️ Meine Abgaben <span class="badge gray" id="histCount" style="display:none">0</span></div>
@@ -1346,16 +1448,11 @@ async function solveAssignment(assignmentId){
         </div>
       </aside>
     </div>
+    <div id="outGrip" title="Höhe der Ausgabe ziehen"></div>
     <div id="solveOutHome"></div>
     <span id="draftMsg"></span>`;
-  document.getElementById("back").onclick = ()=> studentClassView(a.class_id);
-  { const sw=document.getElementById("scSwitch"), ck=document.getElementById("cockpit");
-    if(sw&&ck) sw.querySelectorAll("button[data-m]").forEach(b=> b.onclick=()=>{
-      const abg = b.dataset.m==="abg";
-      ck.classList.toggle("zeige-abgaben", abg);
-      sw.classList.toggle("zeige-abgaben", abg);
-      sw.querySelectorAll("button").forEach(x=> x.classList.toggle("on", x===b));
-    }); }
+  { const tb=document.getElementById("tbBackBtn"); if(tb) tb.onclick=()=> studentClassView(a.class_id); }
+  wireCockpit(a);
   if(a.hint){ const hb=document.getElementById("hintBox"), bh=document.getElementById("btnHint"); if(hb&&bh) bh.onclick=()=>{ const show=hb.style.display==="none"; hb.style.display=show?"block":"none"; bh.textContent=show?"💡 Tipp verbergen":"💡 Tipp anzeigen"; }; }
   hamsterDraftStart(a.id, draftGeladen ? draft.code : null);
   { const w0=welten(a)[0];
@@ -4907,8 +5004,8 @@ async function javaSandboxProject(projectId){
 
 const PATCH_NOTES = [
   { v:"2.47", date:"29. August 2026", title:"🖥️ Cockpit-Ansicht · ✨ Feinschliff mit Leben", items:[
-    `<b>Alles im Blick, ohne Scrollen:</b> Die Aufgabenseite ordnet Editor, Territorium und „Meine Abgaben" jetzt <b>nebeneinander</b> an – auf einem Full-HD-Bildschirm ist alles gleichzeitig sichtbar. Der <b>📤 Abgeben</b>-Knopf sitzt mittig oben in der Kopfleiste.`,
-    `<b>Fürs iPad:</b> Unterhalb von ~1280 px erscheint oben ein Umschalter <b>🌍 Territorium / 🗂️ Abgaben</b> – die Abgaben-Spalte schiebt sich mit einer sanften Animation von rechts über das Territorium und wieder zurück.`,
+    `<b>Alles im Blick, ohne Scrollen:</b> Die Aufgabenseite zeigt <b>Territorium | Code | Meine Abgaben</b> nebeneinander (30/40/30). Zwei Regler dazwischen verschieben die Spalten; die Ausgabezeile sitzt fest am unteren Rand und lässt sich am Griff in der Höhe ziehen – die Seite selbst scrollt nie. <b>📤 Abgeben</b> sitzt mittig in der Kopfleiste, „← zurück" und 🏠 rechts daneben.`,
+    `<b>„🗂️ Meine Abgaben"-Knopf</b> rechts neben der Überschrift: Am Desktop blendet er die Abgaben-Spalte aus (der Platz geht an den Code, das Territorium bleibt stehen) und wieder ein. Auf iPad/kleineren Bildschirmen (50:50-Ansicht) tauscht derselbe Knopf das Territorium gegen die Abgaben – und heißt dann „🌍 Territorium".`,
     `<b>„🎉 Ziel erreicht" verschiebt nichts mehr:</b> Der Platz für das Banner ist von Anfang an reserviert, es legt sich beim Einblenden über die Territoriumsfläche – das Territorium bleibt an Ort und Stelle.`,
     `<b>Feinschliff-Animationen:</b> Knöpfe, Karten, Zeilen und Matrix-Zellen reagieren jetzt spürbar aufs Anfahren und Drücken – kleine, weiche Bewegungen, die Symbole nicken kurz. Keine Dauer-Animationen, nichts blinkt von allein; wer im System „Bewegung reduzieren" eingestellt hat, bekommt gar keine.`,
     `<b>Die Undo/Redo-Pfeile</b> unter „Dein Programm" sind jetzt richtig herum gedreht.`,
@@ -5284,7 +5381,7 @@ function patchNotesDialog(){
 }
 
 /* ---------- Footer: Versionsnummer (aus den Patch-Notes) + Copyright ---------- */
-const APP_BUILD = "2026-08-29 01:15";   // letztes Update (im Patch-Notes-Dialog angezeigt)
+const APP_BUILD = "2026-08-29 02:30";   // letztes Update (im Patch-Notes-Dialog angezeigt)
 /* ============================================================================
    Browser-Zurück (SPA-History) + Favicon/Titel je Tool
    ============================================================================ */
